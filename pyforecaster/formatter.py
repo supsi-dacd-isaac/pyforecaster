@@ -1,0 +1,302 @@
+#import category_encoders
+import numpy as np
+import pandas as pd
+from itertools import product
+from pyforecaster.plot_utils import ts_animation
+import logging
+
+
+def get_logger(level=logging.INFO):
+
+    logger = logging.getLogger()
+    logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s')
+    logger.setLevel(level)
+    return logger
+
+
+class Formatter:
+    def __init__(self, logger=None):
+        self.logger = get_logger() if logger is None else logger
+        self.transformers = []
+        self.fold_transformers = []
+        self.target_transformers = []
+        self.cv_gen = []
+
+    def add_time_features(self, x):
+        self.logger.info('Adding time features')
+        x.loc[:, 'hour'] = x.index.hour
+        x.loc[:, 'dayofweek'] = x.index.dayofweek
+        x.loc[:,'minuteofday'] = x.index.hour + x.index.minute
+        return x
+
+    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
+        transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
+                                  relative_lags=relative_lags)
+        self.transformers.append(transformer)
+        return self
+
+    def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
+        transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
+                                  relative_lags=relative_lags)
+        self.target_transformers.append(transformer)
+        return self
+
+    def transform(self, x):
+        """
+        Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
+        the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
+        transformations like min-max scaling or categorical encoding are not yet applied.
+        :param x: pd.DataFrame
+        :return x, target: the transformed dataset and the target DataFrame with correct dimensions
+        """
+        if np.any(x.isna()):
+           self.logger.warning('There are {} nans in x, nans are not supported yet, '
+                               'get over it. I have more important things to do.'.format(x.isna().sum()))
+
+        for tr in self.transformers:
+            x = tr.transform(x)
+
+        target = pd.DataFrame(index=x.index)
+        for tr in self.target_transformers:
+           target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
+
+        # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
+        x = x.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+        target = target.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+
+        # adding time features
+        x = self.add_time_features(x)
+        return x, target
+
+
+    def _simulate_transform(self, x):
+        """
+        This won't actually modify the dataframe, it will just populate the transform_dict property of each transformer
+        :param x:
+        :return:
+        """
+        for tr in self.transformers:
+            _ = tr.transform(x, simulate=True)
+        for tr in self.target_transformers:
+            _ = tr.transform(x, simulate=True)
+
+    def plot_transformed_feature(self, x, feature):
+        x_tr, target = self.transform(x)
+        all_feats = pd.concat([x_tr, target], axis=1)
+        fs = []
+        ts = []
+        names = []
+        for t in self.transformers + self.target_transformers:
+            if feature in t.transform_dict.keys():
+                for n in t.transform_dict[feature]['names']:
+                    fs.append(all_feats[n].values)
+                    ts.append(t.transform_dict[feature]['times'])
+        ani = ts_animation(fs, ts, names)
+        return ani
+
+    def cat_encoding(self, df_train, df_test, target, encoder=None, cat_features=None):
+        if cat_features is None:
+            self.logger.info('auto encoding categorical features')
+            cat_features = self.auto_cat_feature_selection(df_train)
+
+        self.logger.info('encoding {} as categorical features'.format(cat_features))
+        df_train[cat_features] = pd.Categorical(df_train[cat_features])
+        df_test[cat_features] = pd.Categorical(df_test[cat_features])
+
+        encoder = encoder(cols=cat_features)
+        encoder.fit(df_train[cat_features], df_train[target])
+        df_train = df_train.join(
+            encoder.transform(df_train[cat_features]).add_suffix('_cb'))
+        df_test = df_test.join(
+            encoder.transform(df_test[cat_features]).add_suffix('_cb'))
+        return df_train, df_test
+
+    @staticmethod
+    def auto_cat_feature_selection(df, max_num_class_cat=24):
+        """
+        :param df: pd.DataFrame
+        :param max_num_class_cat: maximum number of unique classes after which the feature is considered categorical
+        """
+        cat_features = df.columns[df.nunique() <= max_num_class_cat]
+        return cat_features
+
+    def time_kfcv(self, time_index, n_k=4, multiplier_factor=1, x=None):
+        """
+
+        :param time_index: DateTimeIndex of the full dataset
+        :param n_k: number of folds for the time cross validation
+        :param multiplier_factor: if >1, the cross validation folds are augmented. A standard time 4-CV looks like:
+                                  |####|xx--|----|----|
+                                  |--xx|####|xx--|----|
+                                  |----|--xx|####|xx--|
+                                  |----|----|--xx|####|
+                                  while with a multiplier factor of 2 it becomes:
+                                  |####|xx--|----|----|
+                                  |--xx|####|xx--|----|
+                                  |----|--xx|####|xx--|
+                                  |----|----|--xx|####|
+                                  |x###|#xx-|----|----|
+                                  |-xx#|###x|x---|----|
+                                  |----|-xx#|###x|x---|
+                                  |----|----|-xx#|###x|
+        :return:
+        """
+
+        assert n_k >= 2, 'n_k must be bigger than 2, passed: {}'.format(n_k)
+        t_start = time_index[0]
+        t_end = time_index[-1]
+        split_times = pd.date_range(t_start, t_end, n_k+1)
+        time_window = split_times[1]-split_times[0]
+        shift_times = pd.date_range(t_start, t_end - time_window, n_k * multiplier_factor + 1)
+
+        # deadband time requires to know sampling times of the signals and all the time transformations.
+        # If the transform_dict attribute of self.transformers is empty, meaning that the transform method of the
+        # formatter has not been called yet, a call to the _simulate_transform method is needed. This won't actually
+        # modify the dataframe, it will just populate the transform_dict
+
+        if any([len(t.transform_dict) == 0 for t in self.transformers]):
+            self.logger.warning('seems like the transform method has not been called yet. Calling _simulate_transform '
+                                'to retrieve the info I need')
+            if x is None:
+                self.logger.critical('you must pass x argument to time_kfcv or make sure that the transform method has'
+                                     ' already been called once')
+            self._simulate_transform(x)
+
+        deadband_time = np.max(np.hstack([[np.max(np.abs(v['times'])) for k, v in t.transform_dict.items()]
+                                for t in self.transformers]))
+        self.logger.info('deadband time: {}'.format(deadband_time))
+        if deadband_time > split_times[1]-split_times[0]:
+            self.logger.error('deadband time: {} is bigger than test fold timespan: {}. Try '
+                              'lowering k'.format(deadband_time, split_times[1]-split_times[0]))
+            raise
+        self.logger.info('adding {} test folds with length {}'.format(n_k*multiplier_factor, time_window))
+        folds = {}
+        for i, t_i in enumerate(shift_times):
+            test_window = [t_i, time_window + t_i]
+            tr_idxs = (time_index < test_window[0] - deadband_time) | (time_index > test_window[1] + deadband_time)
+            te_idx = (time_index >= test_window[0]) & (time_index <= test_window[1])
+            self.logger.info(self.print_fold(tr_idxs, te_idx))
+            folds['fold_{:>02d}'.format(i)] = pd.DataFrame({'tr':tr_idxs,  'te': te_idx}, index=time_index)
+        return pd.concat(folds, axis=1)
+
+    def cv_generator(self, time_index, n_k=4):
+        pass
+
+    @staticmethod
+    def print_fold(tr_idxs, te_idxs):
+        buffers = ~(tr_idxs + te_idxs)
+        if sum(buffers) > 0:
+            sampling_step = int(np.max(np.convolve(~(tr_idxs + te_idxs), np.ones(sum(buffers)))))
+            sampling_step = np.minimum(sampling_step, int(len(tr_idxs) / 100))
+        else:
+            sampling_step = int(len(tr_idxs) / 100)
+        fold = ''
+        for s in tr_idxs[::sampling_step].astype(int) + 2*te_idxs[::sampling_step].astype(int):
+            fold += 'x' * (s == 0) + '-' * (s == 1) + '|' * (s == 2)
+        fold += '   -: train, |=test, x:skip'
+        return fold
+
+
+class Transformer:
+    """
+    Defines and applies transformations through rolling time windows and lags
+    """
+    def __init__(self, names, functions=None, agg_freq=None, lags=None, logger=None, relative_lags=False):
+        """
+        :param names: list of columns of the target dataset to which this transformer applies
+        :param functions:
+        :param agg_freq:
+        :param lags:
+        :param logger: auxiliary logger
+        :param relative_lags: if True, lags are computed on the base of agg_freq
+        """
+        assert isinstance(functions, list) or functions is None, 'functions must be a list of strings or functions'
+        self.names = names
+        self.functions = functions
+        self.agg_freq = agg_freq
+        self.lags = lags
+        self.relative_lags = relative_lags
+        self.logger = get_logger() if logger is None else logger
+        self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
+        self.generated_features = None
+        self.transform_dict = {}
+
+    def transform(self, x, augment=True, simulate=False):
+        """
+        Add transformations to the x pd.DataFrame, as specified by the Transformer's attributes
+
+        :param x: pd.DataFrame
+        :param augment: if True augments the original x DataFrame, otherwise returns just the transforms DataFrame
+        :param simulate: if True do not perform any operation on the dataset, just populate the transform_dict property
+                         with information on the name and time lags
+        :return: transformed DataFrame
+        """
+        assert np.all(np.isin(self.names, x.columns)), "transformers names, {},  " \
+                                                       "must be in x.columns:{}".format(self.names, x.columns)
+
+        data = x.copy() if augment else pd.DataFrame(index=x.index)
+
+        for name in self.names:
+            inferred_freq = x[name].index.to_series().diff().median()
+
+            if self.agg_freq is None:
+                self.agg_freq = inferred_freq
+
+            d = x[name].copy()
+            min_periods = int(pd.Timedelta(self.agg_freq) / inferred_freq)
+
+            new_names = [name]
+
+            if self.functions:
+                trans_names = [s if isinstance(s, str) else s.__name__ for s in self.functions]
+                hr_agg_freq = self.agg_freq if isinstance(self.agg_freq, str) else hr_timedelta(self.agg_freq.to_timedelta64())
+                trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in trans_names]
+                new_names = trans_names
+                if not simulate:
+                    d = d.rolling(self.agg_freq , min_periods=min_periods).agg(self.functions)
+                    d.columns = trans_names
+
+            if self.lags is not None:
+                new_names = ['{}_lag_{}'.format(p[1], p[0]) for p in product(self.lags, new_names)]
+                lags = self.lags * min_periods if self.relative_lags else self.lags
+                if not simulate:
+                    d = pd.concat([d.shift(l) for l in lags], axis=1)
+                    d.columns = new_names
+
+            self.transform_dict[name] = {'names': [[n for n in new_names if tn in n] for tn in
+                                                   (trans_names if self.functions else [str(name)])],
+                                         'times': pd.TimedeltaIndex(
+                                             [l * pd.Timedelta(self.agg_freq if self.agg_freq else inferred_freq) for l
+                                              in
+                                              (self.lags if self.lags is not None else [1])])}
+            if not simulate:
+                data = pd.concat([data, d], axis=1)
+                self.logger.info('Added {} to the dataframe'.format(new_names))
+
+
+        self.generated_features = set(data.columns) - set(x.columns)
+        return data
+
+
+def hr_timedelta(t):
+    """
+    Timedelta64 to human readable format
+    :param t:
+    :return:
+    """
+    t = t.astype('timedelta64[ms]')
+    symbol = 'ms'
+    if t < int(60e3):
+        t = t.astype('timedelta64[s]')
+        symbol = 's'
+    elif t < int(3600e3):
+        t = t.astype('timedelta64[m]')
+        symbol = 'm'
+    elif t < int(24 * 3600e3):
+        t = t.astype('timedelta64[h]')
+        symbol = 'h'
+    elif t < int(365 * 24 * 3600e3):
+        t = t.astype('timedelta64[D]')
+        symbol = 'd'
+
+    return '{}{}'.format(t.astype(int), symbol)
