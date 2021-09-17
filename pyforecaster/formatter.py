@@ -164,7 +164,7 @@ class Formatter:
                                      ' already been called once')
             self._simulate_transform(x)
 
-        deadband_time = np.max(np.hstack([t.metadata['lag_time'].abs().max() for t in self.transformers]))
+        deadband_time = np.max(np.hstack([t.metadata['referring_time'].abs().max() for t in self.transformers]))
         self.logger.info('deadband time: {}'.format(deadband_time))
         if deadband_time > split_times[1]-split_times[0]:
             self.logger.error('deadband time: {} is bigger than test fold timespan: {}. Try '
@@ -288,8 +288,10 @@ class Transformer:
                     d.columns = trans_names
 
             if self.lags is not None:
+                self.lags = np.array(self.lags)
                 trans_names = ['{}_lag_{}'.format(p[1], p[0]) for p in product(self.lags, trans_names)]
                 lags = self.lags * min_periods if self.relative_lags else self.lags
+                assert len(lags) == len(self.lags)
                 if self.relative_lags:
                     lag_time *= min_periods
                 if not simulate:
