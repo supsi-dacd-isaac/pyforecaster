@@ -22,10 +22,10 @@ def ts_animation(ys:list, ts:list, names:list, frames=150):
 
     def init():
         for y, t in zip(ys, ts):
-            l, = ax.plot(t.total_seconds()/3600/24, y[0, :], linestyle='none', marker='.')
+            l, = ax.plot(t/np.timedelta64(3600*24,'s'), y[0, :], linestyle='none', marker='.')
             lines.append(l)
         for y, t in zip(ys, ts):
-            l, = ax.plot(t.total_seconds() / 3600 / 24, y[0, :], alpha=0.2, linewidth=1)
+            l, = ax.plot(t/np.timedelta64(3600*24,'s'), y[0, :], alpha=0.2, linewidth=1)
             lines.append(l)
         ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
 
@@ -33,9 +33,9 @@ def ts_animation(ys:list, ts:list, names:list, frames=150):
 
     def animate(i):
         for y, l, t in zip(ys, lines, ts):
-            l.set_data(t.total_seconds()/3600/24, y[i, :])
+            l.set_data(t/np.timedelta64(3600*24,'s'), y[i, :])
         for y, l, t in zip(ys, lines[len(ys):], ts):
-            l.set_data(t.total_seconds()/3600/24, y[i, :])
+            l.set_data(t/np.timedelta64(3600*24,'s'), y[i, :])
         return lines
 
     plt.pause(1e-5)

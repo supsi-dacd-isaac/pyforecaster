@@ -11,7 +11,14 @@ class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 500
         self.n = 10
-        self.x = pd.DataFrame(np.sin(np.arange(self.t)*10*np.pi/self.t).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
+        self.x = pd.DataFrame(
+            np.sin(np.arange(self.t) * 10 * np.pi / self.t).reshape(-1, 1) * np.random.randn(1, self.n),
+            index=pd.date_range('01-01-2020', '01-05-2020', self.t))
+
+        times = pd.date_range('01-01-2020', '01-05-2020', freq='20min')
+        self.x2 = pd.DataFrame(
+            np.sin(np.arange(len(times)) * 10 * np.pi / len(times)).reshape(-1, 1) * np.random.randn(1, self.n),
+            index=times)
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
@@ -59,6 +66,13 @@ class TestFormatDataset(unittest.TestCase):
         folds_df = formatter.time_kfcv(self.x.index, 4, 3)
         for fold_name in folds_df.stack().columns:
             assert np.sum(folds_df[fold_name]['tr']) + np.sum(folds_df[fold_name]['te']) < len(self.x) -1
+
+    def test_prune_at_stepahead(self):
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
+                                                                    lags=-np.arange(24*3), relative_lags=False)
+        formatter.add_target_transform([3], lags=np.arange(10))
+        x_transformed, y_transformed = formatter.transform(self.x2)
+        formatter.prune_dataset_at_stepahead(x_transformed, 4, method='periodic', period='24H')
 
 
 if __name__ == '__main__':

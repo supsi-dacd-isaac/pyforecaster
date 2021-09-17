@@ -71,7 +71,7 @@ class Formatter:
 
     def _simulate_transform(self, x):
         """
-        This won't actually modify the dataframe, it will just populate the transform_dict property of each transformer
+        This won't actually modify the dataframe, it will just populate the metqdata property of each transformer
         :param x:
         :return:
         """
@@ -87,10 +87,12 @@ class Formatter:
         ts = []
         names = []
         for t in self.transformers + self.target_transformers:
-            if feature in t.transform_dict.keys():
-                for n in t.transform_dict[feature]['names']:
-                    fs.append(all_feats[n].values)
-                    ts.append(t.transform_dict[feature]['times'])
+            derived_features = t.metadata.loc[t.metadata['name'] == feature]
+            if len(derived_features) > 0:
+                for function in derived_features['function'].unique():
+                    fs.append(all_feats[derived_features.index[derived_features['function']==function]].values)
+                    ts.append(t.metadata.loc[derived_features.index[derived_features['function']==function], 'referring_time'])
+
         ani = ts_animation(fs, ts, names)
         return ani
 
@@ -150,11 +152,11 @@ class Formatter:
         shift_times = pd.date_range(t_start, t_end - time_window, n_k * multiplier_factor + 1)
 
         # deadband time requires to know sampling times of the signals and all the time transformations.
-        # If the transform_dict attribute of self.transformers is empty, meaning that the transform method of the
+        # If the metadata attribute of self.transformers is empty, meaning that the transform method of the
         # formatter has not been called yet, a call to the _simulate_transform method is needed. This won't actually
-        # modify the dataframe, it will just populate the transform_dict
+        # modify the dataframe, it will just populate the metadata
 
-        if any([len(t.transform_dict) == 0 for t in self.transformers]):
+        if any([t.metadata is None for t in self.transformers]):
             self.logger.warning('seems like the transform method has not been called yet. Calling _simulate_transform '
                                 'to retrieve the info I need')
             if x is None:
@@ -162,8 +164,7 @@ class Formatter:
                                      ' already been called once')
             self._simulate_transform(x)
 
-        deadband_time = np.max(np.hstack([[np.max(np.abs(v['times'])) for k, v in t.transform_dict.items()]
-                                for t in self.transformers]))
+        deadband_time = np.max(np.hstack([t.metadata['lag_time'].abs().max() for t in self.transformers]))
         self.logger.info('deadband time: {}'.format(deadband_time))
         if deadband_time > split_times[1]-split_times[0]:
             self.logger.error('deadband time: {} is bigger than test fold timespan: {}. Try '
@@ -196,6 +197,35 @@ class Formatter:
         fold += '   -: train, |=test, x:skip'
         return fold
 
+    def prune_dataset_at_stepahead(self, df, sa, method='periodic', period='24H', tol_period='1H', sa_end=None, keep_last_n_lags=0):
+
+        features = []
+        # retrieve referring_time of the given sa for the target from target_transformers
+        target_times = []
+        for tt in self.target_transformers:
+            target_times.append(tt.metadata.loc[tt.metadata['lag']==sa, 'referring_time'])
+
+        assert len(np.unique(target_times)) == 1, 'target for step ahead {} have different referring_times, ' \
+                                             'not supported'.format(sa)
+        target_time = pd.to_timedelta(target_times[0])[0]
+
+        if method == 'periodic':
+            # find signals with (target_time - referring_time) multiple of period
+            for t in self.transformers:
+                features += list(t.metadata.index[(target_time-t.metadata['referring_time']).abs() % pd.Timedelta(period)
+                                                  <= pd.Timedelta(tol_period)])
+        elif method == 'up_to':
+            for t in self.transformers:
+                features += list(t.metadata.index[t.metadata['referring_time'] <= target_time])
+
+        if keep_last_n_lags > 0:
+            last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(-np.arange(keep_last_n_lags))]
+                                           for t in self.transformers]))
+            features = np.unique(features + last_lag_features)
+
+
+        return df[features]
+
 
 class Transformer:
     """
@@ -219,7 +249,8 @@ class Transformer:
         self.logger = get_logger() if logger is None else logger
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
-        self.transform_dict = {}
+        self.metadata = None
+
 
     def transform(self, x, augment=True, simulate=False):
         """
@@ -227,7 +258,7 @@ class Transformer:
 
         :param x: pd.DataFrame
         :param augment: if True augments the original x DataFrame, otherwise returns just the transforms DataFrame
-        :param simulate: if True do not perform any operation on the dataset, just populate the transform_dict property
+        :param simulate: if True do not perform any operation on the dataset, just populate the metadata property
                          with information on the name and time lags
         :return: transformed DataFrame
         """
@@ -235,44 +266,49 @@ class Transformer:
                                                        "must be in x.columns:{}".format(self.names, x.columns)
 
         data = x.copy() if augment else pd.DataFrame(index=x.index)
-
+        self.metadata = pd.DataFrame()
         for name in self.names:
-            inferred_freq = x[name].index.to_series().diff().median()
+            lag_time = x[name].index.to_series().diff().median()
 
             if self.agg_freq is None:
-                self.agg_freq = inferred_freq
+                self.agg_freq = lag_time
 
             d = x[name].copy()
-            min_periods = int(pd.Timedelta(self.agg_freq) / inferred_freq)
+            min_periods = int(pd.Timedelta(self.agg_freq) / lag_time)
 
-            new_names = [name]
-
+            trans_names = [name]
+            function_names = ['none']
             if self.functions:
-                trans_names = [s if isinstance(s, str) else s.__name__ for s in self.functions]
+                function_names = [s if isinstance(s, str) else s.__name__ for s in self.functions]
                 hr_agg_freq = self.agg_freq if isinstance(self.agg_freq, str) else hr_timedelta(self.agg_freq.to_timedelta64())
-                trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in trans_names]
-                new_names = trans_names
+                trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in function_names]
+
                 if not simulate:
                     d = d.rolling(self.agg_freq , min_periods=min_periods).agg(self.functions)
                     d.columns = trans_names
 
             if self.lags is not None:
-                new_names = ['{}_lag_{}'.format(p[1], p[0]) for p in product(self.lags, new_names)]
+                trans_names = ['{}_lag_{}'.format(p[1], p[0]) for p in product(self.lags, trans_names)]
                 lags = self.lags * min_periods if self.relative_lags else self.lags
+                if self.relative_lags:
+                    lag_time *= min_periods
                 if not simulate:
                     d = pd.concat([d.shift(l) for l in lags], axis=1)
-                    d.columns = new_names
+                    d.columns = trans_names
 
-            self.transform_dict[name] = {'names': [[n for n in new_names if tn in n] for tn in
-                                                   (trans_names if self.functions else [str(name)])],
-                                         'times': pd.TimedeltaIndex(
-                                             [l * pd.Timedelta(self.agg_freq if self.agg_freq else inferred_freq) for l
-                                              in
-                                              (self.lags if self.lags is not None else [1])])}
             if not simulate:
                 data = pd.concat([data, d], axis=1)
-                self.logger.info('Added {} to the dataframe'.format(new_names))
+                self.logger.info('Added {} to the dataframe'.format(trans_names))
 
+            lags_and_fun = product([0] if self.lags is None else self.lags, function_names)
+
+            metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
+            metadata_n['aggregation_time'] = self.agg_freq
+            metadata_n['lag_time'] = pd.Timedelta(lag_time)
+            metadata_n['referring_time'] = metadata_n['lag_time'] * metadata_n['lag']
+            metadata_n['name'] = name
+
+            self.metadata = pd.concat([self.metadata, metadata_n])
 
         self.generated_features = set(data.columns) - set(x.columns)
         return data
