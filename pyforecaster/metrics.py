@@ -33,6 +33,12 @@ def summary_score(x, t, score=rmse, agg_index=None):
 
 
 def summary_scores(x, t, scores, agg_indexes:pd.DataFrame):
+
+    # quantize non-integer data
+    if np.any(agg_indexes.dtypes != 'int'):
+        agg_indexes.loc[:, agg_indexes.dtypes != int] = pd.concat(
+            [pd.qcut(agg_indexes.loc[:, k], 5) for k in agg_indexes.columns if agg_indexes[k].dtype != int], axis=1)
+
     scores_df = {}
     for s in scores:
         index_scores = {k: summary_score(x, t, s, pd.Index(v)) for k, v in agg_indexes.items()}
