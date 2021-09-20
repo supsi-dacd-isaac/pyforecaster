@@ -1,11 +1,13 @@
+from os.path import join
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sb
-import matplotlib.pyplot as plt
 import ptitprince as pt
-from pyforecaster.plot_utils import basic_setup
+import seaborn as sb
 from scipy.stats import norm
-from os.path import join
+
+from pyforecaster.plot_utils import basic_setup
 
 
 def bootstrap(series, stat_fun, save_plots_dir=None):
