@@ -28,11 +28,18 @@ def mape(x, t, agg_index=None):
     return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index).mean()
 
 
+def nmae(x, t, agg_index=None):
+    agg_index = x.index if agg_index is None else agg_index
+    return (err(x, t) / (t.mean(axis=1) + 1)).abs().groupby(agg_index).mean()
+
+
 def summary_score(x, t, score=rmse, agg_index=None):
     return score(x, t, agg_index)
 
 
-def summary_scores(x, t, scores, agg_indexes:pd.DataFrame):
+def summary_scores(x, t, scores, agg_indexes: pd.DataFrame, mask=None):
+    x = x if mask is None else x * mask
+    t = t if mask is None else t * mask
 
     # quantize non-integer data
     if np.any(agg_indexes.dtypes != 'int'):
