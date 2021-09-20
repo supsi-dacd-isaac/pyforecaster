@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 
 def feature_importance(x, m, n_epsilon=10):
@@ -29,3 +30,11 @@ def mape(x, t, agg_index=None):
 
 def summary_score(x, t, score=rmse, agg_index=None):
     return score(x, t, agg_index)
+
+
+def summary_scores(x, t, scores, agg_indexes:pd.DataFrame):
+    scores_df = {}
+    for s in scores:
+        index_scores = {k: summary_score(x, t, s, pd.Index(v)) for k, v in agg_indexes.items()}
+        scores_df[s.__name__] = pd.concat(index_scores, axis=0)
+    return scores_df
