@@ -1,15 +1,26 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import animation
+import seaborn as sb
 import pandas as pd
 import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 
 
-def basic_setup(subplots_tuple, width, hight, b=0.15, l=0.15, w=0.22, style ='seaborn', **kwargs):
+def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, style ='seaborn', **kwargs):
     plt.style.use(style)
-    fig, ax = plt.subplots(subplots_tuple[0], subplots_tuple[1], figsize=(width, hight), **kwargs)
+    fig, ax = plt.subplots(subplots_tuple[0], subplots_tuple[1], figsize=(width, height), **kwargs)
     plt.subplots_adjust(bottom=b, left=l, wspace=w)
+    return fig, ax
+
+
+def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
+                       colorbar_label='score'):
+    fig, ax = basic_setup((1, 1), width, height)
+    sb.heatmap(data=df, ax=ax, cbar_kws={'label': colorbar_label})
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+
     return fig, ax
 
 
