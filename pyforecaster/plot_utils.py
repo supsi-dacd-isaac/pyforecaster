@@ -15,12 +15,22 @@ def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, style ='s
 
 
 def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
-                       colorbar_label='score',  b=0.15, l=0.15, w=0.22):
-    fig, ax = basic_setup((1, 1), width, height,  b, l, w)
+                       colorbar_label='score',  b=0.15, l=0.2, w=0.22, font_scale=0.8):
+
+    if interval_to_ints:
+        int_intervals = [pd.Interval(i.left.astype(int), i.right.astype(int)) for i in df.index]
+        df.index = int_intervals
+
+    sb.set(font_scale = font_scale)
+    fig, ax = plt.subplots(1,1)
+    plt.subplots_adjust(bottom=b, left=l, wspace=w)
     sb.heatmap(data=df, ax=ax, cbar_kws={'label': colorbar_label})
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
-
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=30, va='top')
+    labels_idx = np.arange(0, 95, 10)
+    ax.set_xticks(labels_idx)
+    plt.show()
     return fig, ax
 
 
