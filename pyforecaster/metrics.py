@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+from itertools import permutations
 
 def feature_importance(x, m, n_epsilon=10):
     # isotropic spherical sampling
@@ -48,9 +48,15 @@ def summary_scores(x, t, scores, idxs: pd.DataFrame, mask=None, n_quantiles=10):
 
     agg_indexes = idxs.copy()
 
+    # all vars that are pd.DataFrame must have the same index
+    pd_indexes = [a.index for a in [x,t,mask] if isinstance(a, pd.DataFrame)]
+    assert np.all([a[0]==a[1] for a in permutations(pd_indexes,2)]), 'some dataframe do not have the same index. ' \
+                                                                     'This could be a sign that something is wrong. ' \
+                                                                     'Please, check.'
+
     # mask[mask] transform a boolean mask in a 1.0-NaN mask
-    x = x if mask is None else x * mask[mask]
-    t = t if mask is None else t * mask[mask]
+    x = x if mask is None else x * mask[mask].values
+    t = t if mask is None else t * mask[mask].values
 
     # quantize non-integer data
     if np.any(agg_indexes.dtypes != 'int'):

@@ -15,8 +15,8 @@ def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, style ='s
 
 
 def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
-                       colorbar_label='score'):
-    fig, ax = basic_setup((1, 1), width, height)
+                       colorbar_label='score',  b=0.15, l=0.15, w=0.22):
+    fig, ax = basic_setup((1, 1), width, height,  b, l, w)
     sb.heatmap(data=df, ax=ax, cbar_kws={'label': colorbar_label})
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
