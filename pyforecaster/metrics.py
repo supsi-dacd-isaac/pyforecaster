@@ -34,6 +34,13 @@ def nmae(x, t, agg_index=None):
 
 
 def summary_score(x, t, score=rmse, agg_index=None):
+    if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
+        x.columns = t.columns
+    elif isinstance(x, pd.DataFrame):
+        t = pd.DataFrame(t, index=x.index, columns=x.columns)
+    elif isinstance(t, pd.DataFrame):
+        x = pd.DataFrame(x, index=t.index, columns=t.columns)
+
     return score(x, t, agg_index)
 
 

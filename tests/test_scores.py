@@ -29,7 +29,7 @@ class TestFormatDataset(unittest.TestCase):
         agg_index = pd.DataFrame({'hour':self.x.index.hour, 'weekday':self.x.index.weekday})
         mask = self.x > 0.1
         scores = pyme.summary_scores(self.x, self.target, scores=[pyme.rmse, pyme.mape, pyme.nmae],
-                                     agg_indexes=agg_index, mask=mask)
+                                     idxs=agg_index, mask=mask)
         assert np.all([s.shape[0] == np.sum([len(v.value_counts()) for k, v in agg_index.items()])
                        for s in scores.values()])
 
