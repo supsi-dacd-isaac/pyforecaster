@@ -37,7 +37,9 @@ def summary_score(x, t, score=rmse, agg_index=None):
     return score(x, t, agg_index)
 
 
-def summary_scores(x, t, scores, agg_indexes: pd.DataFrame, mask=None, n_quantiles=10):
+def summary_scores(x, t, scores, idxs: pd.DataFrame, mask=None, n_quantiles=10):
+
+    agg_indexes = idxs.copy()
 
     # mask[mask] transform a boolean mask in a 1.0-NaN mask
     x = x if mask is None else x * mask[mask]
