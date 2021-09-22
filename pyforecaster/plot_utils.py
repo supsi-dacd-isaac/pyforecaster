@@ -15,7 +15,7 @@ def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, style ='s
 
 
 def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
-                       colorbar_label='score',  b=0.15, l=0.2, w=0.22, font_scale=0.8):
+                       colorbar_label='score',  b=0.15, l=0.2, w=0.22, font_scale=0.8, interval_to_ints=True):
 
     if interval_to_ints:
         int_intervals = [pd.Interval(i.left.astype(int), i.right.astype(int)) for i in df.index]
