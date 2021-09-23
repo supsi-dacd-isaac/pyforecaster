@@ -289,7 +289,8 @@ class Transformer:
 
             if self.lags is not None:
                 self.lags = np.array(self.lags)
-                trans_names = ['{}_lag_{}'.format(p[1], p[0]) for p in product(self.lags, trans_names)]
+                trans_names = ['{}_lag_{:03d}'.format(p[1], p[0]) if p[0] >= 0 else '{}_lag_{:04d}'.format(p[1], p[0])
+                               for p in product(self.lags, trans_names)]
                 lags = self.lags * min_periods if self.relative_lags else self.lags
                 assert len(lags) == len(self.lags)
                 if self.relative_lags:

@@ -5,6 +5,7 @@ import pyforecaster.formatter as pyf
 import logging
 from pyforecaster.plot_utils import ts_animation
 import matplotlib.pyplot as plt
+import seaborn as sb
 
 
 class TestFormatDataset(unittest.TestCase):
@@ -72,8 +73,10 @@ class TestFormatDataset(unittest.TestCase):
                                                                     lags=-np.arange(24*3), relative_lags=False)
         formatter.add_target_transform([3], lags=np.arange(10))
         x_transformed, y_transformed = formatter.transform(self.x2)
-        formatter.prune_dataset_at_stepahead(x_transformed, 4, method='periodic', period='24H')
-
-
+        crosspattern = pd.DataFrame()
+        for i in range(10):
+            x_i = formatter.prune_dataset_at_stepahead(x_transformed, i, method='periodic', period='24H', tol_period='10m')
+            crosspattern = crosspattern.combine_first(pd.DataFrame(1, index=x_i.columns, columns=[i]))
+        sb.heatmap(crosspattern)
 if __name__ == '__main__':
     unittest.main()
