@@ -61,7 +61,7 @@ def summary_scores(x, t, scores, idxs: pd.DataFrame, mask=None, n_quantiles=10):
     # quantize non-integer data
     if np.any(agg_indexes.dtypes != 'int'):
         agg_indexes.loc[:, agg_indexes.dtypes != int] = pd.concat(
-            [pd.qcut(agg_indexes.loc[:, k], n_quantiles) for k in agg_indexes.columns if agg_indexes[k].dtype != int], axis=1)
+            [pd.qcut(agg_indexes.loc[:, k], n_quantiles, duplicates='drop') for k in agg_indexes.columns if agg_indexes[k].dtype != int], axis=1)
 
     scores_df = {}
     for s in scores:

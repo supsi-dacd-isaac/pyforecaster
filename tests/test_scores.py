@@ -33,5 +33,14 @@ class TestFormatDataset(unittest.TestCase):
         assert np.all([s.shape[0] == np.sum([len(v.value_counts()) for k, v in agg_index.items()])
                        for s in scores.values()])
 
+    def test_summaryscore_2(self):
+        agg_index = self.x.index.hour
+        scores = pyme.summary_score(self.x, self.target, score=pyme.rmse, agg_index=agg_index)
+        scores.columns = scores.columns.astype(str) + 'd'
+        from pyforecaster.plot_utils import plot_summary_score
+        plot_summary_score(scores, colorbar_label='rmse', numeric_xticks=True)
+        assert scores.shape == (len(agg_index.unique()), self.target.shape[1])
+
+
 if __name__ == '__main__':
     unittest.main()
