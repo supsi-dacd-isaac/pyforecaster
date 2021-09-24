@@ -20,6 +20,8 @@ class TestFormatDataset(unittest.TestCase):
         self.x2 = pd.DataFrame(
             np.sin(np.arange(len(times)) * 10 * np.pi / len(times)).reshape(-1, 1) * np.random.randn(1, self.n),
             index=times)
+        self.x3 = pd.DataFrame((np.arange(len(times)) % 20).reshape(-1,1) * np.random.rand(1, 3), index=times)
+
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
@@ -78,5 +80,14 @@ class TestFormatDataset(unittest.TestCase):
             x_i = formatter.prune_dataset_at_stepahead(x_transformed, i, method='periodic', period='24H', tol_period='10m')
             crosspattern = crosspattern.combine_first(pd.DataFrame(1, index=x_i.columns, columns=[i]))
         sb.heatmap(crosspattern)
+
+    def test_nonanticipativity(self):
+
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2], ['max'], agg_freq='40min', lags=-1-np.arange(2), relative_lags=True)
+        formatter.add_target_transform([2], lags=-np.arange(30)-1)
+        x_transformed, y_transformed = formatter.transform(self.x3)
+        formatter.plot_transformed_feature(self.x3, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

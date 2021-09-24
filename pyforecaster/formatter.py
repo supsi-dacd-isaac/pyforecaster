@@ -36,6 +36,9 @@ class Formatter:
         return self
 
     def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
+        if np.any(lags>0):
+            self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
+                                 'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
                                   relative_lags=relative_lags)
         self.target_transformers.append(transformer)
@@ -236,7 +239,7 @@ class Transformer:
         :param names: list of columns of the target dataset to which this transformer applies
         :param functions:
         :param agg_freq:
-        :param lags:
+        :param lags: negative lag = FUTURE, positive lag = PAST
         :param logger: auxiliary logger
         :param relative_lags: if True, lags are computed on the base of agg_freq
         """
@@ -308,7 +311,7 @@ class Transformer:
             metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
             metadata_n['aggregation_time'] = self.agg_freq
             metadata_n['lag_time'] = pd.Timedelta(lag_time)
-            metadata_n['referring_time'] = metadata_n['lag_time'] * metadata_n['lag']
+            metadata_n['referring_time'] = - metadata_n['lag_time'] * metadata_n['lag']
             metadata_n['name'] = name
 
             self.metadata = pd.concat([self.metadata, metadata_n])
