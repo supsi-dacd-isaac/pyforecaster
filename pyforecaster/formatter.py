@@ -229,6 +229,29 @@ class Formatter:
 
         return df[features]
 
+    def rename_features_prediction_time(self, x, sa):
+        """
+        Rename features in x such that they contain the relative time w.r.t. the sa step ahead of prediction
+        :param x:
+        :param sa:
+        :return:
+        """
+        metadata = pd.concat([t.metadata for t in self.transformers])
+        target_metadata = pd.concat([t.metadata for t in self.target_transformers])
+
+        # find time of prediction at step ahead sa
+        prediction_time = target_metadata.loc[target_metadata['lag'] == -sa]['referring_time']
+        assert len(prediction_time) == 1, 'Found {} targets at lag {}. This is not supported'.format(
+            len(prediction_time), sa)
+        metadata['new_referring_time'] = pd.TimedeltaIndex(metadata['referring_time'].values - prediction_time.values)
+
+        new_names = metadata.reset_index()['index'].apply(lambda x: x.split('_lag')[0]) + metadata['new_referring_time'].apply(
+            lambda x: hr_timedelta(x, zero_padding=True)).values
+        new_names.index = metadata.index
+        metadata.loc[:, 'new_name'] = new_names
+
+        x.columns = metadata['new_name'].loc[x.columns]
+        return x
 
 class Transformer:
     """
@@ -320,25 +343,32 @@ class Transformer:
         return data
 
 
-def hr_timedelta(t):
+def hr_timedelta(t, zero_padding=False):
     """
     Timedelta64 to human readable format
     :param t:
     :return:
     """
-    t = t.astype('timedelta64[ms]')
-    symbol = 'ms'
-    if t < int(60e3):
-        t = t.astype('timedelta64[s]')
-        symbol = 's'
-    elif t < int(3600e3):
-        t = t.astype('timedelta64[m]')
-        symbol = 'm'
-    elif t < int(24 * 3600e3):
-        t = t.astype('timedelta64[h]')
-        symbol = 'h'
-    elif t < int(365 * 24 * 3600e3):
-        t = t.astype('timedelta64[D]')
-        symbol = 'd'
+    if isinstance(t, pd.Timedelta):
+        t = t.to_timedelta64()
+    t = t.astype('timedelta64[s]').astype(int)
+    sign_t = np.sign(t)
+    t = np.abs(t)
 
-    return '{}{}'.format(t.astype(int), symbol)
+    s = t % 60
+    days = t // (3600 * 24)
+    hours = (t - days * 3600 * 24) // 3600
+    minutes = (t - days * 3600 * 24 - hours * 3600) // 60
+
+    if zero_padding:
+        time = '{:02d}d'.format(days) \
+               + '{:02d}h'.format(hours) \
+               + '{:02d}m'.format(minutes) \
+               + '{:02d}s'.format(s) * (s > 0)
+    else:
+        time = '{}d'.format(days) * (days > 0)\
+               + '{}h'.format(hours) * (hours > 0)\
+               + '{}m'.format(minutes) * (minutes > 0) \
+               + '{}s'.format(s) * (s > 0)
+    time = '-' + time if sign_t == -1 else time
+    return time
