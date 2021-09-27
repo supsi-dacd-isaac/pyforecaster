@@ -206,7 +206,7 @@ class Formatter:
         # retrieve referring_time of the given sa for the target from target_transformers
         target_times = []
         for tt in self.target_transformers:
-            target_times.append(tt.metadata.loc[tt.metadata['lag']==sa, 'referring_time'])
+            target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'referring_time'])
 
         assert len(np.unique(target_times)) == 1, 'target for step ahead {} have different referring_times, ' \
                                              'not supported'.format(sa)
