@@ -200,7 +200,7 @@ class Formatter:
         fold += '   -: train, |=test, x:skip'
         return fold
 
-    def prune_dataset_at_stepahead(self, df, sa, method='periodic', period='24H', tol_period='1H', sa_end=None, keep_last_n_lags=0):
+    def prune_dataset_at_stepahead(self, df, sa, metadata_features, method='periodic', period='24H', tol_period='1H', sa_end=None, keep_last_n_lags=0):
 
         features = []
         # retrieve referring_time of the given sa for the target from target_transformers
@@ -226,7 +226,7 @@ class Formatter:
                                            for t in self.transformers]))
             features = np.unique(features + last_lag_features)
 
-
+        features = np.unique(list(features) + metadata_features)
         return df[features]
 
     def rename_features_prediction_time(self, x, sa):
@@ -250,7 +250,8 @@ class Formatter:
         new_names.index = metadata.index
         metadata.loc[:, 'new_name'] = new_names
 
-        x.columns = metadata['new_name'].loc[x.columns]
+        # if feature doesn't have an associated transformation, do not rename it and bypass it
+        x.columns = [metadata['new_name'].loc[c] if c in metadata.index else c for c in x.columns]
         return x
 
 class Transformer:
