@@ -180,10 +180,11 @@ class Formatter:
             tr_idxs = (time_index < test_window[0] - deadband_time) | (time_index > test_window[1] + deadband_time)
             te_idx = (time_index >= test_window[0]) & (time_index <= test_window[1])
             self.logger.info(self.print_fold(tr_idxs, te_idx))
-            folds['fold_{:>02d}'.format(i)] = pd.DataFrame({'tr':tr_idxs,  'te': te_idx}, index=time_index)
-        return pd.concat(folds, axis=1)
+            yield tr_idxs, te_idx
+            #folds['fold_{:>02d}'.format(i)] = pd.DataFrame({'tr':tr_idxs,  'te': te_idx}, index=time_index)
+        #return pd.concat(folds, axis=1)
 
-    def cv_generator(self, time_index, n_k=4):
+    def cv_generator(self, folds):
         pass
 
     @staticmethod
