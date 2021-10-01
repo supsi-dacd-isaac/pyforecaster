@@ -216,14 +216,14 @@ class Formatter:
         if method == 'periodic':
             # find signals with (target_time - referring_time) multiple of period
             for t in self.transformers:
-                features += list(t.metadata.index[(target_time-t.metadata['referring_time']).abs() % pd.Timedelta(period)
-                                                  <= pd.Timedelta(tol_period)])
+                features += list(t.metadata.index[((target_time-t.metadata['referring_time']).abs() % pd.Timedelta(period)
+                                                  <= pd.Timedelta(tol_period)) & (t.metadata['referring_time']<=target_time)])
         elif method == 'up_to':
             for t in self.transformers:
                 features += list(t.metadata.index[t.metadata['referring_time'] <= target_time])
 
         if keep_last_n_lags > 0:
-            last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(-np.arange(keep_last_n_lags))]
+            last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(np.arange(keep_last_n_lags))]
                                            for t in self.transformers]))
             features = np.unique(features + last_lag_features)
 

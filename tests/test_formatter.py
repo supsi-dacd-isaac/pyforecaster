@@ -59,16 +59,16 @@ class TestFormatDataset(unittest.TestCase):
                                                                     lags=[-1, -2, -10])
         formatter.add_target_transform([3], lags=np.arange(10))
         folds_df = formatter.time_kfcv(self.x.index, 4, 3, x=self.x)
-        for fold_name in folds_df.stack().columns:
-            assert np.sum(folds_df[fold_name]['tr']) + np.sum(folds_df[fold_name]['te']) < len(self.x) - 1
+        for dfi in folds_df:
+            assert np.sum(dfi[0]) + np.sum(dfi[1]) < len(self.x) -1
 
     def test_tkfcv_pretransform(self):
         formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10], relative_lags=True)
         formatter.add_target_transform([3], lags=np.arange(10))
         formatter.transform(self.x2)
         folds_df = formatter.time_kfcv(self.x2.index, 4, 3)
-        for fold_name in folds_df.stack().columns:
-            assert np.sum(folds_df[fold_name]['tr']) + np.sum(folds_df[fold_name]['te']) < len(self.x2) -1
+        for dfi in folds_df:
+            assert np.sum(dfi[0]) + np.sum(dfi[1]) < len(self.x2) -1
 
     def test_prune_at_stepahead(self):
         formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
