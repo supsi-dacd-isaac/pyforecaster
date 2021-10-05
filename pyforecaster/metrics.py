@@ -33,6 +33,15 @@ def nmae(x, t, agg_index=None):
     return (err(x, t) / (t.mean(axis=1).values.reshape(-1,1) + 1)).abs().groupby(agg_index).mean()
 
 
+def make_scorer(metric):
+    def scorer(estimator, X, y):
+        y_hat = estimator.predict(X)
+        if not isinstance(y_hat, pd.DataFrame):
+            y_hat = pd.DataFrame(y_hat, index=y.index)
+        score = metric(y_hat, y)
+        return score.mean().mean()
+    return scorer
+
 def summary_score(x, t, score=rmse, agg_index=None):
     if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
         x.columns = t.columns
