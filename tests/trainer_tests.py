@@ -12,7 +12,7 @@ from pyforecaster.metrics import make_scorer, nmae
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
-        self.t = 500
+        self.t = 100
         self.n = 10
         self.x = pd.DataFrame(np.sin(np.arange(self.t)*10*np.pi/self.t).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
         self.y = self.x  @ np.random.randn(self.n, 5)
@@ -33,9 +33,15 @@ class TestFormatDataset(unittest.TestCase):
 
         n_trials = 20
         n_folds = 5
-        study = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, scoring=make_scorer(nmae), cv=n_folds,
-                           param_space_fun=self.param_space_fun,
-                           hpo_type='full')
+        cv_idxs = []
+        for i in range(5):
+            tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
+            te_idx = ~tr_idx
+            cv_idxs.append((tr_idx, te_idx))
+
+        study = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, scoring=make_scorer(nmae), cv=(f for f in cv_idxs),
+                                   param_space_fun=self.param_space_fun,
+                                   hpo_type='full')
         optuna.visualization.matplotlib.plot_contour(study, [k for k in study.best_params.keys()])
         trials_df = retrieve_cv_results(study)
         assert trials_df['value'].isna().sum() == 0

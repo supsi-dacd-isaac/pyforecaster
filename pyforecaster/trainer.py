@@ -41,13 +41,13 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=nmae, 
         trial.set_user_attr('cv_test_scores', scores)
         score = np.mean(scores)
     elif hpo_type == 'one_fold':
-        tr_idx, te_idx = cv_gen[0]
+        tr_idx, te_idx = list(cv_gen)[0]
         x_tr, x_te, y_tr, y_te = x.loc[tr_idx], x.loc[te_idx], y.loc[tr_idx], y.loc[te_idx]
         model.fit(x_tr, y_tr)
         preds = model.predict(x_te)
         score = scoring(preds, y_te)
     elif hpo_type == 'random_fold':
-        tr_idx, te_idx = np.random.choice(cv, 1)
+        tr_idx, te_idx = np.random.choice(list(cv), 1)
         x_tr, x_te, y_tr, y_te = x.loc[tr_idx], x.loc[te_idx], y.loc[tr_idx], y.loc[te_idx]
         model.fit(x_tr, y_tr)
         preds = model.predict(x_te)
