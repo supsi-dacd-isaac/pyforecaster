@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from itertools import permutations
 
+
 def feature_importance(x, m, n_epsilon=10):
     # isotropic spherical sampling
     n_o, n_f = x.shape()
@@ -37,10 +38,13 @@ def make_scorer(metric):
     def scorer(estimator, X, y):
         y_hat = estimator.predict(X)
         if not isinstance(y_hat, pd.DataFrame):
-            y_hat = pd.DataFrame(y_hat, index=y.index)
+            y_hat = pd.DataFrame(y_hat, index=y.index, columns=y.columns)
+        else:
+            y_hat.columns = y.columns
         score = metric(y_hat, y)
         return score.mean().mean()
     return scorer
+
 
 def summary_score(x, t, score=rmse, agg_index=None):
     if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):

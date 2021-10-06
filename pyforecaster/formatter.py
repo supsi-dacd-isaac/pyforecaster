@@ -26,7 +26,7 @@ class Formatter:
         self.logger.info('Adding time features')
         x.loc[:, 'hour'] = x.index.hour
         x.loc[:, 'dayofweek'] = x.index.dayofweek
-        x.loc[:,'minuteofday'] = x.index.hour + x.index.minute
+        x.loc[:,'minuteofday'] = x.index.hour * 60 + x.index.minute
         return x
 
     def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
