@@ -7,10 +7,11 @@ import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 
-def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, style ='seaborn', **kwargs):
+
+def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
     plt.style.use(style)
     fig, ax = plt.subplots(subplots_tuple[0], subplots_tuple[1], figsize=(width, height), **kwargs)
-    plt.subplots_adjust(bottom=b, left=l, wspace=w)
+    plt.subplots_adjust(bottom=b, left=l, wspace=w, right=r)
     return fig, ax
 
 
@@ -54,6 +55,7 @@ def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_labe
         fig, ax = plt.subplots(1, 1, figsize=(width, height))
     plt.subplots_adjust(bottom=b, left=l, wspace=w)
     sb.heatmap(data=df, ax=ax, cbar_kws={'label': colorbar_label}, **kwargs)
+
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     if rotation_deg:
@@ -72,21 +74,30 @@ def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_labe
 
 def plot_multiple_summary_scores(dfs, width, height, logscale=False, **kwargs):
     if logscale:
-        dfs = [df-1 for df in dfs]
+        dfs = {k:df-1 for k, df in dfs.items()}
 
-    v_min = np.min([f.min().min() for f in dfs])
-    v_max = np.max([f.max().max() for f in dfs])
+    v_min = np.min([f.min().min() for f in dfs.values()])
+    v_max = np.max([f.max().max() for f in dfs.values()])
     #fig, ax = plt.subplots(1, len(dfs), figsize=(width, height))
-    fig, ax = basic_setup((1, len(dfs)), width, height, w=0.5)
-    for i, df in enumerate(dfs):
+    fig, ax = basic_setup((1, len(dfs)), width, height, w=0.05, l=0, b=0.2, r=0.85)
+    for i, df in enumerate(dfs.values()):
+        if i == len(dfs)-1:
+            position = ax[i].get_position().get_points()
+            cb_ax = fig.add_axes([position[1][0] + 0.02, position[0][1], 0.02, position[1][1] - position[0][1]])
+            kwargs.update(cbar_ax=cb_ax, cbar=True)
+        else:
+            kwargs.update(cbar=False)
         if logscale:
-            plot_summary_score(df, norm=colors.SymLogNorm(vmin=v_min, vmax=v_max, linthresh=0.01), ax=ax[i],  cmap='RdBu_r', **kwargs)
+            plot_summary_score(df, norm=colors.SymLogNorm(vmin=v_min, vmax=v_max, linthresh=0.01), ax=ax[i],
+                               cmap='RdBu_r', **kwargs)
         else:
             plot_summary_score(df, vmin=v_min, vmax=v_max, ax=ax[i], **kwargs)
-
+        ax[i].set_title(list(dfs.keys())[i])
 
     remove_ticks(ax[1:], coord='y', target='labels')
+    [a.set_ylabel('') for a in ax[1:]]
     return fig, ax
+
 
 
 def ts_animation(ys:list, ts:list, names:list, frames=150):

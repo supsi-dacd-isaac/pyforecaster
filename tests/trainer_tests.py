@@ -34,7 +34,7 @@ class TestFormatDataset(unittest.TestCase):
         n_trials = 20
         n_folds = 5
         cv_idxs = []
-        for i in range(5):
+        for i in range(n_folds):
             tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
             te_idx = ~tr_idx
             cv_idxs.append((tr_idx, te_idx))

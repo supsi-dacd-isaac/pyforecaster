@@ -255,6 +255,7 @@ class Formatter:
         x.columns = [metadata['new_name'].loc[c] if c in metadata.index else c for c in x.columns]
         return x
 
+
 class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags
@@ -278,7 +279,6 @@ class Transformer:
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
         self.metadata = None
-
 
     def transform(self, x, augment=True, simulate=False):
         """
