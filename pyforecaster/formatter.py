@@ -150,9 +150,9 @@ class Formatter:
         assert n_k >= 2, 'n_k must be bigger than 2, passed: {}'.format(n_k)
         t_start = time_index[0]
         t_end = time_index[-1]
-        split_times = pd.date_range(t_start, t_end, n_k+1)
+        split_times = pd.date_range(t_start, t_end, n_k)
         time_window = split_times[1]-split_times[0]
-        shift_times = pd.date_range(t_start, t_end - time_window, n_k * multiplier_factor + 1)
+        shift_times = pd.date_range(t_start, t_end - time_window, n_k * multiplier_factor)
 
         # deadband time requires to know sampling times of the signals and all the time transformations.
         # If the metadata attribute of self.transformers is empty, meaning that the transform method of the
@@ -179,7 +179,7 @@ class Formatter:
             test_window = [t_i, time_window + t_i]
             tr_idxs = (time_index < test_window[0] - deadband_time) | (time_index > test_window[1] + deadband_time)
             te_idx = (time_index >= test_window[0]) & (time_index <= test_window[1])
-            self.logger.info(self.print_fold(tr_idxs, te_idx))
+            # self.logger.info(self.print_fold(tr_idxs, te_idx))
             yield tr_idxs, te_idx
             #folds['fold_{:>02d}'.format(i)] = pd.DataFrame({'tr':tr_idxs,  'te': te_idx}, index=time_index)
         #return pd.concat(folds, axis=1)
@@ -191,8 +191,9 @@ class Formatter:
     def print_fold(tr_idxs, te_idxs):
         buffers = ~(tr_idxs + te_idxs)
         if sum(buffers) > 0:
-            sampling_step = int(np.max(np.convolve(~(tr_idxs + te_idxs), np.ones(sum(buffers)))))
-            sampling_step = np.minimum(sampling_step, int(len(tr_idxs) / 100))
+            sampling_step = np.quantile(np.diff(np.where(np.diff(buffers.astype(int)))[0]),0.1).astype(int)
+            #sampling_step = int(np.max(np.convolve(~(tr_idxs + te_idxs), np.ones())))
+            #sampling_step = np.minimum(sampling_step, int(len(tr_idxs) / 100))
         else:
             sampling_step = int(len(tr_idxs) / 100)
         fold = ''
