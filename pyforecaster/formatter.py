@@ -1,10 +1,12 @@
 #import category_encoders
+import functools
+
 import numpy as np
 import pandas as pd
 from itertools import product
 from pyforecaster.plot_utils import ts_animation
 import logging
-
+from functools import partial
 
 def get_logger(level=logging.INFO):
 
@@ -308,7 +310,7 @@ class Transformer:
             trans_names = [name]
             function_names = ['none']
             if self.functions:
-                function_names = [s if isinstance(s, str) else s.__name__ for s in self.functions]
+                function_names = [get_fun_name(s) for s in self.functions]
                 hr_agg_freq = self.agg_freq if isinstance(self.agg_freq, str) else hr_timedelta(self.agg_freq.to_timedelta64())
                 trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in function_names]
 
@@ -375,3 +377,15 @@ def hr_timedelta(t, zero_padding=False):
                + '{}s'.format(s) * (s > 0)
     time = '-' + time if sign_t == -1 else time
     return time
+
+
+def get_fun_name(f):
+    if isinstance(f, str):
+        return f
+    elif "__name__" in dir(f):
+        return f.__name__
+    elif isinstance(f, functools.partial):
+        return f.func.__name__
+    else:
+        raise ValueError('Type of function not recognized. It should either be str, have the __name__ attr, '
+                         'or be a functools.partial instance')
