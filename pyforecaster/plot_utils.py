@@ -6,6 +6,8 @@ import pandas as pd
 import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
+from matplotlib.gridspec import GridSpec
+import seaborn as sb
 
 
 def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
@@ -41,6 +43,32 @@ def remove_ticks(axes, coord='y', target='labels'):
                 ax.set_xticklabels([])
                 ax.set_yticklabels([])
 
+
+def jointplot(df, x: str, y: str, grid_steps=4, style='seaborn', fig=None):
+
+    if fig is None:
+        fig = plt.figure()
+    plt.style.use(style)
+
+    gs = GridSpec(grid_steps, grid_steps)
+
+    ax_scatter = fig.add_subplot(gs[1:grid_steps, 0:(grid_steps-1)])
+    ax_hist_x = fig.add_subplot(gs[0, 0:(grid_steps-1)], frameon=False)
+    ax_hist_y = fig.add_subplot(gs[1:grid_steps, (grid_steps-1)],frameon=False)
+    #plt.subplots_adjust(wspace=0.3, hspace=0.3)
+
+    cm = plt.get_cmap('viridis',10)
+    kde_col = cm(4)
+    sb.kdeplot(data=df, x=x, y=y, ax=ax_scatter, levels=10, cmap='mako', shade_lowest=False, alpha=0.5)
+    sb.scatterplot(data=df, x=x, y=y, ax=ax_scatter, s=10)
+    sb.histplot(data=df, x=x, ax=ax_hist_x, kde=True, color=kde_col, bins=30)
+    sb.histplot(data=df, y=y, ax=ax_hist_y, kde=True, color=kde_col, bins=30)
+
+    [remove_ticks(a, b) for a, b in zip([ax_hist_x, ax_hist_y], [x, y])]
+    ax_hist_y.set_ylabel('')
+    ax_hist_x.set_xlabel('')
+
+    return fig
 
 def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
                        colorbar_label='score',  b=0.15, l=0.2, w=0.22, font_scale=0.8, interval_to_ints=True,
