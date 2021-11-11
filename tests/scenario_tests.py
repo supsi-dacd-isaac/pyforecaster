@@ -1,13 +1,14 @@
 import unittest
 import pandas as pd
 import numpy as np
-from pyforecaster.scenarios import ScenGen
+from pyforecaster.forecaster import ScenGen, LinearForecaster
 import logging
 from scipy.stats import multivariate_normal, norm, weibull_min
 import numpy as np
 import seaborn as sb
 import matplotlib.pyplot as plt
 from pyforecaster.plot_utils import jointplot
+from pyforecaster.scenred import scenred, plot_graph, plot_from_graph
 
 
 class TestScenarios(unittest.TestCase):
@@ -16,12 +17,16 @@ class TestScenarios(unittest.TestCase):
         self.t = 24 * n_days
         self.lags = 24
         t_index = pd.date_range('01-01-2020', '01-10-2020', self.t)
-        self.x = pd.DataFrame(np.sin(np.arange(self.t)*2*n_days*np.pi/self.t).reshape(-1,1), index=t_index) \
+        signal = pd.DataFrame(np.sin(np.arange(self.t)*2*n_days*np.pi/self.t).reshape(-1,1), index=t_index) \
                  + 0.1 * np.random.randn(self.t, 1)
-        self.target = pd.concat([self.x.shift(l) for l in np.arange(self.lags)], axis=1)
+        self.target = pd.concat([signal.shift(l) for l in -np.arange(self.lags)], axis=1)
+        self.x = pd.concat([self.target.iloc[:,0].shift(l) for l in np.arange(1,3)], axis=1)
+        self.x = pd.concat([pd.Series(self.x.index.minute + self.x.index.hour*60, index=self.x.index), self.x], axis=1)
+        self.x.fillna(0, inplace=True)
+        self.x = self.x.loc[~self.target.isna().any(axis=1)]
         self.target = self.target.loc[~self.target.isna().any(axis=1)]
         self.target.columns = ['target_{}'.format(i) for i in range(self.lags)]
-        self.q_vect = np.linspace(0.1, 0.9, 9).round(2)
+        self.q_vect = np.linspace(0, 1, 11)[1:-1]
 
         # create normal predictions with perfect mean knowledge
         self.quantiles_df = pd.concat({q: self.target + norm.ppf(q) * np.linspace(0.3, 1, self.lags)
@@ -31,8 +36,8 @@ class TestScenarios(unittest.TestCase):
         self.logger = logging.getLogger()
 
     def test_copulas(self):
-        sg = ScenGen(cov_est_method='vanilla', q_vect=self.q_vect).fit(self.target)
-        sg_gl = ScenGen(cov_est_method='glasso_cv', q_vect=self.q_vect).fit(self.target)
+        sg = ScenGen(cov_est_method='vanilla').fit(self.target)
+        sg_gl = ScenGen(cov_est_method='glasso_cv').fit(self.target)
         assert 1 == 1
 
     def test_proof_of_concept(self):
@@ -62,10 +67,9 @@ class TestScenarios(unittest.TestCase):
         assert 1 == 1
 
     def test_scen_gen_df(self):
-        sg = ScenGen(q_vect=self.q_vect, cov_est_method='shrunk').fit(self.target)
+        sg = ScenGen(cov_est_method='shrunk').fit(self.target)
         rand_idx = np.random.choice(len(self.quantiles_df), 5)
-        scenarios = sg.predict(self.quantiles_df.iloc[rand_idx], 20)
-
+        scenarios = sg.predict(self.quantiles_df.iloc[rand_idx], 20, kind='scenarios', q_vect=self.q_vect)
 
         cm = plt.get_cmap('viridis', 4)
         for i, randix in enumerate(rand_idx):
@@ -76,6 +80,46 @@ class TestScenarios(unittest.TestCase):
             plt.plot(self.target.iloc[randix, :].values, linestyle='--')
         assert 1 == 1
 
+    def test_scenred(self):
+        sg = ScenGen(cov_est_method='shrunk').fit(self.target)
+        rand_idx = np.random.choice(len(self.quantiles_df), 2)
+        scenarios = sg.predict(self.quantiles_df.iloc[rand_idx], 100, kind='scenarios', q_vect=self.q_vect)
+        scenarios_per_step = np.linspace(1, 40, len(scenarios[0]), dtype=int)
+
+        for i, rand_i in enumerate(rand_idx):
+            [S_init0, P_sn, J_sn, Me_sn, gn] = scenred(scenarios[i], nodes=scenarios_per_step)
+            plot_graph(gn)
+            plot_from_graph(gn)
+            cm = plt.get_cmap('viridis', 4)
+            for q in range(int(len(self.q_vect) / 2)):
+                plt.fill_between(range(self.lags), self.quantiles_df[self.q_vect[q]].iloc[rand_i, :],
+                                 self.quantiles_df[self.q_vect[-q - 1]].iloc[rand_i, :], color=cm(q), alpha=0.2)
+
+            plt.plot(self.target.iloc[rand_i, :].values, linestyle='--')
+
+        trees = sg.predict(self.quantiles_df.iloc[rand_idx], 100, kind='tree', q_vect=self.q_vect)
+
+        assert 1 == 1
+
+    def test_forecaster(self):
+        lf = LinearForecaster().fit(self.x, self.target)
+        preds = lf.predict(self.x)
+        rand_idx = np.random.choice(np.arange(len(self.x)), 2)
+        q_preds = lf.predict_quantiles(self.x.iloc[rand_idx,:])
+        scenarios = lf.predict_scenarios(self.x.iloc[rand_idx,:], q_vect=self.q_vect)
+        trees = lf.predict_trees(self.x.iloc[rand_idx,:], scenarios_per_step=np.linspace(1,20,scenarios.shape[1], dtype=int))
+
+        for i, rand_i in enumerate(rand_idx):
+            plot_graph(trees[i])
+            plot_from_graph(trees[i])
+            cm = plt.get_cmap('viridis', 4)
+            for q in range(int(len(self.q_vect) / 2)):
+                plt.fill_between(range(self.lags), q_preds[i, :, q],
+                                 q_preds[i, :, -q - 1], color=cm(q), alpha=0.2)
+
+            plt.plot(self.target.iloc[rand_i, :].values, linestyle='--')
+            plt.plot(preds.iloc[rand_idx[i], :])
+        assert 1==1
 
 if __name__ == '__main__':
     unittest.main()
