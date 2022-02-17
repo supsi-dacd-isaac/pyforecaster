@@ -4,7 +4,6 @@ from tqdm import tqdm
 from pandarallel import pandarallel
 import logging
 import ray
-ray.init()
 
 
 def get_logger(level=logging.INFO):
@@ -15,6 +14,8 @@ def get_logger(level=logging.INFO):
 
 
 def parallelize_columns(f, df, n_splits=None):
+    if not ray.is_initialized():
+        ray.init()
     if n_splits is None:
         n_splits = int(ray.available_resources()['CPU'])
 
@@ -26,6 +27,7 @@ def parallelize_columns(f, df, n_splits=None):
 
     dfs = np.array_split(df, n_splits, axis=1)
     res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=1)
+    ray.shutdown()
     return res
 
 # This function is used to reduce memory of a pandas dataframe
@@ -91,6 +93,5 @@ if __name__ == '__main__':
     print(df.memory_usage().sum())
     dfa = reduce_mem_usage(df, logger=logger, parallel=True)
     print(dfa.memory_usage().sum())
-    df_b = reduce_mem_usage(df, logger=logger, parallel=False)
 
-    ray.shutdown()
+
