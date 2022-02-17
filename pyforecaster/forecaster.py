@@ -6,6 +6,8 @@ from . import COPULA_MAP
 from scipy.interpolate import interp1d
 from .scenred import scenred
 from abc import abstractmethod
+from lightgbm import LGBMRegressor, Dataset, train
+from sklearn.linear_model import RidgeCV, LinearRegression
 
 
 class ScenarioGenerator:
@@ -44,11 +46,12 @@ class ScenarioGenerator:
 
 
 class LinearForecaster(ScenarioGenerator):
-    def __init__(self, **scengen_kwgs):
+    def __init__(self, kind='linear', **scengen_kwgs):
         super().__init__(**scengen_kwgs)
-        self.coeffs = None
+        self.m = None
         self.err_distr = None
         self.q_vect = np.linspace(0,1,11)[1:-1]
+        self.kind = kind
 
     def fit(self, x, y):
         super().fit(x, y)
@@ -56,18 +59,62 @@ class LinearForecaster(ScenarioGenerator):
             x = x.values
         if isinstance(y, pd.DataFrame):
             y = y.values
-        self.coeffs = np.dot(np.linalg.pinv(x), y)
+        if self.kind == 'linear':
+            self.m = LinearRegression().fit(x, y)
+        elif self.kind == 'ridge':
+            self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x, y)
         preds = self.predict(x)
         self.err_distr = np.quantile(preds-y, self.q_vect, axis=0).T
         return self
 
     def predict(self, x, **kwargs):
-        return x @ self.coeffs
+        if isinstance(x, pd.DataFrame):
+            x = x.values
+        return self.m.predict(x)
+
+    def predict_quantiles(self, x, **kwargs):
+        if isinstance(x, pd.DataFrame):
+            x = x.values
+        preds = self.predict(x)
+        return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
+
+
+class LGBForecaster(ScenarioGenerator):
+    def __init__(self, lgb_pars, **scengen_kwgs):
+        super().__init__(**scengen_kwgs)
+        self.m = []
+        self.lgb_pars = {"objective": "regression",
+                         "max_depth": 20,
+                         "num_leaves": 100,
+                         "learning_rate": 0.1,
+                         "verbose": -1,
+                         "metric": "l2",
+                         "min_data": 4,
+                         "num_threads": 8}
+        self.lgb_pars.update(lgb_pars)
+        self.err_distr = None
+        self.q_vect = np.linspace(0,1,11)[1:-1]
+
+    def fit(self, x, y):
+        super().fit(x, y)
+        for i in range(y.shape[1]):
+            lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
+            m = train(self.lgb_pars, lgb_data)
+            self.m.append(m)
+
+        preds = self.predict(x)
+        self.err_distr = np.quantile(preds.values-y.values, self.q_vect, axis=0).T
+        return self
+
+    def predict(self, x, **kwargs):
+        preds = []
+        for m in self.m:
+            preds.append(m.predict(x).reshape(-1, 1))
+        return pd.DataFrame(np.hstack(preds), index=x.index)
 
     def predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
-
 
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', **copula_kwargs):

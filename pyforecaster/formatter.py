@@ -26,9 +26,9 @@ class Formatter:
 
     def add_time_features(self, x):
         self.logger.info('Adding time features')
-        x.loc[:, 'hour'] = x.index.hour
-        x.loc[:, 'dayofweek'] = x.index.dayofweek
-        x.loc[:,'minuteofday'] = x.index.hour * 60 + x.index.minute
+        time_df = pd.DataFrame(np.vstack([x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]).T,
+                               columns=['hour', 'dayofweek', 'minuteofday'], index=x.index)
+        x = pd.concat([x, time_df], axis=1)
         return x
 
     def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
