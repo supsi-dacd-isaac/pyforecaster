@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from pandarallel import pandarallel
 import logging
 import ray
 
