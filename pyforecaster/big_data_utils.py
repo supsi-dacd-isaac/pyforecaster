@@ -13,32 +13,38 @@ def get_logger(level=logging.INFO):
     return logger
 
 
-def parallelize_columns(f, df, n_splits=None):
+def fdf_parallel(f, df, n_splits=None, axis=0):
+    """
+    Parallelize a function to apply on a pandas DataFrame.
+    :param f:
+    :param df:
+    :param n_splits:
+    :param axis: parallelization axis. If 0, df is splitted in horizontal slices, if 1 df is splitted vertically
+    :return:
+    """
+
+
+    assert axis in [0, 1], 'axis must be in {0, 1}'
+
     if not ray.is_initialized():
         ray.init()
+
     if n_splits is None:
         n_splits = int(ray.available_resources()['CPU'])
 
     @ray.remote
     def f_rem(df):
-        for c in df.columns:
-            df[c] = f(df[c])
+        df = f(df)
         return df
 
-    dfs = np.array_split(df, n_splits, axis=1)
-    res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=1)
+    dfs = np.array_split(df, n_splits, axis=axis)
+    res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=axis)
     ray.shutdown()
     return res
-
-# This function is used to reduce memory of a pandas dataframe
-# The idea is cast the numeric type to another more memory-effective type
-# For ex: Features "age" should only need type='np.int8'
-# Source: https://www.kaggle.com/gemartin/load-data-reduce-memory-usage
 
 
 def reduce_mem_usage_series(s):
     col_type = s.dtype
-
     if col_type != object and col_type.name != 'category' and 'datetime' not in col_type.name:
         c_min = s.min()
         c_max = s.max()
@@ -51,16 +57,20 @@ def reduce_mem_usage_series(s):
                 s = s.astype(np.int32)
             elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
                 s = s.astype(np.int64)
-        else:
+        elif str(col_type)[:5] == 'float':
             if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
                 s = s.astype(np.float16)
             elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
                 s = s.astype(np.float32)
             else:
                 s = s.astype(np.float64)
-    elif 'datetime' not in col_type.name:
-        s = s.astype('category')
     return s
+
+
+def reduce_mem_usage_df(df):
+    for c in df.columns:
+        df[c] = reduce_mem_usage_series(df[c])
+    return df
 
 
 def reduce_mem_usage(df, parallel=True, logger=None):
@@ -73,7 +83,7 @@ def reduce_mem_usage(df, parallel=True, logger=None):
     logger.info('Memory usage of dataframe is {:.2f} MB'.format(start_mem))
 
     if parallel:
-        df = parallelize_columns(reduce_mem_usage_series, df)
+        df = fdf_parallel(reduce_mem_usage_df, df, axis=1)
     else:
         for col in tqdm(df.columns):
             df[col] = reduce_mem_usage_series(df[col])
@@ -93,5 +103,4 @@ if __name__ == '__main__':
     print(df.memory_usage().sum())
     dfa = reduce_mem_usage(df, logger=logger, parallel=True)
     print(dfa.memory_usage().sum())
-
 
