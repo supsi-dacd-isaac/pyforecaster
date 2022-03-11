@@ -3,6 +3,23 @@ import numpy as np
 from tqdm import tqdm
 import logging
 import ray
+from multiprocessing import Pool, cpu_count
+import sharedmem
+from time import time
+
+
+def mapper(f, pars, *argv, sharedmem=False, **kwarg):
+    # create a shared object from X
+    if sharedmem:
+        argv = [sharedmem.copy(x) for x in argv]
+
+    # parallel process over shared object
+    pool = Pool(cpu_count() - 1)
+    res = pool.starmap_async(f, [(p, *argv, *list(kwarg.values())) for p in pars])
+    a = res.get()
+    pool.close()
+    pool.join()
+    return a
 
 
 def get_logger(level=logging.INFO):
@@ -22,29 +39,46 @@ def fdf_parallel(f, df, n_splits=None, axis=0):
     :return:
     """
 
-
     assert axis in [0, 1], 'axis must be in {0, 1}'
 
-    if not ray.is_initialized():
-        ray.init()
-
     if n_splits is None:
-        n_splits = int(ray.available_resources()['CPU'])
-
-    @ray.remote
-    def f_rem(df):
-        df = f(df)
-        return df
+        n_splits = cpu_count()
 
     dfs = np.array_split(df, n_splits, axis=axis)
-    res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=axis)
-    ray.shutdown()
+
+    test_df = df.iloc[:n_splits, :n_splits]
+    try:
+        f(test_df.values)
+        numpy_parallelizable = True
+    except:
+        numpy_parallelizable = False
+
+    if numpy_parallelizable:
+        res = mapper(f, [f.values for f in dfs])
+
+        if axis==0:
+            res = np.vstack(res)
+        else:
+            res = np.hstack(res)
+        if res.shape == df.shape:
+            res = pd.DataFrame(res, columns=df.columns, index=df.index)
+
+    else:
+        if not ray.is_initialized():
+            ray.init()
+        @ray.remote
+        def f_rem(df):
+            df = f(df)
+            return df
+        res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=axis)
+        ray.shutdown()
+
     return res
 
 
 def reduce_mem_usage_series(s):
     col_type = s.dtype
-    if col_type != object and col_type.name != 'category' and 'datetime' not in col_type.name:
+    if col_type != object:
         c_min = s.min()
         c_max = s.max()
         if str(col_type)[:3] == 'int':
@@ -67,12 +101,16 @@ def reduce_mem_usage_series(s):
 
 
 def reduce_mem_usage_df(df):
-    for c in df.columns:
-        df[c] = reduce_mem_usage_series(df[c])
+    df = pd.concat([reduce_mem_usage_series(df[c]) for c in df.columns], axis=1)
     return df
 
 
-def reduce_mem_usage(df, parallel=True, logger=None):
+def reduce_mem_usage_np(x):
+    x = np.hstack([reduce_mem_usage_series(x[:, [c]]) for c in range(x.shape[1])])
+    return x
+
+
+def reduce_mem_usage(df, parallel=True, logger=None, use_ray=False):
     """ iterate through all the columns of a dataframe and modify the data type
         to reduce memory usage.
     """
@@ -82,7 +120,10 @@ def reduce_mem_usage(df, parallel=True, logger=None):
     logger.info('Memory usage of dataframe is {:.2f} MB'.format(start_mem))
 
     if parallel:
-        df = fdf_parallel(reduce_mem_usage_df, df, axis=1)
+        if use_ray:
+            df = fdf_parallel(reduce_mem_usage_df, df, axis=1)
+        else:
+            df = fdf_parallel(reduce_mem_usage_np, df, axis=1)
     else:
         for col in tqdm(df.columns):
             df[col] = reduce_mem_usage_series(df[col])
@@ -94,12 +135,28 @@ def reduce_mem_usage(df, parallel=True, logger=None):
     return df
 
 
+def f_test(x):
+    return x/x.mean()
+
+
 if __name__ == '__main__':
     logger = get_logger()
-    N = 1000
+    N = 100
     t = 10000
-    df = pd.DataFrame(np.random.randn(t, N))
-    print(df.memory_usage().sum())
-    dfa = reduce_mem_usage(df, logger=logger, parallel=True)
-    print(dfa.memory_usage().sum())
+    df = pd.DataFrame(np.random.randn(t, N)**4)
+    """
+    res = fdf_parallel(f_test, df)
+    
 
+    t0 = time()
+    dfa = reduce_mem_usage(df, logger=logger, parallel=False)
+    print('time without parallelizing: {}'.format(time() - t0))
+    """
+
+    t0 = time()
+    dfa = reduce_mem_usage(df, logger=logger, parallel=True, use_ray=True)
+    print('time using ray: {}'.format(time() - t0))
+
+    t0 = time()
+    dfa = reduce_mem_usage(df, logger=logger, parallel=True, use_ray=False)
+    print('time using mp: {}'.format(time() - t0))

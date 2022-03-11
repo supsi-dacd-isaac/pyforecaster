@@ -1,4 +1,4 @@
-from sklearn.model_selection import cross_validate
+from sklearn.model_selection import cross_validate, KFold
 import optuna
 import pandas as pd
 from pyforecaster.metrics import nmae
@@ -13,7 +13,7 @@ def default_param_space_fun(trial):
 
 
 def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=nmae, param_space_fun=default_param_space_fun,
-              hpo_type='full', **cv_kwargs):
+              hpo_type='full', storage=None, storage_fun=None, **cv_kwargs):
     """
     :param trial: optuna trial
     :param x: feature set
@@ -36,39 +36,65 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=nmae, 
 
     # retrieve cross validation score
     if hpo_type == 'full':
+        if storage_fun is not None:
+            cv_kwargs.update({'return_estimator': True})
         cv_results = cross_validate(model, x, y, scoring=scoring, cv=cv_gen, **cv_kwargs)
         scores = cv_results['test_score']
         trial.set_user_attr('cv_test_scores', scores)
         score = np.mean(scores)
+        if storage_fun:
+            cv_results['y_te'] = {'fold_{}'.format(i): y.loc[cv_idxs[1]] for i, cv_idxs in enumerate(cv)}
+            cv_results['y_hat'] = {'fold_{}'.format(i): m.predict(x.loc[cv_idxs[1]]) for i, cv_idxs, m in
+                                   zip(range(len(cv)), cv, cv_results['estimator'])}
     elif hpo_type == 'one_fold':
         tr_idx, te_idx = list(cv_gen)[0]
         x_tr, x_te, y_tr, y_te = x.loc[tr_idx], x.loc[te_idx], y.loc[tr_idx], y.loc[te_idx]
         model.fit(x_tr, y_tr)
-        preds = model.predict(x_te)
-        score = scoring(preds, y_te)
+        y_hat = model.predict(x_te)
+        score = scoring(model, x_te, y_te)
+        cv_results = {'estimator': model, 'y_te': y_te, 'y_hat': y_hat}
     elif hpo_type == 'random_fold':
         tr_idx, te_idx = np.random.choice(list(cv), 1)
         x_tr, x_te, y_tr, y_te = x.loc[tr_idx], x.loc[te_idx], y.loc[tr_idx], y.loc[te_idx]
         model.fit(x_tr, y_tr)
-        preds = model.predict(x_te)
-        score = scoring(preds, y_te)
+        y_hat = model.predict(x_te)
+        score = scoring(model, x_te, y_te)
+        cv_results = {'estimator': model, 'y_te': y_te, 'y_hat': y_hat}
     else:
         raise ValueError
+
+    # this is thought to permanently store some function outputs that take as input the current trained model
+    if storage_fun is not None:
+        storage_fun(storage, cv_results)
 
     return score
 
 
-def hyperpar_optimizer(x, y, model, n_trials, scoring, cv, param_space_fun=default_param_space_fun,
-                       hpo_type='full', sampler=None, **cv_kwargs):
+def hyperpar_optimizer(x, y, model, n_trials=40, scoring=nmae, cv=5, param_space_fun=default_param_space_fun,
+                       hpo_type='full', sampler=None, callbacks=None, storage_fun=None,  **cv_kwargs):
     if sampler is None:
         sampler = optuna.samplers.TPESampler()
     study = optuna.create_study(direction="minimize", sampler=sampler)
     if cv is not list:
+        if isinstance(cv, int) or isinstance(cv, float):
+            cv = list(KFold(int(cv)).split(x, y))
         cv = list(cv)
+
+    if storage_fun is not None:
+        stored_replies = []
+    else:
+        stored_replies = None
     obj_fun = partial(objective, x=x, y=y, model=model, cv=cv, scoring=scoring, param_space_fun=param_space_fun,
-                      hpo_type=hpo_type, **cv_kwargs)
-    study.optimize(obj_fun, n_trials=n_trials)
-    return study
+                      hpo_type=hpo_type, storage_fun=storage_fun, storage=stored_replies, **cv_kwargs)
+
+    study.optimize(obj_fun, n_trials=n_trials, callbacks=callbacks)
+
+    return study, stored_replies
+
+
+def base_storage_fun(storage, results):
+    reply = results['y_hat']
+    storage.append(reply)
 
 
 def retrieve_cv_results(study):
