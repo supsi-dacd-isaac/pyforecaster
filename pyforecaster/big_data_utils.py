@@ -44,8 +44,10 @@ def fdf_parallel(f, df, n_splits=None, axis=0):
     if n_splits is None:
         n_splits = cpu_count()
 
-    dfs = np.array_split(df, n_splits, axis=axis)
-
+    if df.shape[1] > n_splits:
+        dfs = np.array_split(df, n_splits, axis=axis)
+    else:
+        dfs = [df]
     test_df = df.iloc[:n_splits, :n_splits]
     try:
         f(test_df.values)
@@ -91,9 +93,9 @@ def reduce_mem_usage_series(s):
             elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
                 s = s.astype(np.int64)
         elif str(col_type)[:5] == 'float':
-            if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
-                s = s.astype(np.float16)
-            elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+            # if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+            #     s = s.astype(np.float16)
+            if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
                 s = s.astype(np.float32)
             else:
                 s = s.astype(np.float64)
@@ -106,7 +108,11 @@ def reduce_mem_usage_df(df):
 
 
 def reduce_mem_usage_np(x):
-    x = np.hstack([reduce_mem_usage_series(x[:, [c]]) for c in range(x.shape[1])])
+    try:
+        x = np.hstack([reduce_mem_usage_series(x[:, [c]]) for c in range(x.shape[1])])
+    except:
+        print(1)
+
     return x
 
 

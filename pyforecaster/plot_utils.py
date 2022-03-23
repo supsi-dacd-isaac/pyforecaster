@@ -7,7 +7,6 @@ import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
-import seaborn as sb
 
 
 def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
@@ -70,13 +69,35 @@ def jointplot(df, x: str, y: str, grid_steps=4, style='seaborn', fig=None):
 
     return fig
 
+
 def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_label='aggregation [-]',
                        colorbar_label='score',  b=0.15, l=0.2, w=0.22, font_scale=0.8, interval_to_ints=True,
-                       numeric_xticks=False, rotation_deg=None, ax=None, **kwargs):
+                       numeric_xticks=False, rotation_deg=None, ax=None, label_specs=None, **kwargs):
 
     if interval_to_ints and np.all([isinstance(i, pd.Interval) for i in df.index]):
         int_intervals = [pd.Interval(i.left.astype(int), i.right.astype(int)) for i in df.index]
         df.index = int_intervals
+    if isinstance(label_specs, dict):
+        for k, v in label_specs.items():
+            idx = df.index if k=='y' else df.columns
+
+            if 'round' in v.keys():
+                if v['round'] == 'int':
+                    idx = [pd.Interval(int(i.left), int(i.right)) for i in idx]
+                else:
+                    idx = [pd.Interval(np.round(i.left, v['round']), np.round(i.right,v['round'])) for i in idx]
+
+            if 'unify' in v.keys():
+                if v['unify'] == 'left':
+                    idx = [i.left for i in idx]
+                elif v['unify'] == 'mean':
+                    idx = [np.mean(i.left + i.right) for i in idx]
+
+
+            if k == 'y':
+                df.index = idx
+            else:
+                df.columns = idx
 
     sb.set(font_scale=font_scale)
     if ax is None:
@@ -94,7 +115,7 @@ def plot_summary_score(df, width=4.5, height=3, x_label='step ahead [-]', y_labe
     ax.set_xticks(ax.get_xticks()[::step])
     if numeric_xticks:
         ax.set_xticks(np.linspace(0, len(df.columns), 7))
-        ax.set_xticklabels(np.linspace(0, len(df.columns), 7,dtype=int))
+        ax.set_xticklabels(np.linspace(0, len(df.columns), 7, dtype=int))
 
     fig = plt.gcf()
     return fig, ax
@@ -126,6 +147,17 @@ def plot_multiple_summary_scores(dfs, width, height, logscale=False, **kwargs):
     [a.set_ylabel('') for a in ax[1:]]
     return fig, ax
 
+
+def hist_2d(data, value, x, y, plot=True, qs=None, **basic_setup_kwargs):
+    if qs is None:
+        qs = np.linspace(0.1, 0.9, 11)
+    hist = data[value].groupby([pd.cut(data[x], bins=data[x].quantile(qs), duplicates='drop'),
+                                pd.cut(data[y], bins=data[y].quantile(qs), duplicates='drop')])\
+        .mean().unstack(fill_value=0)
+    if plot:
+        fig, ax = plot_summary_score(hist, **basic_setup_kwargs)
+        return fig, ax
+    return hist
 
 
 def ts_animation(ys:list, ts:list, names:list, frames=150):

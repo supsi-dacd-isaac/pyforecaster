@@ -1,7 +1,7 @@
 from sklearn.model_selection import cross_validate, KFold
 import optuna
 import pandas as pd
-from pyforecaster.metrics import nmae
+from pyforecaster.metrics import nmae, make_scorer
 from functools import partial
 import numpy as np
 
@@ -12,7 +12,7 @@ def default_param_space_fun(trial):
     return param_space
 
 
-def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=nmae, param_space_fun=default_param_space_fun,
+def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, param_space_fun=default_param_space_fun,
               hpo_type='full', storage=None, storage_fun=None, **cv_kwargs):
     """
     :param trial: optuna trial
@@ -70,8 +70,12 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=nmae, 
     return score
 
 
-def hyperpar_optimizer(x, y, model, n_trials=40, scoring=nmae, cv=5, param_space_fun=default_param_space_fun,
+def hyperpar_optimizer(x, y, model, n_trials=40, scoring=None, cv=5, param_space_fun=default_param_space_fun,
                        hpo_type='full', sampler=None, callbacks=None, storage_fun=None,  **cv_kwargs):
+    # set default scorer
+    if scoring is None:
+        scoring = make_scorer(nmae)
+
     if sampler is None:
         sampler = optuna.samplers.TPESampler()
     study = optuna.create_study(direction="minimize", sampler=sampler)
