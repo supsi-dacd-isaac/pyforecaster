@@ -190,3 +190,29 @@ def ts_animation(ys:list, ts:list, names:list, frames=150):
 
     return ani
 
+
+def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150):
+    "plot the first n_rows of the two y_te and y_hat matrices"
+    fig, ax = plt.subplots(1)
+    lines = []
+    f_min = np.min([np.min(y) for y in ys])
+    f_max = np.max([np.max(y) for y in ys])
+    cm = plt.get_cmap('Set1')
+    def init():
+        for y, s_t, e_t, idx in zip(ys, start_t, end_t, range(len(ys))):
+            l = [ax.stairs(y_j.ravel(), np.array([s_t.iloc[j]/np.timedelta64(3600*24,'s'), e_t.iloc[j]/np.timedelta64(3600*24,'s')]), color=cm(idx)) for j, y_j in enumerate(y[0, :])]
+            lines.append(l)
+        ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
+
+        return [item for sublist in lines for item in sublist]
+
+    def animate(i):
+        for y, l, s_t, e_t in zip(ys, lines, start_t, end_t):
+            for j, l_j in enumerate(l):
+                l_j.set_data(y[i, j].ravel(), np.array([s_t.iloc[j]/np.timedelta64(3600*24,'s'), e_t.iloc[j]/np.timedelta64(3600*24,'s')]))
+        return [item for sublist in lines for item in sublist]
+
+    plt.pause(1e-5)
+    ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=100, repeat=False)
+
+    return ani

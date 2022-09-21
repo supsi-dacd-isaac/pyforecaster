@@ -6,7 +6,7 @@ import logging
 from pyforecaster.plot_utils import ts_animation
 import matplotlib.pyplot as plt
 import seaborn as sb
-
+from time import time
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -18,9 +18,16 @@ class TestFormatDataset(unittest.TestCase):
 
         times = pd.date_range('01-01-2020', '01-05-2020', freq='20min')
         self.x2 = pd.DataFrame(
-            np.sin(np.arange(len(times)) * 10 * np.pi / len(times)).reshape(-1, 1) * np.random.randn(1, self.n),
+            np.sin(np.arange(len(times)) * 10 * np.pi / len(times)).reshape(-1, 1) * np.random.randn(1, self.n) + np.cumsum(np.random.randn(len(times))).reshape(-1, 1),
             index=times)
         self.x3 = pd.DataFrame((np.arange(len(times)) % 20).reshape(-1,1) * np.random.rand(1, 3), index=times)
+
+        n_steps = 144 * 300
+        self.x4 = pd.DataFrame(
+            np.sin(np.arange(n_steps) * 10 * np.pi / n_steps).reshape(-1, 1) * np.random.randn(1,
+                                                                                                     self.n) + np.cumsum(
+                np.random.randn(n_steps)).reshape(-1, 1),
+            index=pd.date_range('01-01-2020', '01-05-2020', n_steps))
 
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
@@ -82,11 +89,45 @@ class TestFormatDataset(unittest.TestCase):
         sb.heatmap(crosspattern)
 
     def test_nonanticipativity(self):
-
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2], ['max'], agg_freq='40min', lags=-1-np.arange(2), relative_lags=True)
+        """
+        You should see 30 steps of future green target following two series of 2 points.
+        :return:
+        """
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2], ['mean', 'min'], agg_freq='80min', lags=np.arange(2), relative_lags=True)
         formatter.add_target_transform([2], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x3)
         formatter.plot_transformed_feature(self.x3, 2)
+
+    def test_aggregated_transform(self):
+        """
+        You should see min-max transform enveloping the signal
+        :return:
+        """
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        formatter.add_target_transform([0], lags=-np.arange(30)-1)
+        x_transformed, y_transformed = formatter.transform(self.x2)
+        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+
+
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], ['min', 'max'], agg_bins=[0, 1, 4, 10])
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        formatter.add_transform([0], ['mean'], lags=np.arange(10), agg_freq='20min', relative_lags=True)
+        formatter.add_target_transform([0], lags=-np.arange(30)-1)
+        x_transformed, y_transformed = formatter.transform(self.x3)
+        formatter.plot_transformed_feature(self.x3, 0, frames=30)
+
+        x_transformed, y_transformed = formatter.transform(self.x2)
+        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+
+    def test_speed(self):
+        t0 = time()
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], ['mean'], lags=np.arange(10),
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=np.hstack([144*7-np.arange(6)*144, 144-np.arange(int(144/6)+1)*6]))
+        x_transformed, y_transformed = formatter.transform(self.x4)
+        print('elapsed time to transform {} points into a {}x{} df: {}s '.format(self.x4.shape[0], *x_transformed.shape, time()-t0))
 
 
 if __name__ == '__main__':

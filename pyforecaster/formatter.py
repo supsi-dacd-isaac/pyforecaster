@@ -4,9 +4,11 @@ import functools
 import numpy as np
 import pandas as pd
 from itertools import product
-from pyforecaster.plot_utils import ts_animation
+from pyforecaster.plot_utils import ts_animation, ts_animation_bars
 import logging
 from functools import partial
+from scipy.stats import binned_statistic
+from typing import Union
 
 def get_logger(level=logging.INFO):
 
@@ -31,18 +33,18 @@ class Formatter:
         x = pd.concat([x, time_df], axis=1)
         return x
 
-    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
+    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags)
+                                  relative_lags=relative_lags, agg_bins=agg_bins)
         self.transformers.append(transformer)
         return self
 
-    def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False):
+    def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
         if np.any(lags>0):
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags)
+                                  relative_lags=relative_lags, agg_bins=agg_bins)
         self.target_transformers.append(transformer)
         return self
 
@@ -85,20 +87,23 @@ class Formatter:
         for tr in self.target_transformers:
             _ = tr.transform(x, simulate=True)
 
-    def plot_transformed_feature(self, x, feature):
+    def plot_transformed_feature(self, x, feature, frames=100):
         x_tr, target = self.transform(x)
         all_feats = pd.concat([x_tr, target], axis=1)
         fs = []
-        ts = []
+        start_times = []
+        end_times = []
         names = []
         for t in self.transformers + self.target_transformers:
             derived_features = t.metadata.loc[t.metadata['name'] == feature]
             if len(derived_features) > 0:
                 for function in derived_features['function'].unique():
                     fs.append(all_feats[derived_features.index[derived_features['function']==function]].values)
-                    ts.append(t.metadata.loc[derived_features.index[derived_features['function']==function], 'referring_time'])
+                    start_times.append(t.metadata.loc[derived_features.index[derived_features['function']==function], 'start_time'])
+                    end_times.append(
+                        t.metadata.loc[derived_features.index[derived_features['function'] == function], 'end_time'])
 
-        ani = ts_animation(fs, ts, names)
+        ani = ts_animation_bars(fs, start_times, end_times, names, frames=frames)
         return ani
 
     def cat_encoding(self, df_train, df_test, target, encoder=None, cat_features=None):
@@ -263,25 +268,41 @@ class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags
     """
-    def __init__(self, names, functions=None, agg_freq=None, lags=None, logger=None, relative_lags=False):
+    Anyarray = Union[tuple, np.ndarray, list, None]
+    def __init__(self, names, functions:Anyarray=None, agg_freq=None, lags:Anyarray=None, logger=None,
+                 relative_lags:bool=False, agg_bins:Anyarray=None):
         """
         :param names: list of columns of the target dataset to which this transformer applies
-        :param functions:
-        :param agg_freq:
-        :param lags: negative lag = FUTURE, positive lag = PAST
+        :param functions: list of functions
+        :param agg_freq: str, frequency of aggregation
+        :param lags: negative lag = FUTURE, positive lag = PAST. This is due to the fact that usually we are interested
+                     in transformation of variables in the past when we're doing forecasting
         :param logger: auxiliary logger
         :param relative_lags: if True, lags are computed on the base of agg_freq
+        :param agg_bins: if agg_bins is not None, ignore agg_freq and produce binned statistics of functions using the
+                         values in the agg_bins array for the bins. [0, 2, 5] means two bins, the first one of two
+                         elements (0, 1), the second one of 3 elements, (2, 3, 4).
         """
         assert isinstance(functions, list) or functions is None, 'functions must be a list of strings or functions'
         self.names = names
         self.functions = functions
         self.agg_freq = agg_freq
-        self.lags = lags
+        self.lags = lags if lags is None else np.atleast_1d(np.array(lags))
         self.relative_lags = relative_lags
         self.logger = get_logger() if logger is None else logger
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
         self.metadata = None
+        if agg_bins is not None:
+            self.original_agg_bins = np.copy(np.sort(agg_bins)[::-1])
+            assert np.sum(np.sort(agg_bins) - np.array(agg_bins)) == 0, 'agg bins must be a monotone array'
+            self.agg_bins = np.max(agg_bins) - np.sort(agg_bins)[::-1] # descending order
+        else:
+            self.agg_bins = agg_bins
+            self.original_agg_bins = agg_bins
+
+        if agg_freq is not None and agg_bins is not None:
+            self.logger.warning('Transformer: agg_freq will be ignored since agg_bins is not None')
 
     def transform(self, x, augment=True, simulate=False):
         """
@@ -299,47 +320,79 @@ class Transformer:
         data = x.copy() if augment else pd.DataFrame(index=x.index)
         self.metadata = pd.DataFrame()
         for name in self.names:
-            lag_time = x[name].index.to_series().diff().median()
+            d = x[name].copy()
+
+            # infer sampling time
+            dt = x[name].index.to_series().diff().median()
 
             if self.agg_freq is None:
-                self.agg_freq = lag_time
+                self.agg_freq = dt
 
-            d = x[name].copy()
-            min_periods = int(pd.Timedelta(self.agg_freq) / lag_time)
+            # agg_steps = number of steps on which aggregation stats are retrieved
+            # agg_time = time range on which aggregation stats are retrieved
+            if self.agg_bins is not None:
+                # if agg_bins, the aggregation steps are the maximum specified in bins and lag time is multiple of dt
+                agg_steps = np.max(self.agg_bins)-np.min(self.agg_bins)
+                spacing_time = dt
+            else:
+                agg_steps = int(pd.Timedelta(self.agg_freq) / dt)
+                spacing_time = dt * agg_steps if self.relative_lags else dt
 
             trans_names = [name]
             function_names = ['none']
             if self.functions:
                 function_names = [get_fun_name(s) for s in self.functions]
-                hr_agg_freq = self.agg_freq if isinstance(self.agg_freq, str) else hr_timedelta(self.agg_freq.to_timedelta64())
-                trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in function_names]
+                if self.agg_bins is None:
+                    hr_agg_freq = self.agg_freq if isinstance(self.agg_freq, str) else hr_timedelta(self.agg_freq.to_timedelta64())
+                    trans_names = ['{}_{}_{}'.format(name, hr_agg_freq, p) for p in function_names]
 
-                if not simulate:
-                    d = d.rolling(self.agg_freq , min_periods=min_periods).agg(self.functions)
-                    d.columns = trans_names
+                    if not simulate:
+                        d = d.rolling(self.agg_freq, min_periods=agg_steps).agg(self.functions)
+                        d.columns = trans_names
+                else:
+                    trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]], self.original_agg_bins[p[1]+1]) for p in
+                                   product(function_names, np.arange(len(self.agg_bins)-1))]
+                    if not simulate:
+                        partial_res = []
+                        for agg_fun in self.functions:
+                            reducer = Reducer(bins=self.agg_bins, agg_fun=agg_fun)
+                            indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=agg_steps)
+                            d_rolled = d.rolling(window=indexer, min_periods=agg_steps).apply(reducer.reduce)
+                            partial_res.append(np.vstack(reducer.stats).tolist())
+                        d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
+                        d = d.shift(np.max(self.original_agg_bins)-1)
 
             if self.lags is not None:
-                self.lags = np.array(self.lags)
                 trans_names = ['{}_lag_{:03d}'.format(p[1], p[0]) if p[0] >= 0 else '{}_lag_{:04d}'.format(p[1], p[0])
                                for p in product(self.lags, trans_names)]
-                lags = self.lags * min_periods if self.relative_lags else self.lags
-                assert len(lags) == len(self.lags)
-                if self.relative_lags:
-                    lag_time *= min_periods
+                lag_steps = self.lags * agg_steps if self.relative_lags else self.lags
+                assert len(lag_steps) == len(self.lags)
                 if not simulate:
-                    d = pd.concat([d.shift(l) for l in lags], axis=1)
+                    d = pd.concat([d.shift(l) for l in lag_steps], axis=1)
                     d.columns = trans_names
-
+            else:
+                lag_steps = np.array([0])
             if not simulate:
                 data = pd.concat([data, d], axis=1)
                 self.logger.info('Added {} to the dataframe'.format(trans_names))
 
-            lags_and_fun = product([0] if self.lags is None else self.lags, function_names)
-
-            metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
-            metadata_n['aggregation_time'] = self.agg_freq
-            metadata_n['lag_time'] = pd.Timedelta(lag_time)
-            metadata_n['referring_time'] = - metadata_n['lag_time'] * metadata_n['lag']
+            if self.agg_bins is None:
+                lags_and_fun = product([0] if self.lags is None else self.lags, function_names)
+                metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
+                metadata_n['aggregation_time'] = self.agg_freq
+                metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
+                metadata_n['start_time'] = - spacing_time * metadata_n['lag'] - agg_steps * dt
+                metadata_n['end_time'] = - spacing_time * metadata_n['lag']
+            else:
+                lags_expanded = np.outer(lag_steps, np.ones(len(self.agg_bins) - 1)).ravel()
+                lags_and_fun =product(function_names, lags_expanded)
+                metadata_n = pd.DataFrame(lags_and_fun, columns=['function', 'lag'], index=trans_names)
+                metadata_n['aggregation_time'] = self.agg_freq
+                metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
+                metadata_n['start_time'] = [-dt * (self.original_agg_bins[i+1] + l)  for name, i, l in
+                                            product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
+                metadata_n['end_time'] = [-dt * (self.original_agg_bins[i]+l) for name, i, l in
+                                          product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
             metadata_n['name'] = name
 
             self.metadata = pd.concat([self.metadata, metadata_n])
@@ -348,9 +401,24 @@ class Transformer:
         return data
 
 
+class Reducer:
+    def __init__(self, agg_fun, bins):
+        """
+        :param agg_fun: aggregation function
+        :param bins: array/list of aggregation bins. [0, 2, 5] means two bins, the first one of two
+                         elements (0, 1), the second one of 3 elements, (2, 3, 4).
+        """
+        self.stats = []
+        self.bins = bins
+        self.agg_fun = agg_fun
+
+    def reduce(self, x):
+        self.stats.append(binned_statistic(np.arange(len(x)), x, self.agg_fun, bins=self.bins).statistic)
+        return 0
+
 def hr_timedelta(t, zero_padding=False):
     """
-    Timedelta64 to human readable format
+    Timedelta64 to human-readable format
     :param t:
     :return:
     """
