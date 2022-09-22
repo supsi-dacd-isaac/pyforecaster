@@ -56,14 +56,14 @@ class TestScenarios(unittest.TestCase):
         ax.plot(x, rv1.pdf(x), 'k-', lw=2, label='frozen pdf')
         ax.plot(x, rv2.pdf(x), 'k-', lw=2, label='frozen pdf')
 
-        fig0, _ = plt.subplots(1, 1, figsize=(10,5))
-        fig1, fig2 = fig0.subfigures(1, 2)
+        #fig0, _ = plt.subplots(1, 1, figsize=(10,5))
+        #fig1, fig2 = fig0.subfigures(1, 2)
 
-        jointplot(pd.DataFrame(samples, columns=['x', 'y']), 'x', 'y', fig=fig1)
+        #jointplot(pd.DataFrame(samples, columns=['x', 'y']), 'x', 'y', fig=fig1)
 
         # inverse cdfs; this must be turned into inverse quantiles
-        join_rv = np.vstack([rv1.ppf(q_samples[:, 0]), rv2.ppf(q_samples[:, 1])])
-        jointplot(pd.DataFrame(join_rv.T, columns=['x', 'y']), 'x', 'y', fig=fig2)
+        #join_rv = np.vstack([rv1.ppf(q_samples[:, 0]), rv2.ppf(q_samples[:, 1])])
+        #jointplot(pd.DataFrame(join_rv.T, columns=['x', 'y']), 'x', 'y', fig=fig2)
         assert 1 == 1
 
     def test_scen_gen_df(self):
