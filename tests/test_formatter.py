@@ -1,3 +1,4 @@
+import os
 import unittest
 import pandas as pd
 import numpy as np
@@ -7,6 +8,9 @@ from pyforecaster.plot_utils import ts_animation
 import matplotlib.pyplot as plt
 import seaborn as sb
 from time import time
+import pickle as pk
+from pyforecaster.big_data_utils import fdf_parallel
+import os
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -128,6 +132,45 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_transform([0], ['min', 'max'], agg_bins=np.hstack([144*7-np.arange(6)*144, 144-np.arange(int(144/6)+1)*6]))
         x_transformed, y_transformed = formatter.transform(self.x4)
         print('elapsed time to transform {} points into a {}x{} df: {}s '.format(self.x4.shape[0], *x_transformed.shape, time()-t0))
+
+    def test_pickability(self):
+        """
+        Pickability is needed to parallelize formatting operations
+        """
+        temp_file_path = 'test_pickle_temp.pk'
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        formatter.add_target_transform([0], lags=-np.arange(30)-1)
+
+        with open(temp_file_path, 'wb') as f:
+            pk.dump(formatter, f, protocol=pk.HIGHEST_PROTOCOL)
+
+        with open(temp_file_path, 'rb') as f:
+            formatter_pickled = pk.load(f)
+
+        x_transformed, y_transformed = formatter_pickled.transform(self.x2)
+        formatter_pickled.plot_transformed_feature(self.x2, 0, frames=100)
+
+        with open('test_pickle_temp.pk', 'wb') as f:
+            pk.dump(formatter, f, protocol=pk.HIGHEST_PROTOCOL)
+
+        with open(temp_file_path, 'rb') as f:
+            formatter_pickled = pk.load(f)
+        x_transformed, y_transformed = formatter_pickled.transform(self.x2)
+        formatter_pickled.plot_transformed_feature(self.x2, 0, frames=100)
+        os.remove(temp_file_path)
+
+    def test_parallel(self):
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        formatter.add_target_transform([0], lags=-np.arange(30)-1)
+
+        print(self.x2.shape)
+        res = fdf_parallel(f=formatter.transform, df=[self.x2, self.x2, self.x2, self.x2])
+        print(res[0].shape)
+        print(res[1].shape)
 
 
 if __name__ == '__main__':
