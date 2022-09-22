@@ -161,7 +161,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter_pickled.plot_transformed_feature(self.x2, 0, frames=100)
         os.remove(temp_file_path)
 
-    def test_parallel(self):
+    def test_parallel_transformations(self):
         formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
