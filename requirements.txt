@@ -8,4 +8,4 @@ matplotlib>=3.4.1
 scipy>=1.7.1
 scikit_learn>=1.0.1
 lightgbm>=3.3.2
-# pygraphviz>=1.7
+#pygraphviz>=1.10

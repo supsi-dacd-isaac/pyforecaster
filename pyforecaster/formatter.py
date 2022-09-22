@@ -174,7 +174,7 @@ class Formatter:
                                      ' already been called once')
             self._simulate_transform(x)
 
-        deadband_time = np.max(np.hstack([t.metadata['referring_time'].abs().max() for t in self.transformers]))
+        deadband_time = np.max(np.hstack([t.metadata['start_time'].abs().max() for t in self.transformers]))
         self.logger.info('deadband time: {}'.format(deadband_time))
         if deadband_time > split_times[1]-split_times[0]:
             self.logger.error('deadband time: {} is bigger than test fold timespan: {}. Try '
@@ -215,7 +215,7 @@ class Formatter:
         # retrieve referring_time of the given sa for the target from target_transformers
         target_times = []
         for tt in self.target_transformers:
-            target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'referring_time'])
+            target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
 
         assert len(np.unique(target_times)) == 1, 'target for step ahead {} have different referring_times, ' \
                                              'not supported'.format(sa)
@@ -224,11 +224,11 @@ class Formatter:
         if method == 'periodic':
             # find signals with (target_time - referring_time) multiple of period
             for t in self.transformers:
-                features += list(t.metadata.index[((target_time-t.metadata['referring_time']).abs() % pd.Timedelta(period)
-                                                  <= pd.Timedelta(tol_period)) & (t.metadata['referring_time']<=target_time)])
+                features += list(t.metadata.index[((target_time-t.metadata['end_time']).abs() % pd.Timedelta(period)
+                                                  <= pd.Timedelta(tol_period)) & (t.metadata['end_time']<=target_time)])
         elif method == 'up_to':
             for t in self.transformers:
-                features += list(t.metadata.index[t.metadata['referring_time'] <= target_time])
+                features += list(t.metadata.index[t.metadata['end_time'] <= target_time])
 
         if keep_last_n_lags > 0:
             last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(np.arange(keep_last_n_lags))]

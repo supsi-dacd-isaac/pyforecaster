@@ -118,7 +118,7 @@ class TestScenarios(unittest.TestCase):
                                  q_preds[i, :, -q - 1], color=cm(q), alpha=0.2)
 
             plt.plot(self.target.iloc[rand_i, :].values, linestyle='--')
-            plt.plot(preds.iloc[rand_idx[i], :])
+            plt.plot(preds[rand_idx[i], :])
         assert 1==1
 
 if __name__ == '__main__':
