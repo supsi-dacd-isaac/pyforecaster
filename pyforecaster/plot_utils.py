@@ -7,7 +7,6 @@ import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
-import pyforecaster.scenred as scrd
 import networkx as nx
 
 
@@ -191,6 +190,7 @@ def ts_animation(ys:list, ts=None, names=None, frames=150):
     return ani
 
 
+"""
 def tree_animation(ys:list, y_gt=None, times=None, frames=150):
     "plot the first n_rows of the two y_te and y_hat matrices"
     fig, ax = plt.subplots(1)
@@ -217,6 +217,7 @@ def tree_animation(ys:list, y_gt=None, times=None, frames=150):
     ani = animation.FuncAnimation(fig, animate,  blit=False, frames=np.minimum(len(ys)-1, frames), interval=100, repeat=False)
 
     return ani
+"""
 
 def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150):
     "plot the first n_rows of the two y_te and y_hat matrices"
