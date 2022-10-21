@@ -7,7 +7,7 @@ import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
-from .scenred import plot_from_graph
+import pyforecaster.scenred as scrd
 import networkx as nx
 
 
@@ -197,7 +197,7 @@ def tree_animation(ys:list, y_gt=None, times=None, frames=150):
     f_min = np.min([np.min(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
     f_max = np.max([np.max(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
     lines = None
-    lines = plot_from_graph(ys[0], alpha=0.2, linewidth=1)
+    lines = scrd.plot_from_graph(ys[0], alpha=0.2, linewidth=1)
     if y_gt is not None:
         t = np.arange(len(y_gt[0][0])) if times is None else times
         lines_ground_truth = []
@@ -207,7 +207,7 @@ def tree_animation(ys:list, y_gt=None, times=None, frames=150):
     ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
 
     def animate(i):
-        _ = plot_from_graph(ys[i], lines, alpha=0.2)
+        _ = scrd.plot_from_graph(ys[i], lines, alpha=0.2)
         if y_gt is not None:
             for y, l in zip(y_gt, lines_ground_truth):
                 l.set_data(t, y[i, :])

@@ -1,6 +1,6 @@
 from typing import Union
 from scipy.interpolate import interp1d
-from .scenred import scenred
+import scenred
 from pyforecaster.utilities import get_logger
 import pandas as pd
 import pyforecaster.dictionaries
@@ -77,7 +77,7 @@ class ScenGen:
         elif kind == 'tree':
             trees = []
             for scenarios_t in scenarios:
-                [S_init0, P_sn, J_sn, Me_sn, nx_tree] = scenred(scenarios_t, nodes=scenarios_per_step)
+                [S_init0, P_sn, J_sn, Me_sn, nx_tree] = scenred.scenred(scenarios_t, nodes=scenarios_per_step)
                 trees.append(nx_tree)
             return trees
         else:
