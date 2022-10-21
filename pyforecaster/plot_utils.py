@@ -7,6 +7,8 @@ import matplotlib.dates as dates
 from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
+from .scenred import plot_from_graph
+import networkx as nx
 
 
 def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
@@ -160,8 +162,9 @@ def hist_2d(data, value, x, y, plot=True, qs=None, **basic_setup_kwargs):
     return hist
 
 
-def ts_animation(ys:list, ts:list, names:list, frames=150):
+def ts_animation(ys:list, ts=None, names=None, frames=150):
     "plot the first n_rows of the two y_te and y_hat matrices"
+    ts = [np.arange(len(ys[0][0]))]*len(ys) if ts is None else ts
     fig, ax = plt.subplots(1)
     lines = []
     f_min = np.min([np.min(y) for y in ys])
@@ -169,20 +172,17 @@ def ts_animation(ys:list, ts:list, names:list, frames=150):
 
     def init():
         for y, t in zip(ys, ts):
-            l, = ax.plot(t/np.timedelta64(3600*24,'s'), y[0, :], linestyle='none', marker='.')
-            lines.append(l)
-        for y, t in zip(ys, ts):
-            l, = ax.plot(t/np.timedelta64(3600*24,'s'), y[0, :], alpha=0.2, linewidth=1)
+            l, = ax.plot(t, y[0, :], alpha=0.8, linewidth=1)
             lines.append(l)
         ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
-
+        plt.legend(names)
         return lines
 
     def animate(i):
         for y, l, t in zip(ys, lines, ts):
-            l.set_data(t/np.timedelta64(3600*24,'s'), y[i, :])
+            l.set_data(t, y[i, :])
         for y, l, t in zip(ys, lines[len(ys):], ts):
-            l.set_data(t/np.timedelta64(3600*24,'s'), y[i, :])
+            l.set_data(t, y[i, :])
         return lines
 
     plt.pause(1e-5)
@@ -190,6 +190,33 @@ def ts_animation(ys:list, ts:list, names:list, frames=150):
 
     return ani
 
+
+def tree_animation(ys:list, y_gt=None, times=None, frames=150):
+    "plot the first n_rows of the two y_te and y_hat matrices"
+    fig, ax = plt.subplots(1)
+    f_min = np.min([np.min(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
+    f_max = np.max([np.max(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
+    lines = None
+    lines = plot_from_graph(ys[0], alpha=0.2, linewidth=1)
+    if y_gt is not None:
+        t = np.arange(len(y_gt[0][0])) if times is None else times
+        lines_ground_truth = []
+        for y in y_gt:
+            l, = ax.plot(t, y[0, :])
+            lines_ground_truth.append(l)
+    ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
+
+    def animate(i):
+        _ = plot_from_graph(ys[i], lines, alpha=0.2)
+        if y_gt is not None:
+            for y, l in zip(y_gt, lines_ground_truth):
+                l.set_data(t, y[i, :])
+        return
+
+    plt.pause(1e-5)
+    ani = animation.FuncAnimation(fig, animate,  blit=False, frames=np.minimum(len(ys)-1, frames), interval=100, repeat=False)
+
+    return ani
 
 def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150):
     "plot the first n_rows of the two y_te and y_hat matrices"

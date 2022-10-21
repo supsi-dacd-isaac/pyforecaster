@@ -245,14 +245,21 @@ def plot_graph(g, ax=None):
     return ax, cb
 
 
-def plot_from_graph(g):
-    f = plt.figure()
+def plot_from_graph(g, lines=None, **kwargs):
     s_idx, leaves = retrieve_scenarios_indexes(g)
     values = np.array(list(nx.get_node_attributes(g, 'v').values()))
+    times = np.array(list(nx.get_node_attributes(g, 't').values()))
     cmap = plt.get_cmap('Set1')
     line_colors = cmap(np.arange(3))
-    for s in np.arange(s_idx.shape[1]):
-        plt.plot(values[s_idx[:, s]], color=line_colors[0, :], linewidth=1, alpha=1)
+    if lines is not None:
+        for s, l in zip(np.arange(s_idx.shape[1]), lines):
+            l.set_data(times[s_idx[:, s]], values[s_idx[:, s]])
+    else:
+        lines = []
+        for s in np.arange(s_idx.shape[1]):
+            l = plt.plot(values[s_idx[:, s]], color=line_colors[0, :], **kwargs)
+            lines.append(l[0])
+    return lines
 
 
 def get_network(S_s, P_s):
