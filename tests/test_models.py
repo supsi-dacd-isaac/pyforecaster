@@ -18,7 +18,7 @@ class TestFormatDataset(unittest.TestCase):
         self.x = self.x + pd.DataFrame(np.sin(np.arange(self.t)*2*np.pi/self.periods[1]).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
         self.y = pd.DataFrame((self.x.values  @ np.random.randn(self.n, 1)), columns=['target'], index=self.x.index)
 
-        self.data = pd.read_pickle('../tests/data/test_data.zip').droplevel(0, 1)
+        self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
