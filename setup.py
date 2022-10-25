@@ -29,7 +29,7 @@ setuptools.setup(
                       'scikit_learn>=1.0.1',
                       'lightgbm>=3.3.2',
                       'pygraphviz>=1.10',
-                      'ray==2.0.0',
-                      'sharedmem==0.3.8',],
+                      'ray>=2.0.0',
+                      'sharedmem>=0.3.8',],
     python_requires='>=3.8',
 )

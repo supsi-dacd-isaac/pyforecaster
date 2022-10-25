@@ -10,6 +10,7 @@ from functools import partial
 from scipy.stats import binned_statistic
 from typing import Union
 
+
 def get_logger(level=logging.INFO):
 
     logger = logging.getLogger()
@@ -40,7 +41,7 @@ class Formatter:
         return self
 
     def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
-        if np.any(lags>0):
+        if np.any(np.array(lags)>0):
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
