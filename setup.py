@@ -30,6 +30,7 @@ setuptools.setup(
                       'lightgbm>=3.3.2',
                       'pygraphviz>=1.10',
                       'ray>=2.0.0',
-                      'sharedmem>=0.3.8',],
+                      'sharedmem>=0.3.8',
+                      'numba>=0.56.3'],
     python_requires='>=3.8',
 )
