@@ -18,7 +18,8 @@ def hankel(x, n, generate_me=None):
 
 
 class HoltWinters(ScenarioGenerator):
-    def __init__(self, periods, target_name, q_vect=None, optimization_budget=800, n_sa=1, **scengen_kwgs):
+    def __init__(self, periods, target_name, q_vect=None, optimization_budget=800, n_sa=1, constraints=None,
+                 **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
         :param optimization_budget: number of test point to optimize the parameters
@@ -54,6 +55,7 @@ class HoltWinters(ScenarioGenerator):
         self.q_hat_err = None
 
         self.err_distr = None
+        self.constraints = constraints
 
         super().__init__()
 
@@ -180,11 +182,17 @@ class HoltWinters(ScenarioGenerator):
         :param y_pd: last values of target, should be longer than biggest periodicity
         :return:
         """
-        y = np.vstack(y_pd).ravel()
+        if isinstance(y_pd, pd.DataFrame) or isinstance(y_pd, pd.Series):
+            y = np.vstack(y_pd.values).ravel()
+        else:
+            y = np.vstack(y_pd).ravel()
         n_repeat = 20
         p = np.max(self.periods)
         for i in range(n_repeat):
-            y_hat_hw, a, b, s1, s2 = self._run(y[-p:])
+            try:
+                y_hat_hw, a, b, s1, s2 = self._run(y[-p:])
+            except:
+                print('dasd')
             self.a = a
             self.b = b
             self.s1 = s1
@@ -207,16 +215,18 @@ class HoltWinters(ScenarioGenerator):
         gamma = np.asanyarray(gamma, dtype=float)
 
         Y = np.atleast_1d(np.asanyarray(Y, dtype=float).ravel())
-
+        constraints = self.constraints if self.constraints is not None else [-np.inf, np.inf]
+        constraints = np.array(constraints).ravel()
         y_hat,am1,bm1,s1mp,s2mp = run(horizon, period, alpha,
                                       beta, gamma, s1_init,
                                       s2_init, am1, bm1, Y,
-                                      np.tile(Y.reshape(-1, 1), self.n_sa), np.zeros(self.n_sa, dtype=float))
+                                      np.tile(Y.reshape(-1, 1), self.n_sa), np.zeros(self.n_sa, dtype=float),
+                                      constraints)
         return y_hat,am1,bm1,s1mp,s2mp
 
 
 @numba.jit(nopython=True)
-def run(horizon, period, alpha, beta, gamma, s1mp, s2mp, am1, bm1, Y, y_tot, y_hat_i):
+def run(horizon, period, alpha, beta, gamma, s1mp, s2mp, am1, bm1, Y, y_tot, y_hat_i, constraints):
     """
     Predict additive
     :param y: y
@@ -233,6 +243,9 @@ def run(horizon, period, alpha, beta, gamma, s1mp, s2mp, am1, bm1, Y, y_tot, y_h
             a = alpha * (Y[j] - s1mp[0] - s2mp[0]) + (1 - alpha) * (am1 + bm1)
             s1 = gamma[0] * (Y[j] - a - s2mp[0]) + (1 - gamma[0]) * s1mp[0]
             s2 = gamma[1] * (Y[j] - a - s1mp[0]) + (1 - gamma[1]) * s2mp[0]
+        s1 = constrainify(s1, constraints)
+        s2 = constrainify(s2, constraints)
+
         b = beta * (a - am1) + (1 - beta) * bm1
         s1mp_shift[:-1] = s1mp[1:]
         s2mp_shift[:-1] = s2mp[1:]
@@ -246,3 +259,69 @@ def run(horizon, period, alpha, beta, gamma, s1mp, s2mp, am1, bm1, Y, y_tot, y_h
             y_tot[j,i] = a + h * b + s1mp[int((h - 1) % period[0])] + s2mp[int((h - 1) % period[1])]
 
     return y_tot, am1, bm1, s1mp, s2mp
+
+
+@numba.jit(nopython=True)
+def constrainify(x, constraints):
+    x = np.minimum(np.maximum(constraints[0], x), constraints[1])
+    return x
+
+
+class HoltWintersMulti(ScenarioGenerator):
+    def __init__(self, periods, target_name, q_vect=None, optimization_budget=800, n_sa=1, constraints=None,
+                 models_periods=None, **scengen_kwgs):
+        """
+        :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
+        :param optimization_budget: number of test point to optimize the parameters
+        :param n_sa: number of steps ahead to be predicted
+        :param q_vect: vector of quantiles
+        """
+
+        super().__init__(**scengen_kwgs)
+        self.periods = periods
+        self.budget = optimization_budget
+        self.n_sa = n_sa
+        self.models_periods = models_periods if models_periods is not None else np.arange(1, 1+n_sa)
+        self.q_vect = q_vect
+        models = []
+        for n in self.models_periods:
+            models.append(HoltWinters(periods=periods, q_vect=q_vect,
+                             n_sa=n, target_name=target_name, optimization_budget=optimization_budget))
+
+        self.models = models
+
+    def fit(self, x_pd, y_pd):
+        err_distr = np.zeros((self.n_sa, len(self.q_vect)))
+        k = 0
+        for i,m in enumerate(self.models):
+            m.fit(x_pd, y_pd)
+            selection = np.arange(k, m.err_distr.shape[0])
+            err_distr[selection, :] = m.err_distr[selection, :]
+            k = m.err_distr.shape[1]
+
+        # reinit HW
+        # concat past inputs and last row of target
+        self.reinit(y_pd)
+        self.err_distr = err_distr
+
+        return self
+
+    def predict(self, x,  **kwargs):
+        y_hat = np.zeros((x.shape[0], self.n_sa))
+        k = 0
+        for i,m in enumerate(self.models):
+            y_hat_m = m.predict(x)
+            selection = np.arange(k, y_hat_m.shape[1])
+            y_hat[:, selection] = y_hat_m[:, selection]
+            k = y_hat_m.shape[1]
+        return y_hat
+
+    def reinit(self, x):
+        for i,m in enumerate(self.models):
+            m.reinit(x)
+
+    def predict_quantiles(self, x, **kwargs):
+        if isinstance(x, pd.DataFrame):
+            x = x.values
+        preds = self.predict(x)
+        return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
