@@ -27,7 +27,7 @@ class HoltWinters(ScenarioGenerator):
         :param q_vect: vector of quantiles
         """
 
-        super().__init__(**scengen_kwgs)
+        super().__init__(q_vect, **scengen_kwgs)
         self.periods = periods
         self.budget = optimization_budget
         self.n_sa = n_sa
@@ -36,7 +36,6 @@ class HoltWinters(ScenarioGenerator):
         self.alpha = 1
         self.beta = 0
         self.gamma = [0.1, 0.1]
-        self.q_vect = q_vect if q_vect is not None else np.arange(11)/10
 
         # HW states
         self.a = None
@@ -277,12 +276,12 @@ class HoltWintersMulti(ScenarioGenerator):
         :param q_vect: vector of quantiles
         """
 
-        super().__init__(**scengen_kwgs)
+        super().__init__(q_vect, **scengen_kwgs)
         self.periods = periods
         self.budget = optimization_budget
         self.n_sa = n_sa
         self.models_periods = models_periods if models_periods is not None else np.arange(1, 1+n_sa)
-        self.q_vect = q_vect
+
         models = []
         for n in self.models_periods:
             models.append(HoltWinters(periods=periods, q_vect=q_vect,
@@ -321,7 +320,5 @@ class HoltWintersMulti(ScenarioGenerator):
             m.reinit(x)
 
     def predict_quantiles(self, x, **kwargs):
-        if isinstance(x, pd.DataFrame):
-            x = x.values
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)

@@ -8,7 +8,8 @@ from pyforecaster.scenarios_generator import ScenGen
 
 
 class ScenarioGenerator:
-    def __init__(self, **scengen_kwgs):
+    def __init__(self, q_vect=None, **scengen_kwgs):
+        self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(**scengen_kwgs)
 
     def fit(self, x, y):
@@ -43,11 +44,10 @@ class ScenarioGenerator:
 
 
 class LinearForecaster(ScenarioGenerator):
-    def __init__(self, kind='linear', **scengen_kwgs):
-        super().__init__(**scengen_kwgs)
+    def __init__(self, q_vect=None, kind='linear', **scengen_kwgs):
+        super().__init__(q_vect, **scengen_kwgs)
         self.m = None
         self.err_distr = None
-        self.q_vect = np.linspace(0,1,11)[1:-1]
         self.kind = kind
 
     def fit(self, x, y):
@@ -77,8 +77,8 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, lgb_pars, **scengen_kwgs):
-        super().__init__(**scengen_kwgs)
+    def __init__(self, lgb_pars, q_vect=None,  **scengen_kwgs):
+        super().__init__(q_vect, **scengen_kwgs)
         self.m = []
         self.lgb_pars = {"objective": "regression",
                          "max_depth": 20,
