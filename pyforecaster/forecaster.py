@@ -23,18 +23,18 @@ class ScenarioGenerator:
     def predict_quantiles(self, x, **kwargs):
         pass
 
-    def predict_scenarios(self, x, n_scen=100, q_vect=None, **predict_q_kwargs):
+    def predict_scenarios(self, x, n_scen=100, **predict_q_kwargs):
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
-        scenarios = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='scenarios', q_vect=q_vect)
+        scenarios = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='scenarios', q_vect=self.q_vect)
         return scenarios
 
-    def predict_trees(self, x, n_scen=100, q_vect=None, scenarios_per_step=None, **predict_q_kwargs):
+    def predict_trees(self, x, n_scen=100, scenarios_per_step=None, **predict_q_kwargs):
 
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
 
-        trees = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='tree', q_vect=q_vect,
+        trees = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='tree', q_vect=self.q_vect,
                                          scenarios_per_step=scenarios_per_step)
 
         # if we predicted just one step just return a nx object, not a list

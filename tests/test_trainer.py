@@ -63,5 +63,6 @@ class TestFormatDataset(unittest.TestCase):
                                    hpo_type='full', storage_fun=base_storage_fun)
         assert len(replies) == len(study.trials_dataframe())
 
+
 if __name__ == '__main__':
     unittest.main()

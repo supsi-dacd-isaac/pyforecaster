@@ -106,7 +106,7 @@ class TestScenarios(unittest.TestCase):
         preds = lf.predict(self.x)
         rand_idx = np.random.choice(np.arange(len(self.x)), 2)
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx,:])
-        scenarios = lf.predict_scenarios(self.x.iloc[rand_idx,:], q_vect=self.q_vect)
+        scenarios = lf.predict_scenarios(self.x.iloc[rand_idx,:])
         trees = lf.predict_trees(self.x.iloc[:2,:], scenarios_per_step=np.linspace(1,20,scenarios.shape[1], dtype=int))
 
         for i, rand_i in enumerate(rand_idx):
