@@ -31,6 +31,9 @@ setuptools.setup(
                       'pygraphviz>=1.10',
                       'ray>=2.0.0',
                       'sharedmem>=0.3.8',
-                      'numba>=0.56.3'],
+                      'numba>=0.56.3',
+                      'holidays>=0.16',
+                      'python-long-weekends>=0.1.1',
+                      ],
     python_requires='>=3.8',
 )

@@ -244,3 +244,32 @@ def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150)
     ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=100, repeat=False)
 
     return ani
+
+
+def plot_quantiles(signals:list, quantiles, labels:list, ax=None):
+    """
+    :param signals: list of pd.DataFrame or np.ndarray
+    :param quantiles:
+    :param labels:
+    :param ax:
+    :return:
+    """
+    assert len(signals) == len(labels)
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+    for i, s in enumerate(signals):
+        if isinstance(s, pd.DataFrame):
+            signals[i] = s.to_numpy()
+
+    cm = plt.get_cmap('plasma', 4)
+    n_q = quantiles.shape[2]
+    h = quantiles.shape[1]
+    for i in range(quantiles.shape[0]):
+        ax.cla()
+        for q in range(int(n_q / 2)):
+            ax.fill_between(range(h), quantiles[i, :, q],
+                            quantiles[i, :, -q - 1], color=cm(q), alpha=0.2)
+        for s, l in zip(signals, labels):
+            ax.plot(s[i, :], label=l)
+        plt.legend()
+        plt.pause(0.0001)

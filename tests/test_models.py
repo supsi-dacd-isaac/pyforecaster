@@ -5,6 +5,9 @@ import pandas as pd
 import numpy as np
 import logging
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
+from pyforecaster.forecaster import LinearForecaster, LGBForecaster
+from pyforecaster.plot_utils import plot_quantiles
+from pyforecaster.formatter import Formatter
 
 
 class TestFormatDataset(unittest.TestCase):
@@ -76,7 +79,7 @@ class TestFormatDataset(unittest.TestCase):
         hw = HoltWinters(periods=[144, 144 * 7], n_sa=144, optimization_budget=50, q_vect=np.arange(11) / 10,
                          target_name='all').fit(df_tr, df_tr['all'])
         hw_multi = HoltWintersMulti(periods=[144, 144 * 7], n_sa=144, optimization_budget=50, q_vect=np.arange(11) / 10,
-                         target_name='all', models_periods=np.array([1,2,3,4,6,10,20,40,96,144])).fit(df_tr, df_tr['all'])
+                         target_name='all', models_periods=np.array([1,2,144])).fit(df_tr, df_tr['all'])
 
         y_hat = hw.predict(df_te)
         y_hat_multi = hw_multi.predict(df_te)
@@ -89,6 +92,30 @@ class TestFormatDataset(unittest.TestCase):
             plt.plot(y_hat_multi[i, :], label='HW multi')
             plt.legend()
             plt.pause(0.0001)
+
+    def test_linear_val_split(self):
+
+        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(24),
+                                                                    relative_lags=True)
+        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 15, 20])
+        formatter.add_target_transform(['all'], lags=-np.arange(6))
+
+        x, y = formatter.transform(self.data.iloc[:5000])
+        n_tr = int(len(x) * 0.99)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        m_lin = LinearForecaster(val_ratio=0.2).fit(x_tr, y_tr)
+        y_hat = m_lin.predict(x_te)
+
+        m_lgb = LGBForecaster({}, val_ratio=0.4).fit(x_tr, y_tr)
+        y_hat_lgb = m_lgb.predict(x_te)
+        q = m_lgb.predict_quantiles(x_te)
+
+        plt.close('all')
+        plot_quantiles([y_te, y_hat, y_hat_lgb], q, ['y_te', 'y_hat', 'y_hat_lgb'])
+
+
 
 
 if __name__ == '__main__':

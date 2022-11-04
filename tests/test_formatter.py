@@ -4,8 +4,6 @@ import pandas as pd
 import numpy as np
 import pyforecaster.formatter as pyf
 import logging
-from pyforecaster.plot_utils import ts_animation
-import matplotlib.pyplot as plt
 import seaborn as sb
 from time import time
 import pickle as pk
@@ -172,6 +170,12 @@ class TestFormatDataset(unittest.TestCase):
         #res = fdf_parallel(f=formatter.transform, df=[self.x2, self.x2, self.x2, self.x2])
         #print(res[0].shape)
         #print(res[1].shape)
+
+    def test_holidays(self):
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        df = formatter.transform(self.x2, time_features=True, holidays=True, prov='ZH')
 
 
 if __name__ == '__main__':

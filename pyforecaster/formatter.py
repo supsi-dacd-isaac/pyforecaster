@@ -1,6 +1,9 @@
 #import category_encoders
 import functools
 
+import holidays as holidays_api
+from long_weekends.long_weekends import spot_holiday_bridges
+
 import numpy as np
 import pandas as pd
 from itertools import product
@@ -34,6 +37,20 @@ class Formatter:
         x = pd.concat([x, time_df], axis=1)
         return x
 
+    def add_holidays(self, x, state_code='CH', **kwargs):
+        self.logger.info('Adding holidays')
+        holidays = holidays_api.country_holidays(country=state_code, years=x.index.year.unique(), **kwargs)
+        bridges, long_weekends = spot_holiday_bridges(start=x.index[0], end=x.index[-1], holidays=holidays)
+        if 'tz' in dir(x.index):
+            bridges = [b.tz_localize(x.index.tz) for b in bridges]
+            long_weekends = [b.tz_localize(x.index.tz) for b in long_weekends]
+            holidays = [b.tz_localize(x.index.tz) for b in pd.DatetimeIndex(holidays)]
+        x['holidays'] = 0
+        x.loc[x.index.isin(bridges), 'holidays'] = 1
+        x.loc[x.index.isin(long_weekends), 'holidays'] = 2
+        x.loc[x.index.isin(holidays), 'holidays'] = 3
+        return x
+
     def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
                                   relative_lags=relative_lags, agg_bins=agg_bins)
@@ -49,7 +66,7 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x):
+    def transform(self, x, time_features=True, holidays=False, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -73,7 +90,11 @@ class Formatter:
         target = target.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
 
         # adding time features
-        x = self.add_time_features(x)
+        if time_features:
+            x = self.add_time_features(x)
+
+        if holidays:
+            x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
 

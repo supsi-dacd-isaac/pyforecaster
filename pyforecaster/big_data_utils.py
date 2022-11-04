@@ -75,7 +75,7 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
 
         df_shape = (df_shape_0, df_shape_1)
 
-        df_indexes = np.hstack([x.index for x in dfs])
+        df_indexes = np.hstack([x.index.ravel() for x in dfs]) if axis==0 else dfs[0].index
 
         res = mapper(f, [f.values for f in dfs])
 
