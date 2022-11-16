@@ -202,10 +202,10 @@ class HoltWinters(ScenarioGenerator):
         beta = self.beta if beta is None else beta
         gamma = self.gamma if gamma is None else gamma
 
-        am1 = 0 if self.a is None else self.a
-        bm1 = 0 if self.b is None else self.b
-        s1_init = np.tile(Y[-1], self.periods[0]) if self.s1 is None else self.s1
-        s2_init = np.tile(Y[-1], self.periods[1]) if self.s2 is None else self.s2
+        am1 = 0 if self.a is None or np.isnan(self.a) else self.a
+        bm1 = 0 if self.b is None or np.isnan(self.b) else self.b
+        s1_init = np.tile(Y[-1], self.periods[0]) if self.s1 is None or np.all(np.isnan(self.s1)) else self.s1
+        s2_init = np.tile(Y[-1], self.periods[1]) if self.s2 is None or np.all(np.isnan(self.s2)) else self.s2
 
         horizon = np.asanyarray(1 + np.arange(self.n_sa),dtype=float)
         period = np.asanyarray(self.periods, dtype=float)

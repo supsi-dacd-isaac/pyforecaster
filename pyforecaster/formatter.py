@@ -66,12 +66,16 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x, time_features=True, holidays=False, **holidays_kwargs):
+    def transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
         transformations like min-max scaling or categorical encoding are not yet applied.
         :param x: pd.DataFrame
+        :param time_features: if True add time features
+        :param holidays: if True add holidays as a categorical feature
+        :param return_target: if True, returns also the transformed target. If False (e.g. at prediction time), returns
+                             only x
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
         if np.any(x.isna()):
@@ -82,13 +86,15 @@ class Formatter:
             x = tr.transform(x)
 
         target = pd.DataFrame(index=x.index)
-        for tr in self.target_transformers:
-           target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
+        if return_target:
+            for tr in self.target_transformers:
+               target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
 
-        # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
-        x = x.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
-        target = target.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
-
+            # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
+            x = x.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+            target = target.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+        else:
+            x = x.loc[~np.any(x.isna(), axis=1)]
         # adding time features
         if time_features:
             x = self.add_time_features(x)
@@ -96,7 +102,6 @@ class Formatter:
         if holidays:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
-
 
     def _simulate_transform(self, x):
         """

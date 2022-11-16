@@ -10,6 +10,7 @@ import pickle as pk
 from pyforecaster.big_data_utils import fdf_parallel
 import os
 
+
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 500
