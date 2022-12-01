@@ -245,19 +245,28 @@ def plot_graph(g, ax=None):
     return ax, cb
 
 
-def plot_from_graph(g, lines=None, **kwargs):
+def obs_at_step_t(g, t):
+    s_idx, leaves = retrieve_scenarios_indexes(g)
+    values = np.array(list(nx.get_node_attributes(g, 'v').values()))
+    return np.unique(values[s_idx[t, :]])
+
+
+def plot_from_graph(g, lines=None, ax=None, color=None, **kwargs):
     s_idx, leaves = retrieve_scenarios_indexes(g)
     values = np.array(list(nx.get_node_attributes(g, 'v').values()))
     times = np.array(list(nx.get_node_attributes(g, 't').values()))
     cmap = plt.get_cmap('Set1')
-    line_colors = cmap(np.arange(3))
+    if color is None:
+        color = cmap(np.arange(3))[1, :]
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
     if lines is not None:
         for s, l in zip(np.arange(s_idx.shape[1]), lines):
             l.set_data(times[s_idx[:, s]], values[s_idx[:, s]])
     else:
         lines = []
         for s in np.arange(s_idx.shape[1]):
-            l = plt.plot(values[s_idx[:, s]], color=line_colors[0, :], **kwargs)
+            l = ax.plot(values[s_idx[:, s]], color=color, **kwargs)
             lines.append(l[0])
     return lines
 
@@ -277,6 +286,8 @@ def get_network(S_s, P_s):
     :return: g: a networkx graph with time, probability and values encoded with the connectivity of the nodes
     '''
 
+    assert np.sum(P_s[0, :] > 0) == 1, 'there is more than one node at root with P>0. Something wrong, ' \
+                                       'most likely some observations at first step are equal down to epsilon'
     g = nx.DiGraph()
     g.add_node(0, t=0, p=1, v=S_s[0, P_s[0, :] > 0, :].ravel())
 
@@ -295,7 +306,7 @@ def get_network(S_s, P_s):
             # get values, filtered by current time
             values = np.array(list(nx.get_node_attributes(g, 'v').values()))
             values_t = values[times == t, :]
-            values_past = values[times == t - 1, :]
+            # values_past = values[times == t - 1, :]
             # check if values of current point s are present in the tree at current time
             if np.any([np.array_equal(mu, a) for a in values_t]):
                 continue
@@ -332,18 +343,22 @@ def set_distance(alphas, samples, metric):
     return d, D
 
 
-def retrieve_scenarios_indexes(g):
+def retrieve_scenarios_indexes(g, dyn_offset=False):
     n_n = len(g.nodes)
     node_set = np.linspace(0, n_n - 1, n_n, dtype=int)
     all_t = np.array(list(nx.get_node_attributes(g, 't').values()))
     t = np.unique(all_t)
-    leafs = np.array([n for n in node_set[all_t == np.max(t)]])
-    scen_idxs_hist = np.zeros((max(t) + 1, len(leafs)), dtype=int)
-    for s in np.arange(len(leafs)):
-        scen_idxs = np.sort(np.array(list(nx.ancestors(g, leafs[s]))))
-        scen_idxs = np.asanyarray(np.insert(scen_idxs, len(scen_idxs), leafs[s], 0), int)
+    leaves = np.array([n for n in node_set[all_t == np.max(t)]])
+    scen_idxs_hist = np.zeros((max(t) + 1, len(leaves)), dtype=int)
+    for s in np.arange(len(leaves)):
+        scen_idxs = np.sort(np.array(list(nx.ancestors(g, leaves[s]))))
+        scen_idxs = np.asanyarray(np.insert(scen_idxs, len(scen_idxs), leaves[s], 0), int)
         scen_idxs_hist[:, s] = scen_idxs
-    return scen_idxs_hist, leafs
+    if dyn_offset:
+        scen_idxs_hist = scen_idxs_hist[1:, :]
+        scen_idxs_hist -= 1
+        leaves -= 1
+    return scen_idxs_hist, leaves
 
 
 def refine_scenarios(g, samples, metric):

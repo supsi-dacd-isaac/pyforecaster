@@ -121,6 +121,7 @@ class TestScenarios(unittest.TestCase):
             plt.plot(preds[rand_idx[i], :])
         assert 1==1
 
+
 if __name__ == '__main__':
     unittest.main()
 

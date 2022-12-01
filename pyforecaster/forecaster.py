@@ -29,19 +29,32 @@ class ScenarioGenerator:
     def predict_quantiles(self, x, **kwargs):
         pass
 
-    def predict_scenarios(self, x, n_scen=100, **predict_q_kwargs):
+    def predict_scenarios(self, x, n_scen=100, random_state=None, **predict_q_kwargs):
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
-        scenarios = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='scenarios', q_vect=self.q_vect)
+        scenarios = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='scenarios', q_vect=self.q_vect,
+                                         random_state=random_state)
         return scenarios
 
-    def predict_trees(self, x, n_scen=100, scenarios_per_step=None, **predict_q_kwargs):
+    def predict_trees(self, x, n_scen=100, scenarios_per_step=None, init_obs=None, random_state=None,
+                      **predict_q_kwargs):
+        """
+        :param x:
+        :param n_scen:
+        :param scenarios_per_step:
+        :param init_obs: if init_obs is not None it should be a vector with length x.shape[0]. init_obs are then used as
+                         first observation of the tree. This is done to build a tree with the last realisation of the
+                         forecasted value as root node. Useful for stochastic control.
+        :param predict_q_kwargs:
+        :return:
+        """
 
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
 
         trees = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='tree', q_vect=self.q_vect,
-                                         scenarios_per_step=scenarios_per_step)
+                                     scenarios_per_step=scenarios_per_step, init_obs=init_obs,
+                                     random_state=random_state)
 
         # if we predicted just one step just return a nx object, not a list
         if len(trees) == 1:
