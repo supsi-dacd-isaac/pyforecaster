@@ -97,7 +97,7 @@ class TestFormatDataset(unittest.TestCase):
 
         formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(24),
                                                                     relative_lags=True)
-        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 15, 20])
+        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
         formatter.add_target_transform(['all'], lags=-np.arange(6))
 
         x, y = formatter.transform(self.data.iloc[:5000])
@@ -114,8 +114,6 @@ class TestFormatDataset(unittest.TestCase):
 
         plt.close('all')
         plot_quantiles([y_te, y_hat, y_hat_lgb], q, ['y_te', 'y_hat', 'y_hat_lgb'])
-
-
 
 
 if __name__ == '__main__':

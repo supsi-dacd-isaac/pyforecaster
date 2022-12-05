@@ -136,12 +136,12 @@ class LGBForecaster(ScenarioGenerator):
 
         if self.val_ratio is None:
             preds = self.predict(x)
-            errs = np.quantile(preds.values-y.values, self.q_vect, axis=0).T
-            super().fit(x, pd.DataFrame(preds.values-y.values, index=x.index))
+            errs = pd.DataFrame(preds.values-y.values, index=x.index)
+            super().fit(x, errs)
         else:
             preds = self.predict(x_val)
-            errs = np.quantile(preds.values - y_val.values, self.q_vect, axis=0).T
-            super().fit(x_val, pd.DataFrame(preds.values-y_val.values, index=x_val.index))
+            errs = pd.DataFrame(preds.values - y_val.values, index=x_val.index)
+            super().fit(x_val, errs)
 
         self.err_distr = {}
         for h in np.unique(x.index.hour):
