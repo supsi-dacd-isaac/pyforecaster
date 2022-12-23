@@ -108,9 +108,17 @@ class TestFormatDataset(unittest.TestCase):
         """
         formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
-        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=False)
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x2)
+        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+
+        # test nested transform (much faster)
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=True)
+        formatter.add_target_transform([0], lags=-np.arange(30) - 1)
+        x_transformed_nested, y_transformed = formatter.transform(self.x2)
         formatter.plot_transformed_feature(self.x2, 0, frames=100)
 
 

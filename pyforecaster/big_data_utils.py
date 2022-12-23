@@ -56,7 +56,7 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
     else:
         raise TypeError('df must be a list or a pd.DataFrame')
 
-    test_df = dfs[0].iloc[:n_splits, :n_splits]
+    test_df = dfs[0].iloc[:n_splits, :] if axis == 0 else dfs[0].iloc[:, :n_splits]
     try:
         f(test_df.values)
         numpy_parallelizable = True

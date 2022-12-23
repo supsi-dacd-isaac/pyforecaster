@@ -51,9 +51,9 @@ class Formatter:
         x.loc[x.index.isin(holidays), 'holidays'] = 3
         return x
 
-    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
+    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None, **kwargs):
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, **kwargs)
         self.transformers.append(transformer)
         return self
 
@@ -296,8 +296,8 @@ class Transformer:
     Defines and applies transformations through rolling time windows and lags
     """
     Anyarray = Union[tuple, np.ndarray, list, None]
-    def __init__(self, names, functions:Anyarray=None, agg_freq=None, lags:Anyarray=None, logger=None,
-                 relative_lags:bool=False, agg_bins:Anyarray=None):
+    def __init__(self, names, functions:Anyarray=None, agg_freq:Union[str, int, None]=None, lags:Anyarray=None, logger=None,
+                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True):
         """
         :param names: list of columns of the target dataset to which this transformer applies
         :param functions: list of functions
@@ -320,13 +320,24 @@ class Transformer:
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
         self.metadata = None
+        self.nested = nested
         if agg_bins is not None:
             self.original_agg_bins = np.copy(np.sort(agg_bins)[::-1])
-            assert np.sum(np.sort(agg_bins) - np.array(agg_bins)) == 0, 'agg bins must be a monotone array'
+            assert np.all(np.diff(agg_bins) <= 0) or np.all(np.diff(agg_bins) >= 0), 'agg bins must be a monotone array'
             self.agg_bins = np.max(agg_bins) - np.sort(agg_bins)[::-1] # descending order
+            if nested:
+                self.transformers = []
+                for i in range(len(self.original_agg_bins) - 1):
+                    step_from = self.original_agg_bins[i]
+                    step_to = self.original_agg_bins[i + 1]
+                    freq = step_from - step_to
+                    tr = Transformer(names, functions, agg_freq=freq, lags=[step_to], nested=False,
+                                     logger=get_logger(logging.WARNING))
+                    self.transformers.append(tr)
         else:
-            self.agg_bins = agg_bins
-            self.original_agg_bins = agg_bins
+            self.agg_bins = None
+            self.original_agg_bins = None
+
 
         if agg_freq is not None and agg_bins is not None:
             self.logger.warning('Transformer: agg_freq will be ignored since agg_bins is not None')
@@ -354,6 +365,8 @@ class Transformer:
 
             if self.agg_freq is None:
                 self.agg_freq = dt
+            elif isinstance(self.agg_freq, (np.int8, np.int32, np.int64, int)):
+                self.agg_freq *= dt
 
             # agg_steps = number of steps on which aggregation stats are retrieved
             # agg_time = time range on which aggregation stats are retrieved
@@ -377,17 +390,28 @@ class Transformer:
                         d = d.rolling(self.agg_freq, min_periods=agg_steps).agg(self.functions)
                         d.columns = trans_names
                 else:
-                    trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]], self.original_agg_bins[p[1]+1]) for p in
-                                   product(function_names, np.arange(len(self.agg_bins)-1))]
                     if not simulate:
-                        partial_res = []
-                        for agg_fun in self.functions:
-                            reducer = Reducer(bins=self.agg_bins, agg_fun=agg_fun)
-                            indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=agg_steps)
-                            d_rolled = d.rolling(window=indexer, min_periods=agg_steps).apply(reducer.reduce)
-                            partial_res.append(np.vstack(reducer.stats).tolist())
-                        d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
-                        d = d.shift(np.max(self.original_agg_bins)-1)
+                        if self.nested:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[1], self.original_agg_bins[p[0]],
+                                                                self.original_agg_bins[p[0] + 1]) for p in
+                                           product(np.arange(len(self.agg_bins) - 1), function_names)]
+                            d = pd.DataFrame(d)
+                            for i, tr in enumerate(self.transformers):
+                                d = tr.transform(d)
+                            del d[name]
+                            d.columns = trans_names
+                        else:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]],
+                                                                self.original_agg_bins[p[1] + 1]) for p in
+                                           product(function_names, np.arange(len(self.agg_bins) - 1))]
+                            partial_res = []
+                            for agg_fun in self.functions:
+                                reducer = Reducer(bins=self.agg_bins, agg_fun=agg_fun)
+                                indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=agg_steps)
+                                d_rolled = d.rolling(window=indexer, min_periods=agg_steps).apply(reducer.reduce)
+                                partial_res.append(np.vstack(reducer.stats).tolist())
+                            d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
+                            d = d.shift(np.max(self.original_agg_bins)-1)
 
             if self.lags is not None:
                 trans_names = ['{}_lag_{:03d}'.format(p[1], p[0]) if p[0] >= 0 else '{}_lag_{:04d}'.format(p[1], p[0])
@@ -416,10 +440,16 @@ class Transformer:
                 metadata_n = pd.DataFrame(lags_and_fun, columns=['function', 'lag'], index=trans_names)
                 metadata_n['aggregation_time'] = self.agg_freq
                 metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
-                metadata_n['start_time'] = [-dt * (self.original_agg_bins[i+1] + l)  for name, i, l in
-                                            product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
-                metadata_n['end_time'] = [-dt * (self.original_agg_bins[i]+l) for name, i, l in
-                                          product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
+                if self.nested:
+                    metadata_n['start_time'] = [-dt * (self.original_agg_bins[i+1] + l) for i, name, l in
+                                                product(np.arange(len(self.agg_bins) - 1), function_names, lag_steps)]
+                    metadata_n['end_time'] = [-dt * (self.original_agg_bins[i]+l) for i, name, l in
+                                                product(np.arange(len(self.agg_bins) - 1), function_names, lag_steps)]
+                else:
+                    metadata_n['start_time'] = [-dt * (self.original_agg_bins[i+1] + l) for name, i, l in
+                                                product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
+                    metadata_n['end_time'] = [-dt * (self.original_agg_bins[i]+l) for name, i, l in
+                                              product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
             metadata_n['name'] = name
 
             self.metadata = pd.concat([self.metadata, metadata_n])
@@ -464,12 +494,12 @@ def hr_timedelta(t, zero_padding=False):
         time = '{:02d}d'.format(days) \
                + '{:02d}h'.format(hours) \
                + '{:02d}m'.format(minutes) \
-               + '{:02d}s'.format(s) * (s > 0)
+               + '{:02d}s'.format(s) * int(s > 0)
     else:
-        time = '{}d'.format(days) * (days > 0)\
-               + '{}h'.format(hours) * (hours > 0)\
-               + '{}m'.format(minutes) * (minutes > 0) \
-               + '{}s'.format(s) * (s > 0)
+        time = '{}d'.format(days) * int(days > 0)\
+               + '{}h'.format(hours) * int(hours > 0)\
+               + '{}m'.format(minutes) * int(minutes > 0) \
+               + '{}s'.format(s) * int(s > 0)
     time = '-' + time if sign_t == -1 else time
     return time
 
