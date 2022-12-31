@@ -397,6 +397,7 @@ class Transformer:
                                            product(np.arange(len(self.agg_bins) - 1), function_names)]
                             d = pd.DataFrame(d)
                             for i, tr in enumerate(self.transformers):
+                                tr.names = [name]
                                 d = tr.transform(d)
                             del d[name]
                             d.columns = trans_names
