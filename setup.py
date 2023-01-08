@@ -34,6 +34,8 @@ setuptools.setup(
                       'numba>=0.56.3',
                       'holidays>=0.16',
                       'python-long-weekends>=0.1.1',
+                      'jax>=0.4.1',
+                      'jaxlib>=0.4.1'
                       ],
     python_requires='>=3.8',
 )

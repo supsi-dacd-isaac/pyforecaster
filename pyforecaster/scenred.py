@@ -361,6 +361,24 @@ def retrieve_scenarios_indexes(g, dyn_offset=False):
     return scen_idxs_hist, leaves
 
 
+def replace_var(tree, variable, dyn_offset=False):
+    if dyn_offset:
+        variable = np.hstack([np.nan, variable])
+    nx.set_node_attributes(tree, {i: v for i, v in enumerate(variable)}, name='v')
+
+
+def plot_vars(g, v, ax=None, color=None, dyn_offset=False, **kwargs):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+    replace_var(g, v, dyn_offset)
+    ax = plot_from_graph(g, ax=ax, color=color, **kwargs)
+    return ax
+
+
+def get_nodes_per_time_from_tree(g):
+    times = np.array(list(nx.get_node_attributes(g, 't').values()))
+    return [np.sum(times==t) for t in np.unique(times)]
+
 def refine_scenarios(g, samples, metric):
     n_random = 20
     times = np.array(list(nx.get_node_attributes(g, 't').values()))
