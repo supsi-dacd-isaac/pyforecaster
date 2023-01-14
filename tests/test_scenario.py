@@ -20,7 +20,7 @@ class TestScenarios(unittest.TestCase):
         signal = pd.DataFrame(np.sin(np.arange(self.t)*2*n_days*np.pi/self.t).reshape(-1,1), index=t_index) \
                  + 0.1 * np.random.randn(self.t, 1)
         self.target = pd.concat([signal.shift(l) for l in -np.arange(self.lags)], axis=1)
-        self.x = pd.concat([self.target.iloc[:,0].shift(l) for l in np.arange(1,3)], axis=1)
+        self.x = pd.concat([self.target.iloc[:, 0].shift(l) for l in np.arange(1, 3)], axis=1)
         self.x = pd.concat([pd.Series(self.x.index.minute + self.x.index.hour*60, index=self.x.index), self.x], axis=1)
         self.x.fillna(0, inplace=True)
         self.x = self.x.loc[~self.target.isna().any(axis=1)]
@@ -67,9 +67,9 @@ class TestScenarios(unittest.TestCase):
         assert 1 == 1
 
     def test_scen_gen_df(self):
-        sg = ScenGen(cov_est_method='shrunk').fit(self.target)
+        sg = ScenGen(cov_est_method='shrunk', q_vect=self.q_vect).fit(self.target)
         rand_idx = np.random.choice(len(self.quantiles_df), 5)
-        scenarios = sg.predict(self.quantiles_df.iloc[rand_idx], 20, kind='scenarios', q_vect=self.q_vect)
+        scenarios = sg.predict_scenarios(self.quantiles_df.iloc[rand_idx], 20)
 
         cm = plt.get_cmap('viridis', 4)
         for i, randix in enumerate(rand_idx):
@@ -81,9 +81,9 @@ class TestScenarios(unittest.TestCase):
         assert 1 == 1
 
     def test_scenred(self):
-        sg = ScenGen(cov_est_method='shrunk').fit(self.target)
+        sg = ScenGen(cov_est_method='shrunk', q_vect=self.q_vect).fit(self.target)
         rand_idx = np.random.choice(len(self.quantiles_df), 2)
-        scenarios = sg.predict(self.quantiles_df.iloc[rand_idx], 100, kind='scenarios', q_vect=self.q_vect)
+        scenarios = sg.predict_scenarios(self.quantiles_df.iloc[rand_idx], 100)
         scenarios_per_step = np.linspace(1, 40, len(scenarios[0]), dtype=int)
 
         for i, rand_i in enumerate(rand_idx):
@@ -97,14 +97,16 @@ class TestScenarios(unittest.TestCase):
 
             plt.plot(self.target.iloc[rand_i, :].values, linestyle='--')
 
-        trees = sg.predict(self.quantiles_df.iloc[rand_idx], 100, kind='tree', q_vect=self.q_vect)
+        trees = sg.predict_trees(quantiles=self.quantiles_df.iloc[rand_idx], n_scen=100)
 
         assert 1 == 1
 
     def test_forecaster(self):
-        lf = LinearForecaster().fit(self.x, self.target)
-        preds = lf.predict(self.x)
         rand_idx = np.random.choice(np.arange(len(self.x)), 4)
+
+        lf = LinearForecaster(online_tree_reduction=True).fit(self.x, self.target)
+        preds = lf.predict(self.x)
+
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx,:])
         scenarios = lf.predict_scenarios(self.x.iloc[rand_idx,:])
         trees = lf.predict_trees(self.x.iloc[rand_idx,:], scenarios_per_step=np.linspace(1,20,scenarios.shape[1], dtype=int))

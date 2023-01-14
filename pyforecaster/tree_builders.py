@@ -11,7 +11,7 @@ from os.path import join
 import networkx as nx
 
 
-class NeuralScenarioTree:
+class ScenarioTree:
     def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred'):
         self.nodes_at_step = nodes_at_step
         self.tree = tree
@@ -52,13 +52,13 @@ class NeuralScenarioTree:
                                                 (scens[t+1, filters[j]] <= bins[c][1])]
 
             tree_idxs, leaves = retrieve_scenarios_indexes(tree)
-            tree_scens = np.vstack([tree_vals[idx] for idx in tree_idxs])
             nx.set_node_attributes(tree, vals, name='v')
             tree_vals = np.hstack(list(dict(tree.nodes('v')).values()))
+            tree_scens = np.vstack([tree_vals[idx] for idx in tree_idxs])
+
         return tree, tree_scens, tree_vals
 
     def gen_init_tree(self, scens):
-        t, n_scens = scens.shape
         geometric_steps = np.array([2**t for t in range(int(np.log(scens.shape[1])/np.log(2)))][2:])
         geometric_progression = np.floor(np.logspace(-1, np.log(len(geometric_steps))/np.log(10), scens.shape[0])).astype(int)
         reverse_geom_progression = np.max(geometric_progression) - geometric_progression[::-1]
@@ -91,49 +91,7 @@ class NeuralScenarioTree:
                         tree.add_edge(p, k)
                         k += 1
                 names_of_nodes_at_previous_step = np.copy(names_of_nodes_at_t)
-            """
-            qs = {t: np.quantile(scens[t, :], np.linspace(0, 1, n + 2)[1:-1]) for t, n in enumerate(nodes_at_step)}
-            bins = {t: np.quantile(scens[t, :], np.linspace(0, 1, n + 1)) for t, n in enumerate(nodes_at_step)}
-            for k, v in bins.items():
-                bin_vals = bins[k]
-                bin_vals[0] -=1e-6
-                bin_vals[-1] += 1e-6
-                bins[k] = bin_vals
-            # build connectionless tree
-            tree = nx.DiGraph()
-            k = 0
-            for t, n in enumerate(nodes_at_step):
-                for qj in qs[t]:
-                    tree.add_node(k, t=t, p=1/n, v=np.atleast_1d(qj))
-                    k += 1
 
-            for t in range(1, len(nodes_at_step)):
-                nodes_at_current_t = [n for n, time in nx.get_node_attributes(tree, 't').items() if time == t]
-                nodes_at_previous_t = [n for n, time in nx.get_node_attributes(tree, 't').items() if time == t - 1]
-                # parents choose children
-                for j in range(len(qs[t-1])):
-                    # scenarios in current quantile at previous time
-                    scens_filt_tj = (scens[t-1, :] > bins[t-1][j] - (j == 0) * 1e-6) & (scens[t-1, :] <= bins[t-1][j + 1])
-                    # to which quantile they'll go
-                    children_list = np.argsort(np.bincount(np.digitize(scens[t, scens_filt_tj], bins[t])))[1:]-1
-                    for i in children_list[::-1]:
-                        child = nodes_at_current_t[i]
-                        if len(list(tree.predecessors(child))) <1:
-                            tree.add_edge(nodes_at_previous_t[j], child)
-                            break
-
-                # children choose parents
-                for j in range(len(qs[t])):
-                    child = nodes_at_current_t[j]
-                    # scenarios in current quantile at current time
-                    scens_filt_tj = (scens[t, :] > bins[t][j] - (j==0)*1e-6) & (scens[t, :] <= bins[t][j+1])
-                    # from which quantile they come from
-                    rel_parent = np.argmax(np.bincount(np.digitize(scens[t-1, scens_filt_tj], bins[t-1])-1))
-                    parent = nodes_at_previous_t[rel_parent]
-                    if len(list(tree.predecessors(child))) == 0:
-                        tree.add_edge(parent, child)
-
-        """
         leaves = [n for n, time in nx.get_node_attributes(tree, 't').items() if time == len(nodes_at_step)-1]
         leaves_prob = {l: 1/len(leaves) for l in leaves}
         nx.set_node_attributes(tree, leaves_prob, name='p')
@@ -156,12 +114,12 @@ class NeuralScenarioTree:
         tot_dist = jnp.array(0)
         tree_scens = jnp.vstack([tree_vals[i] for i in tree_idxs.T]).T
         for scen in scens.T:
-            dists = NeuralScenarioTree.compute_distances(tree_scens, scen)
+            dists = ScenarioTree.compute_distances(tree_scens, scen)
             tot_dist += jnp.min(dists)
         return tot_dist
 
 
-class NeuralGas(NeuralScenarioTree):
+class NeuralGas(ScenarioTree):
     def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='quantiles'):
         self.pars = {'lambda_0': 5,
                      'lambda_f': 0.05,
@@ -230,24 +188,28 @@ def update_tree_from_scenarios(tree, tree_idxs, tree_scens):
     return tree_vals
 
 
-class NeuralDiffTree(NeuralScenarioTree):
+class DiffTree(ScenarioTree):
     def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred'):
         super().__init__(tree, nodes_at_step, savepath, init, base_tree)
 
-    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=100, tol=1e-3, do_plot=True):
+    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=100, tol=1e-3,
+                 do_plot=False, evaluation_step=1):
         scens = np.array(scens)
         tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
-        tree, tree_scens, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
+        tree, _, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
         k = 0
         rel_dev = 1
+        past_loss = 1e-6
         if do_plot:
             fig, ax = plt.subplots(1, 1)
         while rel_dev > tol and k < k_max:
-            if k%1==0:
+            if k % evaluation_step == 0:
                 loss = self.metric_loss(tree_vals, tree_idxs, scens)
-                print('iter {}, loss: {}'.format(k, loss))
+                rel_dev = np.abs(loss - past_loss) / past_loss
+                past_loss = loss
+                print('iter {}, loss: {}, rel_dev: {:0.2e}'.format(k, loss, rel_dev))
 
-            if do_plot and k%1 == 0:
+            if do_plot and k % evaluation_step == 0:
                 ax.cla()
                 replace_var(tree, tree_vals)
                 plot_from_graph(tree, ax=ax, color=self.cm(2))
@@ -264,12 +226,33 @@ class NeuralDiffTree(NeuralScenarioTree):
         return tree
 
 
+class ScenredTree(ScenarioTree):
+    def __init__(self, tree=None, nodes_at_step=None, savepath=''):
+        super().__init__(tree, nodes_at_step, savepath, 'quantiles', 'scenred')
+    
+    def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3):
+        scens = np.array(scens)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        return tree
+
+
+class QuantileTree(ScenarioTree):
+    def __init__(self, tree=None, nodes_at_step=None, savepath=''):
+        super().__init__(tree, nodes_at_step, savepath, 'quantiles', 'quantiles')
+
+    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3):
+        scens = np.array(scens)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        tree, tree_scens, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
+        return tree
+
+
 @jit
 def metric_loss(tree_vals, tree_idxs, scens):
     tot_dist = jnp.array(0)
     tree_scens = jnp.vstack([tree_vals[i] for i in tree_idxs.T]).T
     for scen in scens.T:
-        dists = NeuralScenarioTree.compute_distances(tree_scens, scen)
+        dists = ScenarioTree.compute_distances(tree_scens, scen)
         expdists = jnp.exp(80/(1 + dists))
         softmax = expdists / jnp.sum(expdists)
         tot_dist += jnp.sum(softmax * dists)

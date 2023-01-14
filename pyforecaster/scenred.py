@@ -375,9 +375,23 @@ def plot_vars(g, v, ax=None, color=None, dyn_offset=False, **kwargs):
     return ax
 
 
+def superimpose_signal_to_scens(x, w, perms):
+    return w + x[:, perms]
+
+
+def superimpose_signal_to_tree(x, tree):
+    times = np.array(list(nx.get_node_attributes(tree, 't').values()))
+    tree_vals = np.array(list(nx.get_node_attributes(tree, 'v').values()))
+    for t in np.unique(times):
+        tree_vals[times == t] += np.atleast_1d(x[t])
+    replace_var(tree, tree_vals)
+    return tree
+
+
 def get_nodes_per_time_from_tree(g):
     times = np.array(list(nx.get_node_attributes(g, 't').values()))
     return [np.sum(times==t) for t in np.unique(times)]
+
 
 def refine_scenarios(g, samples, metric):
     n_random = 20

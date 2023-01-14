@@ -13,10 +13,13 @@ def train_val_split(x, y, val_ratio):
     x, y = x.iloc[:n_val, :], y.iloc[:n_val, :]
     return x, y, x_val, y_val
 
+
 class ScenarioGenerator:
     def __init__(self, q_vect=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
-        self.scengen = ScenGen(**scengen_kwgs)
+        self.scengen = ScenGen(q_vect=self.q_vect, **scengen_kwgs)
+        self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
+                                                                              scengen_kwgs.keys() else True
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         self.scengen.fit(y, x)
@@ -32,8 +35,7 @@ class ScenarioGenerator:
     def predict_scenarios(self, x, n_scen=100, random_state=None, **predict_q_kwargs):
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
-        scenarios = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='scenarios', q_vect=self.q_vect,
-                                         random_state=random_state)
+        scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
         return scenarios
 
     def predict_trees(self, x, n_scen=100, scenarios_per_step=None, init_obs=None, random_state=None,
@@ -49,12 +51,19 @@ class ScenarioGenerator:
         :return:
         """
 
-        # retrieve quantiles from child class
-        quantiles = self.predict_quantiles(x, **predict_q_kwargs)
+        if self.online_tree_reduction:
+            # retrieve quantiles from child class
+            quantiles = self.predict_quantiles(x, **predict_q_kwargs)
 
-        trees = self.scengen.predict(quantiles, n_scen=n_scen, x=x, kind='tree', q_vect=self.q_vect,
-                                     scenarios_per_step=scenarios_per_step, init_obs=init_obs,
-                                     random_state=random_state)
+            trees = self.scengen.predict_trees(quantiles=quantiles, n_scen=n_scen, x=x,
+                                         scenarios_per_step=scenarios_per_step, init_obs=init_obs,
+                                         random_state=random_state)
+        else:
+            predictions = self.predict(x, **predict_q_kwargs)
+
+            trees = self.scengen.predict_trees(predictions=predictions, n_scen=n_scen, x=x,
+                                         scenarios_per_step=scenarios_per_step, init_obs=init_obs,
+                                         random_state=random_state)
 
         # if we predicted just one step just return a nx object, not a list
         if len(trees) == 1:
@@ -122,7 +131,6 @@ class LGBForecaster(ScenarioGenerator):
                          "num_threads": 8}
         self.lgb_pars.update(lgb_pars)
         self.err_distr = {}
-        self.q_vect = np.linspace(0,1,11)[1:-1]
         self.val_ratio = val_ratio
 
     def fit(self, x, y):

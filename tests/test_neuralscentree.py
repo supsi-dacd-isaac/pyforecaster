@@ -1,7 +1,8 @@
 import unittest
 import pandas as pd
-from pyforecaster.neural_gas_tree import NeuralGas, NeuralDiffTree
+from pyforecaster.tree_builders import NeuralGas, DiffTree, ScenredTree, QuantileTree
 from pyforecaster.forecaster import ScenGen
+from pyforecaster.scenred import plot_from_graph
 import numpy as np
 from scipy.stats import multivariate_normal, norm, weibull_min
 
@@ -9,7 +10,9 @@ from scipy.stats import multivariate_normal, norm, weibull_min
 class TestScenarios(unittest.TestCase):
     def setUp(self) -> None:
         self.ng = NeuralGas(savepath='figs/neural_gas', init='quantiles', base_tree='quantiles')
-        self.ndt = NeuralDiffTree(savepath='figs/diff_tree', init='quantiles', base_tree='quantiles')
+        self.ndt = DiffTree(savepath='figs/diff_tree', init='quantiles', base_tree='quantiles')
+        self.srt = ScenredTree()
+        self.qt = QuantileTree()
         n_days = 10
         self.t = 24 * n_days
         self.lags = 24
@@ -28,14 +31,18 @@ class TestScenarios(unittest.TestCase):
         self.quantiles_df = pd.concat({q: self.target + norm.ppf(q) * np.linspace(0.3, 1, self.lags)
                                        for q in self.q_vect}, axis=1)
 
-    def test_neural_gas(self):
-        sg = ScenGen(cov_est_method='shrunk').fit(self.target)
-        rand_idx = np.random.choice(len(self.quantiles_df), 5)
-        scenarios = np.squeeze(sg.predict(self.quantiles_df.iloc[[0, 15]], 50, kind='scenarios', q_vect=self.q_vect))
-        #tree = self.ndt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
-        #tree = self.ng.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
-        #tree = self.ndt.gen_tree(scenarios[1], k_max=100)
+    def test_tree_gens(self):
+        sg = ScenGen(cov_est_method='shrunk', online_tree_reduction=True, q_vect=self.q_vect).fit(self.target)
+        scenarios = np.squeeze(sg.predict_scenarios(self.quantiles_df.iloc[[0, 15]], 100))
+        tree_ng = self.ng.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=True)
+        #tree_d = self.ndt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=True)
+        tree_sr = self.srt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
+        tree_q = self.qt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
 
+        #plot_from_graph(tree_ng)
+        #plot_from_graph(tree_d, ax=plt.gca(), color='r')
+        #plot_from_graph(tree_sr, ax=plt.gca())
+        #plot_from_graph(tree_q)
 
 if __name__ == '__main__':
     unittest.main()
