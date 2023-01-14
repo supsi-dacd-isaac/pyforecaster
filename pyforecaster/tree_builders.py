@@ -62,7 +62,7 @@ class ScenarioTree:
         geometric_steps = np.array([2**t for t in range(int(np.log(scens.shape[1])/np.log(2)))][2:])
         geometric_progression = np.floor(np.logspace(-1, np.log(len(geometric_steps))/np.log(10), scens.shape[0])).astype(int)
         reverse_geom_progression = np.max(geometric_progression) - geometric_progression[::-1]
-        geometric_nodes = geometric_steps[reverse_geom_progression]
+        geometric_nodes = geometric_steps[np.min(reverse_geom_progression, len(geometric_steps))]
 
         nodes_at_step = self.nodes_at_step if self.nodes_at_step is not None else \
             geometric_nodes
