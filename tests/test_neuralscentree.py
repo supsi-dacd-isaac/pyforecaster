@@ -34,7 +34,7 @@ class TestScenarios(unittest.TestCase):
     def test_tree_gens(self):
         sg = ScenGen(cov_est_method='shrunk', online_tree_reduction=True, q_vect=self.q_vect).fit(self.target)
         scenarios = np.squeeze(sg.predict_scenarios(self.quantiles_df.iloc[[0, 15]], 100))
-        tree_ng = self.ng.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=True)
+        tree_ng = self.ng.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=False)
         #tree_d = self.ndt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=True)
         tree_sr = self.srt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
         tree_q = self.qt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
