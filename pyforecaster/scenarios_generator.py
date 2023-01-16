@@ -52,7 +52,7 @@ class ScenGen:
                     y_h = y.loc[filt_h, :]
                     scenarios, scenarios_per_step = self.sample_scenarios(y_h, n_scen, err_distr[h], scenarios_per_step=None,
                                                                           init_obs=None, **copula_kwargs)
-                    self.trees[h] = self.tree.gen_tree(np.squeeze(scenarios), k_max=100)
+                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=100)
             else:
                 raise NotImplementedError('pre-fit currently not available for copulas other than HourlyGaussianCopula')
 
@@ -112,7 +112,7 @@ class ScenGen:
             scenarios, scenarios_per_step = self.sample_scenarios(x, n_scen, quantiles, scenarios_per_step,
                                                                   init_obs, **copula_kwargs)
             for scenarios_t in scenarios:
-                nx_tree = self.tree.gen_tree(scenarios_t, k_max=100)
+                nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=100)
                 trees.append(nx_tree)
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'

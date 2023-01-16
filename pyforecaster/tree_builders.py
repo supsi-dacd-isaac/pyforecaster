@@ -171,7 +171,7 @@ class NeuralGas(ScenarioTree):
 
         update_tree_from_scenarios(tree, tree_idxs, tree_scens)
 
-        return tree
+        return tree, tree_scens, tree_idxs, tree_vals
 
 
 def update_tree_from_scenarios(tree, tree_idxs, tree_scens):
@@ -223,7 +223,7 @@ class DiffTree(ScenarioTree):
             k +=1
 
         replace_var(tree, tree_vals)
-        return tree
+        return tree, tree_scens, tree_idxs, tree_vals
 
 
 class ScenredTree(ScenarioTree):
@@ -233,7 +233,7 @@ class ScenredTree(ScenarioTree):
     def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3):
         scens = np.array(scens)
         tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
-        return tree
+        return tree, tree_scens, tree_idxs, tree_vals
 
 
 class QuantileTree(ScenarioTree):
@@ -244,7 +244,7 @@ class QuantileTree(ScenarioTree):
         scens = np.array(scens)
         tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
         tree, tree_scens, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
-        return tree
+        return tree, tree_scens, tree_idxs, tree_vals
 
 
 @jit
