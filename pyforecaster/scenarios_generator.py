@@ -6,6 +6,7 @@ import pandas as pd
 import pyforecaster.dictionaries
 import numpy as np
 from inspect import signature
+from copy import deepcopy
 
 
 class ScenGen:
@@ -118,7 +119,7 @@ class ScenGen:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
 
             for i, t in enumerate(predictions.index):
-                nx_tree = self.trees[t.hour]
+                nx_tree = deepcopy(self.trees[t.hour])
                 nx_tree = superimpose_signal_to_tree(predictions.iloc[i, :], nx_tree)
                 trees.append(nx_tree)
 
