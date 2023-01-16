@@ -92,13 +92,13 @@ class ScenarioTree:
                         k += 1
                 names_of_nodes_at_previous_step = np.copy(names_of_nodes_at_t)
 
-        leaves = [n for n, time in nx.get_node_attributes(tree, 't').items() if time == len(nodes_at_step)-1]
-        leaves_prob = {l: 1/len(leaves) for l in leaves}
-        nx.set_node_attributes(tree, leaves_prob, name='p')
-        nodes_prob = {}
-        for n in list(set(tree.nodes)-set(leaves)):
-            nodes_prob[n] = len([i for i in nx.descendants(tree, n) if i not in leaves]) / len(leaves)
-        nx.set_node_attributes(tree, nodes_prob, name='p')
+            leaves = [n for n, time in nx.get_node_attributes(tree, 't').items() if time == len(nodes_at_step)-1]
+            leaves_prob = {l: 1/len(leaves) for l in leaves}
+            nx.set_node_attributes(tree, leaves_prob, name='p')
+            nodes_prob = {}
+            for n in list(set(tree.nodes)-set(leaves)):
+                nodes_prob[n] = len([i for i in nx.descendants(tree, n) if i in leaves]) / len(leaves)
+            nx.set_node_attributes(tree, nodes_prob, name='p')
         # plot_graph(tree)
         return tree
 
