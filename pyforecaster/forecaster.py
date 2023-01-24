@@ -15,9 +15,9 @@ def train_val_split(x, y, val_ratio):
 
 
 class ScenarioGenerator:
-    def __init__(self, q_vect=None, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
-        self.scengen = ScenGen(q_vect=self.q_vect, **scengen_kwgs)
+        self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
                                                                               scengen_kwgs.keys() else True
 
@@ -38,7 +38,7 @@ class ScenarioGenerator:
         scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
         return scenarios
 
-    def predict_trees(self, x, n_scen=100, scenarios_per_step=None, init_obs=None, random_state=None,
+    def predict_trees(self, x, n_scen=100, nodes_at_step=None, init_obs=None, random_state=None,
                       **predict_q_kwargs):
         """
         :param x:
@@ -56,13 +56,12 @@ class ScenarioGenerator:
             quantiles = self.predict_quantiles(x, **predict_q_kwargs)
 
             trees = self.scengen.predict_trees(quantiles=quantiles, n_scen=n_scen, x=x,
-                                         scenarios_per_step=scenarios_per_step, init_obs=init_obs,
+                                         nodes_at_step=nodes_at_step, init_obs=init_obs,
                                          random_state=random_state)
         else:
             predictions = self.predict(x, **predict_q_kwargs)
 
-            trees = self.scengen.predict_trees(predictions=predictions, n_scen=n_scen, x=x,
-                                         scenarios_per_step=scenarios_per_step, init_obs=init_obs,
+            trees = self.scengen.predict_trees(predictions=predictions, n_scen=n_scen, x=x, init_obs=init_obs,
                                          random_state=random_state)
 
         # if we predicted just one step just return a nx object, not a list

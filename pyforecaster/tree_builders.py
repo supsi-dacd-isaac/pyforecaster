@@ -9,21 +9,24 @@ from abc import abstractmethod
 import matplotlib.pyplot as plt
 from os.path import join
 import networkx as nx
+from pyforecaster.utilities import get_logger
 
 
 class ScenarioTree:
-    def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred'):
+    def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred', logger=None):
         self.nodes_at_step = nodes_at_step
         self.tree = tree
         self.cm = plt.get_cmap('viridis', 10)
         self.savepath = savepath
         self.init = init
         self.base_tree = base_tree
+        self.logger = get_logger() if logger is None else logger
 
     @abstractmethod
-    def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree, k_max=1000, tol=1e-3):
-        if start_tree is None:
-            tree = self.gen_init_tree(scens)
+    def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3,
+                 nodes_at_step=None):
+        tree = self.gen_init_tree(scens, nodes_at_step) if start_tree is None else start_tree
+
         tree_idxs, leaves = retrieve_scenarios_indexes(tree)
         tree_vals = np.hstack(list(dict(tree.nodes('v')).values()))
         tree_scens = np.vstack([tree_vals[idx] for idx in tree_idxs])
@@ -50,6 +53,9 @@ class ScenarioTree:
                         vals[c] = v
                         filters[c] = filters[j][(scens[t+1, filters[j]] > bins[c][0] - 1e-6) &
                                                 (scens[t+1, filters[j]] <= bins[c][1])]
+                        if len(filters[c]) == 0:
+                            filters[c] = np.copy(filters[j])
+                            self.logger.warning('one node was empty: resetting filter to current parent')
 
             tree_idxs, leaves = retrieve_scenarios_indexes(tree)
             nx.set_node_attributes(tree, vals, name='v')
@@ -58,17 +64,25 @@ class ScenarioTree:
 
         return tree, tree_scens, tree_vals
 
-    def gen_init_tree(self, scens):
-        geometric_steps = np.array([2**t for t in range(int(np.log(scens.shape[1])/np.log(2)))][2:])
-        geometric_progression = np.floor(np.logspace(-1, np.log(len(geometric_steps))/np.log(10), scens.shape[0])).astype(int)
-        reverse_geom_progression = np.max(geometric_progression) - geometric_progression[::-1]
-        geometric_nodes = geometric_steps[np.minimum(reverse_geom_progression, len(geometric_steps)-1)]
+    def gen_init_tree(self, scens, nodes_at_step=None):
+        if nodes_at_step is None:
+            geometric_steps = np.array([2**t for t in range(int(np.log(scens.shape[1])/np.log(2)))][2:])
+            geometric_progression = np.floor(np.logspace(-1, np.log(len(geometric_steps))/np.log(10), scens.shape[0])).astype(int)
+            reverse_geom_progression = np.max(geometric_progression) - geometric_progression[::-1]
+            geometric_nodes = geometric_steps[np.minimum(reverse_geom_progression, len(geometric_steps)-1)]
 
-        nodes_at_step = self.nodes_at_step if self.nodes_at_step is not None else \
-            geometric_nodes
+            nodes_at_step = self.nodes_at_step if self.nodes_at_step is not None else \
+                geometric_nodes
+
+        if len(nodes_at_step) == scens.shape[1]-1:
+            nodes_at_step = np.hstack([1, nodes_at_step])
+            self.logger.info('seems like you have one step more in your scenarios than what specified in nodes_at_step'
+                             'I assume you are passing an additional step to consider initial variance, I am adding an '
+                             'additional initial node to the tree')
 
         if nodes_at_step[0] != 1:
             nodes_at_step[0] = 1
+            self.logger.info('your initial nodes_at_step was not 1, forcing it to be')
         if self.base_tree == 'scenred':
             _, _, _, _, tree = scenred(scens, nodes=nodes_at_step)
         elif self.base_tree == 'quantiles':
@@ -127,9 +141,10 @@ class NeuralGas(ScenarioTree):
                      'ef': 0.05}
         super().__init__(tree, nodes_at_step, savepath, init, base_tree)
 
-    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=10000, tol=1e-3, do_plot=True):
+    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=10000, tol=1e-3,
+                 do_plot=True, nodes_at_step=None):
         scens = np.array(scens)
-        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree, nodes_at_step=nodes_at_step)
         tree, tree_scens, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
         k = 0
         rel_dev = 1
@@ -189,13 +204,17 @@ def update_tree_from_scenarios(tree, tree_idxs, tree_scens):
 
 
 class DiffTree(ScenarioTree):
-    def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred'):
+    def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred',
+                 learning_rate=None):
         super().__init__(tree, nodes_at_step, savepath, init, base_tree)
+        self.learning_rate = learning_rate
 
     def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=100, tol=1e-3,
-                 do_plot=False, evaluation_step=1):
+                 do_plot=False, evaluation_step=1, nodes_at_step=None):
         scens = np.array(scens)
-        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        if self.learning_rate is None:
+            self.learning_rate = np.maximum(1/scens.shape[1], 0.1)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree, nodes_at_step=nodes_at_step)
         tree, _, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
         k = 0
         rel_dev = 1
@@ -208,7 +227,9 @@ class DiffTree(ScenarioTree):
                 rel_dev = np.abs(loss - past_loss) / past_loss
                 past_loss = loss
                 print('iter {}, loss: {}, rel_dev: {:0.2e}'.format(k, loss, rel_dev))
-
+                if loss > past_loss:
+                    self.learning_rate *= 0.8
+                    print('I am setting learning rate from {} to {} since loss increased last step'.format(self.learning_rate, self.learning_rate*0.8))
             if do_plot and k % evaluation_step == 0:
                 ax.cla()
                 replace_var(tree, tree_vals)
@@ -219,7 +240,7 @@ class DiffTree(ScenarioTree):
                 plt.savefig(join(self.savepath, 'step_{:03d}'.format(k)))
                 plt.pause(0.01)
             g = grad(partial(self.metric_loss, tree_idxs=tree_idxs, scens=scens))(tree_vals)
-            tree_vals -= g*0.2
+            tree_vals -= g*self.learning_rate
             k +=1
 
         replace_var(tree, tree_vals)
@@ -230,9 +251,10 @@ class ScenredTree(ScenarioTree):
     def __init__(self, tree=None, nodes_at_step=None, savepath=''):
         super().__init__(tree, nodes_at_step, savepath, 'quantiles', 'scenred')
     
-    def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3):
+    def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3,
+                 nodes_at_step=None):
         scens = np.array(scens)
-        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree, nodes_at_step=nodes_at_step)
         return tree, tree_scens, tree_idxs, tree_vals
 
 
@@ -240,9 +262,10 @@ class QuantileTree(ScenarioTree):
     def __init__(self, tree=None, nodes_at_step=None, savepath=''):
         super().__init__(tree, nodes_at_step, savepath, 'quantiles', 'quantiles')
 
-    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3):
+    def gen_tree(self, scens: Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3,
+                 nodes_at_step=None):
         scens = np.array(scens)
-        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree, nodes_at_step=nodes_at_step)
         tree, tree_scens, tree_vals = self.init_vals(tree, tree_scens, tree_vals, scens)
         return tree, tree_scens, tree_idxs, tree_vals
 

@@ -5,7 +5,7 @@ from pyforecaster.forecaster import ScenGen
 from pyforecaster.scenred import plot_from_graph
 import numpy as np
 from scipy.stats import multivariate_normal, norm, weibull_min
-
+import matplotlib.pyplot as plt
 
 class TestScenarios(unittest.TestCase):
     def setUp(self) -> None:
@@ -35,14 +35,15 @@ class TestScenarios(unittest.TestCase):
         sg = ScenGen(cov_est_method='shrunk', online_tree_reduction=True, q_vect=self.q_vect).fit(self.target)
         scenarios = np.squeeze(sg.predict_scenarios(self.quantiles_df.iloc[[0, 15]], 100))
         tree_ng, _, _, _ = self.ng.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=False)
-        #tree_d, _, _, _  = self.ndt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=True)
+        #tree_d, _, _, _  = self.ndt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100, do_plot=False)
         tree_sr, _, _, _ = self.srt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
         tree_q, _, _, _ = self.qt.gen_tree(np.hstack([scenarios[0], scenarios[1]]), k_max=100)
 
         #plot_from_graph(tree_ng)
         #plot_from_graph(tree_d, ax=plt.gca(), color='r')
-        #plot_from_graph(tree_sr, ax=plt.gca())
+        #plot_from_graph(tree_sr, ax=plt.gca(), linestyle='--')
         #plot_from_graph(tree_q)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,7 +11,7 @@ from copy import deepcopy
 
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
-                 online_tree_reduction=True, q_vect=None, **kwargs):
+                 online_tree_reduction=True, q_vect=None, nodes_at_step=None, **kwargs):
         self.logger = get_logger()
         self.copula_type = copula_type
         self.tree_type = tree_type
@@ -20,8 +20,7 @@ class ScenGen:
         copula_kwargs = {p: kwargs[p] for p in signature(self.copula_class).parameters.keys() if p in kwargs}
         tree_kwargs = {p: kwargs[p] for p in signature(self.tree_class).parameters.keys() if p in kwargs}
         self.copula = self.copula_class(**copula_kwargs)
-        self.tree = self.tree_class(**tree_kwargs)
-
+        self.tree = self.tree_class(nodes_at_step=nodes_at_step, **tree_kwargs)
         self.online_tree_reduction = online_tree_reduction
         self.trees = {}
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
@@ -51,8 +50,7 @@ class ScenGen:
                     #scenarios = self.copula.sample(y_h.iloc[[0], :], n_scen, **copula_kwargs)
                     filt_h = y.index.hour == h
                     y_h = y.loc[filt_h, :]
-                    scenarios, scenarios_per_step = self.sample_scenarios(y_h, n_scen, err_distr[h], scenarios_per_step=None,
-                                                                          init_obs=None, **copula_kwargs)
+                    scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=None, **copula_kwargs)
                     self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=100)
             else:
                 raise NotImplementedError('pre-fit currently not available for copulas other than HourlyGaussianCopula')
@@ -60,7 +58,7 @@ class ScenGen:
         return self
 
     def predict_scenarios(self, quantiles: Union[pd.DataFrame, np.ndarray]=None, n_scen: int = 100,
-                          x: pd.DataFrame = None, scenarios_per_step=None, init_obs=None, **copula_kwargs):
+                          x: pd.DataFrame = None, init_obs=None, **copula_kwargs):
         """
         :param quantiles: predicted quantiles from the forecaster. quantiles has the following structure, depending on
                           type:
@@ -85,21 +83,16 @@ class ScenGen:
         else:
             assert x is not None, 'if quantiles are not pd.DataFrame, x must be passed, and must be a pd.DataFrame ' \
                                   'with DatetimeIndex index'
-        # if scenarios_per_step not passed, assume linear function from 1 to n_scen
-        if scenarios_per_step is None:
-            scenarios_per_step = np.linspace(1, n_scen, quantiles.shape[1], dtype=int)
-
 
         assert len(self.q_vect) == quantiles.shape[-1], 'q_vect must contain the alpha values of quantiles third ' \
                                                         'dimension. q_vect length: {} differs from quantile third ' \
                                                         'dimension: {}'.format(len(self.q_vect), quantiles.shape[-1])
 
-        scenarios, scenarios_per_step = self.sample_scenarios(x, n_scen, quantiles, scenarios_per_step, init_obs,
-                                                              **copula_kwargs)
+        scenarios = self.sample_scenarios(x, n_scen, quantiles, init_obs, **copula_kwargs)
         return scenarios
 
     def predict_trees(self, predictions:pd.DataFrame=None, quantiles: Union[pd.DataFrame, np.ndarray] = None, n_scen: int = 100,
-                          x: pd.DataFrame = None, scenarios_per_step=None, init_obs=None, **copula_kwargs):
+                          x: pd.DataFrame = None, init_obs=None, nodes_at_step=None, **copula_kwargs):
         trees = []
         if self.online_tree_reduction:
             assert quantiles is not None, 'if online_tree_reduction quantiles must be passed'
@@ -110,10 +103,9 @@ class ScenGen:
             else:
                 assert x is not None, 'if quantiles are not pd.DataFrame, x must be passed, and must be a pd.DataFrame ' \
                                       'with DatetimeIndex index'
-            scenarios, scenarios_per_step = self.sample_scenarios(x, n_scen, quantiles, scenarios_per_step,
-                                                                  init_obs, **copula_kwargs)
+            scenarios = self.sample_scenarios(x, n_scen, quantiles, init_obs, **copula_kwargs)
             for scenarios_t in scenarios:
-                nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=100)
+                nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=100, nodes_at_step=nodes_at_step)
                 trees.append(nx_tree)
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
@@ -125,7 +117,7 @@ class ScenGen:
 
         return trees
 
-    def sample_scenarios(self, x, n_scen, quantiles, scenarios_per_step, init_obs, **copula_kwargs):
+    def sample_scenarios(self, x, n_scen, quantiles, init_obs, **copula_kwargs):
         # copula samples of dimension n_obs, n_steps, n_scen
         copula_samples = self.copula.sample(x, n_scen, **copula_kwargs)
 
@@ -134,8 +126,6 @@ class ScenGen:
             init_obs = np.atleast_1d(init_obs)
             assert len(init_obs) == scenarios.shape[0], 'length of init_obs was {}, while should have been equal to ' \
                                                         '{}'.format(len(init_obs), scenarios.shape[0])
-            if scenarios_per_step is not None:
-                scenarios_per_step = np.hstack([1, scenarios_per_step])
             for t, init_o in enumerate(init_obs):
                 scenarios[t, 0, :] = init_o + np.random.rand(n_scen)*1e-6
             # for each temporal observation, generate scenarios from copula samples
@@ -146,7 +136,7 @@ class ScenGen:
             # for each temporal observation, generate scenarios from copula samples
             for t, copula_sample_t, quantiles_t in zip(range(len(copula_samples)), copula_samples, quantiles):
                 scenarios[t, :] = interp_scens(copula_sample_t, quantiles_t, self.q_vect)
-        return scenarios, scenarios_per_step
+        return scenarios
 
 
 def interp_scens(copula_samples, quantiles_mat, q_vect):
