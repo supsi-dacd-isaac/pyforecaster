@@ -51,7 +51,8 @@ class ScenGen:
                     filt_h = y.index.hour == h
                     y_h = y.loc[filt_h, :]
                     scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=None, **copula_kwargs)
-                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=100)
+                    start_tree = self.trees[0] if h>0 else None
+                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=100, start_tree=start_tree)
             else:
                 raise NotImplementedError('pre-fit currently not available for copulas other than HourlyGaussianCopula')
 

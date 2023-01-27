@@ -1,7 +1,7 @@
 import unittest
 import pandas as pd
 from pyforecaster.tree_builders import NeuralGas, DiffTree, ScenredTree, QuantileTree
-from pyforecaster.forecaster import ScenGen
+from pyforecaster.forecaster import ScenGen, LinearForecaster
 from pyforecaster.scenred import plot_from_graph
 import numpy as np
 from scipy.stats import multivariate_normal, norm, weibull_min
@@ -43,6 +43,9 @@ class TestScenarios(unittest.TestCase):
         #plot_from_graph(tree_d, ax=plt.gca(), color='r')
         #plot_from_graph(tree_sr, ax=plt.gca(), linestyle='--')
         #plot_from_graph(tree_q)
+
+    def test_lin_forecaster_offline_difftree(self):
+        lf = LinearForecaster(online_tree_reduction=False, tree_type='DiffTree').fit(self.x, self.target)
 
 
 if __name__ == '__main__':
