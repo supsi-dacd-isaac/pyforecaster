@@ -78,11 +78,8 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
         df_indexes = np.hstack([x.index.ravel() for x in dfs]) if axis==0 else dfs[0].index
 
         res = mapper(f, [f.values for f in dfs])
+        res = np.vstack(res) if axis == 0 else np.hstack(res)
 
-        if axis==0:
-            res = np.vstack(res)
-        else:
-            res = np.hstack(res)
         if res.shape == df_shape:
             res = pd.DataFrame(res, columns=df_columns, index=df_indexes)
 
@@ -102,6 +99,8 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
             for i in range(len(responses[0])):
                 res.append(pd.concat([r[i] for r in responses], axis=axis))
             res = tuple(res)
+        else:
+            res = np.vstack(responses) if axis == 0 else np.hstack(responses)
         ray.shutdown()
 
     return res
