@@ -117,7 +117,7 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, lgb_pars, q_vect=None, val_ratio=None, **scengen_kwgs):
+    def __init__(self, lgb_pars=None, q_vect=None, val_ratio=None, **scengen_kwgs):
         super().__init__(q_vect, **scengen_kwgs)
         self.m = []
         self.lgb_pars = {"objective": "regression",
@@ -128,7 +128,8 @@ class LGBForecaster(ScenarioGenerator):
                          "metric": "l2",
                          "min_data": 4,
                          "num_threads": 8}
-        self.lgb_pars.update(lgb_pars)
+        if lgb_pars is not None:
+            self.lgb_pars.update(lgb_pars)
         self.err_distr = {}
         self.val_ratio = val_ratio
 
