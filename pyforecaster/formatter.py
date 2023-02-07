@@ -89,7 +89,7 @@ class Formatter:
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
         for tr in self.transformers:
-            x = tr.transform(x, augment=self.augment)
+            x = tr.transform(x)
         transformed_columns = [c for c in x.columns if c not in original_columns]
         target = pd.DataFrame(index=x.index)
         if return_target:
@@ -101,6 +101,8 @@ class Formatter:
             target = target.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
         else:
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1)]
+        if not self.augment:
+            x = x[transformed_columns]
         # adding time features
         if time_features:
             x = self.add_time_features(x)
