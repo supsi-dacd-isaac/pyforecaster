@@ -23,12 +23,17 @@ def get_logger(level=logging.INFO):
 
 
 class Formatter:
-    def __init__(self, logger=None):
+    """
+    :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
+                        recent data if you don't have at prediction time.
+    """
+    def __init__(self, logger=None, augment=True):
         self.logger = get_logger() if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
         self.target_transformers = []
         self.cv_gen = []
+        self.augment = augment
 
     def add_time_features(self, x):
         self.logger.info('Adding time features')
@@ -66,7 +71,7 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x, time_features=True, holidays=False, return_target=True, augment=True, **holidays_kwargs):
+    def transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -76,8 +81,6 @@ class Formatter:
         :param holidays: if True add holidays as a categorical feature
         :param return_target: if True, returns also the transformed target. If False (e.g. at prediction time), returns
                              only x
-        :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
-                        recent data if you don't have at prediction time.
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
         original_columns = x.columns
@@ -86,7 +89,7 @@ class Formatter:
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
         for tr in self.transformers:
-            x = tr.transform(x, augment=augment)
+            x = tr.transform(x, augment=self.augment)
         transformed_columns = [c for c in x.columns if c not in original_columns]
         target = pd.DataFrame(index=x.index)
         if return_target:
