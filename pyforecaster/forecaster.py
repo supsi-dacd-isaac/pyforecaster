@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -7,22 +8,36 @@ from sklearn.linear_model import RidgeCV, LinearRegression
 from pyforecaster.scenarios_generator import ScenGen
 
 
-def train_val_split(x, y, val_ratio):
-    n_val = int(x.shape[0] * val_ratio)
-    x_val, y_val = x.iloc[-n_val:, :], y.iloc[-n_val:, :]
-    x, y = x.iloc[:n_val, :], y.iloc[:n_val, :]
-    return x, y, x_val, y_val
-
-
-class ScenarioGenerator:
-    def __init__(self, q_vect=None, nodes_at_step=None, **scengen_kwgs):
+class ScenarioGenerator(object):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
                                                                               scengen_kwgs.keys() else True
+        self.val_ratio = val_ratio
+        self.err_distr = {}
+
+    def set_params(self, **kwargs):
+        [self.__setattr__(k, v) for k, v in kwargs.items() if v in self.__dict__.items()]
+
+    @abstractmethod
+    def get_params(self, *args):
+        return {k: v for k, v in self.__dict__.items() if k in args}
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
-        self.scengen.fit(y, x)
+        preds = self.predict(x)
+        errs = pd.DataFrame(y.values-preds.values, index=x.index)
+        self.scengen.fit(errs, x)
+
+        self.err_distr = {}
+        hours = np.arange(24)
+        if len(np.unique(x.index.hour)) != 24:
+            print('not all hours are there in the training set, building unconditional confidence intervals')
+            for h in hours:
+                self.err_distr[h] = np.quantile(errs, self.q_vect, axis=0).T
+        else:
+            for h in hours:
+                self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
 
     @abstractmethod
     def predict(self, x, **kwargs):
@@ -69,41 +84,31 @@ class ScenarioGenerator:
             trees = trees[0]
         return trees
 
+    def train_val_split(self, x, y):
+        if self.val_ratio is not None:
+            n_val = int(x.shape[0] * self.val_ratio)
+            n_tr = x.shape[0] - n_val
+            x_val, y_val = x.iloc[n_tr:, :], y.iloc[n_tr:, :]
+            x, y = x.iloc[:n_tr, :], y.iloc[:n_tr, :]
+        else:
+            x_val, y_val = x, y
+        return x, y, x_val, y_val
+
+
 
 class LinearForecaster(ScenarioGenerator):
-    def __init__(self, q_vect=None, val_ratio=None, kind='linear', **scengen_kwgs):
-        super().__init__(q_vect, **scengen_kwgs)
+    def __init__(self, q_vect=None, val_ratio=None, nodes_at_step=None, kind='linear', **scengen_kwgs):
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
         self.m = None
-        self.err_distr = {}
         self.kind = kind
-        self.val_ratio = val_ratio
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
-        if self.val_ratio is not None:
-            x, y, x_val, y_val = train_val_split(x, y, self.val_ratio)
-
-        #if isinstance(x, pd.DataFrame):
-        #    x = x.values
-        #if isinstance(y, pd.DataFrame):
-        #    y = y.values
+        x, y, x_val, y_val = self.train_val_split(x, y)
         if self.kind == 'linear':
             self.m = LinearRegression().fit(x, y)
         elif self.kind == 'ridge':
             self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x, y)
-
-        if self.val_ratio is None:
-            preds = self.predict(x)
-            errs = pd.DataFrame(preds.values-y.values, index=x.index)
-            super().fit(x, errs)
-        else:
-            preds = self.predict(x_val)
-            errs = pd.DataFrame(preds.values-y_val.values, index=x_val.index)
-            super().fit(x_val, errs)
-
-        self.err_distr = {}
-        for h in np.unique(x.index.hour):
-            self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
-
+        super().fit(x_val, y_val)
         return self
 
     def predict(self, x:pd.DataFrame, **kwargs):
@@ -117,44 +122,30 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, lgb_pars=None, q_vect=None, val_ratio=None, **scengen_kwgs):
-        super().__init__(q_vect, **scengen_kwgs)
+    def __init__(self, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
         self.lgb_pars = {"objective": "regression",
                          "max_depth": 20,
+                         "n_estimators": 100,
                          "num_leaves": 100,
                          "learning_rate": 0.1,
                          "verbose": -1,
                          "metric": "l2",
-                         "min_data": 4,
-                         "num_threads": 8}
+                         "min_child_samples": 20,
+                         "n_jobs": 8}
         if lgb_pars is not None:
             self.lgb_pars.update(lgb_pars)
-        self.err_distr = {}
-        self.val_ratio = val_ratio
 
     def fit(self, x, y):
-        if self.val_ratio is not None:
-            x, y, x_val, y_val = train_val_split(x, y, self.val_ratio)
+        x, y, x_val, y_val = self.train_val_split(x, y)
 
         for i in range(y.shape[1]):
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
             m = train(self.lgb_pars, lgb_data)
             self.m.append(m)
 
-        if self.val_ratio is None:
-            preds = self.predict(x)
-            errs = pd.DataFrame(preds.values-y.values, index=x.index)
-            super().fit(x, errs)
-        else:
-            preds = self.predict(x_val)
-            errs = pd.DataFrame(preds.values - y_val.values, index=x_val.index)
-            super().fit(x_val, errs)
-
-        self.err_distr = {}
-        for h in np.unique(x.index.hour):
-            self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h], self.q_vect, axis=0).T
-
+        super().fit(x_val, y_val)
         return self
 
     def predict(self, x, **kwargs):

@@ -108,7 +108,7 @@ class TestFormatDataset(unittest.TestCase):
         m_lin = LinearForecaster(val_ratio=0.2).fit(x_tr, y_tr)
         y_hat = m_lin.predict(x_te)
 
-        m_lgb = LGBForecaster({}, val_ratio=0.4).fit(x_tr, y_tr)
+        m_lgb = LGBForecaster(val_ratio=0.5, lgb_pars={'num_leaves':20}).fit(x_tr, y_tr)
         y_hat_lgb = m_lgb.predict(x_te)
         q = m_lgb.predict_quantiles(x_te)
 

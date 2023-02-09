@@ -45,8 +45,7 @@ class TestScenarios(unittest.TestCase):
         #plot_from_graph(tree_q)
 
     def test_lin_forecaster_offline_difftree(self):
-        lf = LinearForecaster(online_tree_reduction=False, tree_type='DiffTree').fit(self.x, self.target)
-
+        lf = LinearForecaster(online_tree_reduction=False, tree_type='QuantileTree').fit(self.x, self.target)
 
 if __name__ == '__main__':
     unittest.main()
