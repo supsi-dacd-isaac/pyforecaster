@@ -34,11 +34,36 @@ class Formatter:
         self.target_transformers = []
         self.cv_gen = []
         self.augment = augment
+        self.timezone = None
 
     def add_time_features(self, x):
-        self.logger.info('Adding time features')
-        time_df = pd.DataFrame(np.vstack([x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]).T,
-                               columns=['hour', 'dayofweek', 'minuteofday'], index=x.index)
+        tz = x.index[0].tz
+        self.logger.info('Adding time features. Time zone for the df: {}'.format(tz))
+        if self.timezone is None:
+            if tz is None:
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]
+                col_names = ['hour', 'dayofweek', 'minuteofday']
+                self.timezone = False
+            else:
+                utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute, utc_offset]
+                col_names = ['hour', 'dayofweek', 'minuteofday', 'utc_offset']
+                self.timezone = True
+        else:
+            if self.timezone:
+                if tz is not None:
+                    utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
+                else:
+                    self.logger.warning('I am setting UTC offset feature to zero since the timeindex you passed was '
+                                        'not time zone localized')
+                    utc_offset = np.zeros(x.shape[0])
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute, utc_offset]
+                col_names = ['hour', 'dayofweek', 'minuteofday', 'utc_offset']
+            else:
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]
+                col_names = ['hour', 'dayofweek', 'minuteofday']
+        time_df = pd.DataFrame(np.vstack(time_features).T, columns=col_names, index=x.index)
+
         x = pd.concat([x, time_df], axis=1)
         return x
 

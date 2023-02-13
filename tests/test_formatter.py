@@ -17,7 +17,8 @@ class TestFormatDataset(unittest.TestCase):
         self.n = 10
         self.x = pd.DataFrame(
             np.sin(np.arange(self.t) * 10 * np.pi / self.t).reshape(-1, 1) * np.random.randn(1, self.n),
-            index=pd.date_range('01-01-2020', '01-05-2020', self.t))
+            index=pd.date_range('01-01-2020', '01-05-2020', self.t, tz='Europe/Zurich'))
+
 
         times = pd.date_range('01-01-2020', '01-05-2020', freq='20min')
         self.x2 = pd.DataFrame(
@@ -55,6 +56,27 @@ class TestFormatDataset(unittest.TestCase):
         x_tr = tr.transform(self.x, augment=False)
 
         assert x_tr.shape[1] == 1
+
+    def test_time_zone_features(self):
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
+        formatter.add_target_transform([3], lags=np.arange(10))
+        x_tr, y_tr = formatter.transform(self.x)
+        assert 'utc_offset' in x_tr.columns
+        self.x.index = self.x.index.tz_localize(None)
+        x_tr, y_tr = formatter.transform(self.x)
+        assert 'utc_offset' in x_tr.columns
+        assert np.all(x_tr['utc_offset'] == 0)
+
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
+        formatter.add_target_transform([3], lags=np.arange(10))
+        x_tr, y_tr = formatter.transform(self.x)
+        assert 'utc_offset' not in x_tr.columns
+        x_tr, y_tr = formatter.transform(self.x)
+        assert 'utc_offset' not in x_tr.columns
+        self.x.index = self.x.index.tz_localize('Europe/Zurich')
+        x_tr, y_tr = formatter.transform(self.x)
+        assert 'utc_offset' not in x_tr.columns
+
 
     def test_formatter(self):
         formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
