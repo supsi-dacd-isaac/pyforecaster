@@ -70,15 +70,15 @@ class Formatter:
     def add_holidays(self, x, state_code='CH', **kwargs):
         self.logger.info('Adding holidays')
         holidays = holidays_api.country_holidays(country=state_code, years=x.index.year.unique(), **kwargs)
-        bridges, long_weekends = spot_holiday_bridges(start=x.index[0], end=x.index[-1], holidays=holidays)
-        if 'tz' in dir(x.index):
-            bridges = [b.tz_localize(x.index.tz) for b in bridges]
-            long_weekends = [b.tz_localize(x.index.tz) for b in long_weekends]
-            holidays = [b.tz_localize(x.index.tz) for b in pd.DatetimeIndex(holidays)]
+        bridges, long_weekends = spot_holiday_bridges(start=x.index[0]-pd.Timedelta('2D'), end=x.index[-1]+pd.Timedelta('2D'), holidays=holidays)
+        bridges = np.array([b.date() for b in bridges])
+        long_weekends = np.array([b.date() for b in long_weekends])
+
+
         x['holidays'] = 0
-        x.loc[x.index.isin(bridges), 'holidays'] = 1
-        x.loc[x.index.isin(long_weekends), 'holidays'] = 2
-        x.loc[x.index.isin(holidays), 'holidays'] = 3
+        x.loc[np.isin(x.index.date, bridges), 'holidays'] = 1
+        x.loc[np.isin(x.index.date, long_weekends), 'holidays'] = 2
+        x.loc[np.isin(x.index.date, list(holidays.keys())), 'holidays'] = 3
         return x
 
     def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None, **kwargs):
