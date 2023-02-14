@@ -108,8 +108,7 @@ class TestScenarios(unittest.TestCase):
         preds = lf.predict(self.x)
 
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx,:])
-        scenarios = lf.predict_scenarios(self.x.iloc[rand_idx,:])
-        trees = lf.predict_trees(self.x.iloc[rand_idx,:], scenarios_per_step=np.linspace(1,20,scenarios.shape[1], dtype=int))
+        trees = lf.predict_trees(self.x.iloc[rand_idx,:], scenarios_per_step=np.linspace(1,20,preds.shape[1], dtype=int))
 
         for i, rand_i in enumerate(rand_idx):
             plot_graph(trees[i])

@@ -6,16 +6,18 @@ from abc import abstractmethod
 from lightgbm import LGBMRegressor, Dataset, train
 from sklearn.linear_model import RidgeCV, LinearRegression
 from pyforecaster.scenarios_generator import ScenGen
+from pyforecaster.utilities import get_logger
 
 
 class ScenarioGenerator(object):
-    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
                                                                               scengen_kwgs.keys() else True
         self.val_ratio = val_ratio
         self.err_distr = {}
+        self.logger = get_logger() if logger is None else logger
 
     def set_params(self, **kwargs):
         [self.__setattr__(k, v) for k, v in kwargs.items() if v in self.__dict__.items()]
@@ -51,6 +53,9 @@ class ScenarioGenerator(object):
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
         scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
+        q_from_scens = np.rollaxis(np.quantile(scenarios, self.q_vect, axis=-1), 0, 3)
+        mean_abs_dev = np.abs(q_from_scens - quantiles).mean(axis=0).mean(axis=0)
+        self.logger.info('mean abs deviations of re-estimated quantiles from scenarios: {}'.format(mean_abs_dev))
         return scenarios
 
     def predict_trees(self, x, n_scen=100, nodes_at_step=None, init_obs=None, random_state=None,
