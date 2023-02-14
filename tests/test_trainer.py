@@ -39,7 +39,7 @@ class TestFormatDataset(unittest.TestCase):
             te_idx = ~tr_idx
             cv_idxs.append((tr_idx, te_idx))
 
-        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, scoring=make_scorer(nmae), cv=(f for f in cv_idxs),
+        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun=self.param_space_fun,
                                    hpo_type='one_fold')
         optuna.visualization.matplotlib.plot_contour(study, [k for k in study.best_params.keys()])
@@ -58,7 +58,7 @@ class TestFormatDataset(unittest.TestCase):
             te_idx = ~tr_idx
             cv_idxs.append((tr_idx, te_idx))
 
-        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, scoring=make_scorer(nmae), cv=(f for f in cv_idxs),
+        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun=self.param_space_fun,
                                    hpo_type='full', storage_fun=base_storage_fun)
         assert len(replies) == len(study.trials_dataframe())

@@ -122,18 +122,19 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+                 n_jobs=8, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
         self.lgb_pars = {"objective": "regression",
-                         "max_depth": 20,
-                         "n_estimators": 100,
-                         "num_leaves": 100,
-                         "learning_rate": 0.1,
+                         "max_depth": max_depth,
+                         "n_estimators": n_estimators,
+                         "num_leaves": num_leaves,
+                         "learning_rate": learning_rate,
                          "verbose": -1,
                          "metric": "l2",
-                         "min_child_samples": 20,
-                         "n_jobs": 8}
+                         "min_child_samples": min_child_samples,
+                         "n_jobs": n_jobs}
         if lgb_pars is not None:
             self.lgb_pars.update(lgb_pars)
 

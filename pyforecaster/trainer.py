@@ -4,6 +4,7 @@ import pandas as pd
 from pyforecaster.metrics import nmae, make_scorer
 from functools import partial
 import numpy as np
+from pyforecaster.dictionaries import HYPERPAR_MAP
 
 
 def default_param_space_fun(trial):
@@ -70,11 +71,16 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, 
     return score
 
 
-def hyperpar_optimizer(x, y, model, n_trials=40, scoring=None, cv=5, param_space_fun=default_param_space_fun,
+def hyperpar_optimizer(x, y, model, n_trials=40, metric=None, cv=5, param_space_fun=None,
                        hpo_type='full', sampler=None, callbacks=None, storage_fun=None,  **cv_kwargs):
     # set default scorer
-    if scoring is None:
-        scoring = make_scorer(nmae)
+    scoring = make_scorer(metric) if metric is not None else make_scorer(nmae)
+
+    # set default param_space_function if needed
+    forecaster_name = model.__class__.__name__
+    def_param_space = HYPERPAR_MAP[forecaster_name] if forecaster_name in HYPERPAR_MAP.keys()\
+        else default_param_space_fun
+    param_space_fun = def_param_space if param_space_fun is None else param_space_fun
 
     if sampler is None:
         sampler = optuna.samplers.TPESampler()

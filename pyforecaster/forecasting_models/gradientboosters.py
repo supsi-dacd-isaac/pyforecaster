@@ -9,7 +9,8 @@ from time import time
 
 
 class LGBMHybrid(ScenarioGenerator):
-    def __init__(self, lgb_pars=None, n_single=1, red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
+    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+                 n_jobs=8, lgb_pars=None, n_single=1, red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
                  formatter=None, metadata_features=None, tol_period='1h',
                  **scengen_kwgs):
         """
@@ -30,14 +31,14 @@ class LGBMHybrid(ScenarioGenerator):
         self.red_frac_multistep = red_frac_multistep
         self.tol_period = tol_period
         self.lgb_pars = {"objective": "regression",
-                         "max_depth": 20,
-                         "n_estimators": 100,
-                         "num_leaves": 100,
-                         "learning_rate": 0.1,
+                         "max_depth": max_depth,
+                         "n_estimators": n_estimators,
+                         "num_leaves": num_leaves,
+                         "learning_rate": learning_rate,
                          "verbose": -1,
                          "metric": "l2",
-                         "min_child_samples": 20,
-                         "n_jobs": 8}
+                         "min_child_samples": min_child_samples,
+                         "n_jobs": n_jobs}
         if lgb_pars is not None:
             self.lgb_pars.update(lgb_pars)
 
