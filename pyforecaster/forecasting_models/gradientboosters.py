@@ -30,7 +30,7 @@ class LGBMHybrid(ScenarioGenerator):
         self.n_single = n_single
         self.red_frac_multistep = red_frac_multistep
         self.tol_period = tol_period
-        self.lgb_pars = {"objective": "regression",
+        self.lgbf_pars = {"objective": "regression",
                          "max_depth": max_depth,
                          "n_estimators": n_estimators,
                          "num_leaves": num_leaves,
@@ -40,7 +40,7 @@ class LGBMHybrid(ScenarioGenerator):
                          "min_child_samples": min_child_samples,
                          "n_jobs": n_jobs}
         if lgb_pars is not None:
-            self.lgb_pars.update(lgb_pars)
+            self.lgbf_pars.update(lgb_pars)
 
         self.models = []
         self.multi_step_model = None
@@ -52,7 +52,7 @@ class LGBMHybrid(ScenarioGenerator):
 
     def set_params(self, **kwargs):
         super().set_params(**kwargs)
-        self.lgb_pars.update(kwargs)
+        self.lgbf_pars.update(kwargs)
         return self
 
     def fit(self, x, y):
@@ -61,7 +61,7 @@ class LGBMHybrid(ScenarioGenerator):
             x_i = self.dataset_at_stepahead(x, i+1,  self.metadata_features, formatter=self.formatter,
                                             logger=self.logger, method='periodic', last_n_lags=5,
                                             tol_period=self.tol_period)
-            self.models.append(LGBMRegressor(**self.lgb_pars).fit(x_i, y.iloc[:, i]))
+            self.models.append(LGBMRegressor(**self.lgbf_pars).fit(x_i, y.iloc[:, i]))
 
         n_sa = y.shape[1]
         self.n_multistep = n_sa - self.n_single
@@ -84,7 +84,7 @@ class LGBMHybrid(ScenarioGenerator):
             y_long = pd.concat(y_long)
 
             t_0 = time()
-            self.multi_step_model = LGBMRegressor(**self.lgb_pars).fit(x_long, y_long)
+            self.multi_step_model = LGBMRegressor(**self.lgbf_pars).fit(x_long, y_long)
             self.logger.info('LGBMHybrid multistep fitted in {:0.2e} s, x shape: [{}, {}]'.format(time() - t_0,
                                                                                                      x.shape[0],
                                                                                                      x.shape[1]))
@@ -154,7 +154,7 @@ class LGBEnergyAware(LGBMHybrid):
                 e_feature = e_unbalance.sum(axis=1)
                 e_feature.name = 'e_unbalance'
                 x_i = pd.concat([x_i, e_feature], axis=1)
-            self.models.append(LGBMRegressor(**self.lgb_pars).fit(x_i, y.iloc[:, i]))
+            self.models.append(LGBMRegressor(**self.lgbf_pars).fit(x_i, y.iloc[:, i]))
 
             # retrieve energy unbalance
             preds_i = self.models[i].predict(x_i)

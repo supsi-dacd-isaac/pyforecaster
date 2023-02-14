@@ -132,7 +132,14 @@ class LGBForecaster(ScenarioGenerator):
                  n_jobs=8, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
-        self.lgb_pars = {"objective": "regression",
+        self.max_depth = max_depth
+        self.n_estimators = n_estimators
+        self.num_leaves = num_leaves
+        self.learning_rate = learning_rate
+        self.min_child_samples = min_child_samples
+        self.n_jobs = n_jobs
+
+        self.lgbf_pars = {"objective": "regression",
                          "max_depth": max_depth,
                          "n_estimators": n_estimators,
                          "num_leaves": num_leaves,
@@ -141,12 +148,13 @@ class LGBForecaster(ScenarioGenerator):
                          "metric": "l2",
                          "min_child_samples": min_child_samples,
                          "n_jobs": n_jobs}
+
         if lgb_pars is not None:
-            self.lgb_pars.update(lgb_pars)
+            self.lgbf_pars.update(lgb_pars)
 
     def set_params(self, **kwargs):
         super().set_params(**kwargs)
-        self.lgb_pars.update(kwargs)
+        self.lgbf_pars.update(kwargs)
         return self
 
     def fit(self, x, y):
@@ -154,7 +162,7 @@ class LGBForecaster(ScenarioGenerator):
 
         for i in range(y.shape[1]):
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
-            m = train(self.lgb_pars, lgb_data)
+            m = train(self.lgbf_pars, lgb_data)
             self.m.append(m)
 
         super().fit(x_val, y_val)
