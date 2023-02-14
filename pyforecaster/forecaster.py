@@ -7,6 +7,7 @@ from lightgbm import LGBMRegressor, Dataset, train
 from sklearn.linear_model import RidgeCV, LinearRegression
 from pyforecaster.scenarios_generator import ScenGen
 from pyforecaster.utilities import get_logger
+from inspect import signature
 
 
 class ScenarioGenerator(object):
@@ -20,11 +21,11 @@ class ScenarioGenerator(object):
         self.logger = get_logger() if logger is None else logger
 
     def set_params(self, **kwargs):
-        [self.__setattr__(k, v) for k, v in kwargs.items() if v in self.__dict__.items()]
+        [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
 
     @abstractmethod
-    def get_params(self, *args):
-        return {k: v for k, v in self.__dict__.items() if k in args}
+    def get_params(self, **kwargs):
+        return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         preds = self.predict(x)
@@ -142,6 +143,11 @@ class LGBForecaster(ScenarioGenerator):
                          "n_jobs": n_jobs}
         if lgb_pars is not None:
             self.lgb_pars.update(lgb_pars)
+
+    def set_params(self, **kwargs):
+        super().set_params(**kwargs)
+        self.lgb_pars.update(kwargs)
+        return self
 
     def fit(self, x, y):
         x, y, x_val, y_val = self.train_val_split(x, y)
