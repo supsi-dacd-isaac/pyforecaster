@@ -72,7 +72,7 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, 
 
 
 def hyperpar_optimizer(x, y, model, n_trials=40, metric=None, cv=5, param_space_fun=None,
-                       hpo_type='full', sampler=None, callbacks=None, storage_fun=None,  **cv_kwargs):
+                       hpo_type='full', sampler=None, callbacks=None, storage_fun=None, formatter=None, **cv_kwargs):
     # set default scorer
     scoring = make_scorer(metric) if metric is not None else make_scorer(nmae)
 
@@ -85,10 +85,15 @@ def hyperpar_optimizer(x, y, model, n_trials=40, metric=None, cv=5, param_space_
     if sampler is None:
         sampler = optuna.samplers.TPESampler()
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    if cv is not list:
-        if isinstance(cv, int) or isinstance(cv, float):
+    if isinstance(cv, int) or isinstance(cv, float):
+        if formatter is not None:
+            fold_generator = formatter.time_kfcv(x.index, int(cv))
+            cv = list(fold_generator)
+        else:
             cv = list(KFold(int(cv)).split(x, y))
+    elif cv is not list:
         cv = list(cv)
+
 
     if storage_fun is not None:
         stored_replies = []
