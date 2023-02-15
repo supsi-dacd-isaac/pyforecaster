@@ -4,7 +4,7 @@ from . import tree_builders
 
 def lgb_param_space(trial):
     param_space = {'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-                   'learning_rate': trial.suggest_uniform('learning_rate', 0.005, 0.2)}
+                   'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2)}
     return param_space
 
 
@@ -23,5 +23,5 @@ TREE_MAP = {'DiffTree': tree_builders.DiffTree,
 
 HYPERPAR_MAP = {'LinearForecaster': linear_param_space,
                 'LGBForecaster': lgb_param_space,
-                'LGBHybrid': lgb_param_space}
+                'LGBMHybrid': lgb_param_space}
 

@@ -5,11 +5,11 @@ from pyforecaster.metrics import nmae, make_scorer
 from functools import partial
 import numpy as np
 from pyforecaster.dictionaries import HYPERPAR_MAP
-
+from inspect import signature
 
 def default_param_space_fun(trial):
     param_space = {'model__n_estimators': trial.suggest_int('n_estimators', 10, 300),
-                   'model__learning_rate': trial.suggest_uniform('learning_rate', 0.005, 0.2)}
+                   'model__learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2)}
     return param_space
 
 
@@ -30,8 +30,11 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, 
     """
 
     # set optuna parameter space
-    param_space = param_space_fun(trial)
-    model.set_params(**param_space)
+    params = param_space_fun(trial)
+    if not np.all([k in list(signature(model.__class__).parameters.keys()) + list(model.get_params().keys()) for k in params.keys()]):
+        raise ValueError('not all parameter space names are in the model signature. This means they will not affect the'
+                         ' performance of your model. Something is wrong')
+    model.set_params(**params)
     # create generator
     cv_gen = (f for f in cv)
 
