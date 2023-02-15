@@ -9,8 +9,9 @@ from time import time
 
 
 class LGBMHybrid(ScenarioGenerator):
-    def __init__(self, lgb_pars=None, n_single=1, red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 formatter=None, metadata_features=None, tol_period='1h',
+    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+                 n_jobs=8, n_single=1, red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
+                 formatter=None, metadata_features=None, objective='regression', tol_period='1h', colsample_bytree=1, verbose=-1, metric='l2',
                  **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
@@ -29,17 +30,30 @@ class LGBMHybrid(ScenarioGenerator):
         self.n_single = n_single
         self.red_frac_multistep = red_frac_multistep
         self.tol_period = tol_period
-        self.lgb_pars = {"objective": "regression",
-                         "max_depth": 20,
-                         "n_estimators": 100,
-                         "num_leaves": 100,
-                         "learning_rate": 0.1,
-                         "verbose": -1,
-                         "metric": "l2",
-                         "min_child_samples": 20,
-                         "n_jobs": 8}
-        if lgb_pars is not None:
-            self.lgb_pars.update(lgb_pars)
+
+        self.max_depth = max_depth
+        self.objective = objective
+        self.n_estimators = n_estimators
+        self.num_leaves = num_leaves
+        self.learning_rate = learning_rate
+        self.verbose = verbose
+        self.metric = metric
+        self.min_child_samples = min_child_samples
+        self.n_jobs = n_jobs
+        self.colsample_bytree = colsample_bytree
+
+        # self.lgbf_pars = {"objective": "regression",
+        #                  "max_depth": max_depth,
+        #                  "n_estimators": n_estimators,
+        #                  "num_leaves": num_leaves,
+        #                  "learning_rate": learning_rate,
+        #                  "verbose": verbose,
+        #                  "metric": metric,
+        #                  "min_child_samples": min_child_samples,
+        #                  "n_jobs": n_jobs,
+        #                  "colsample_bytree":colsample_bytree}
+        # if lgb_pars is not None:
+        #     self.lgbf_pars.update(lgb_pars)
 
         self.models = []
         self.multi_step_model = None
@@ -49,18 +63,27 @@ class LGBMHybrid(ScenarioGenerator):
         self.metadata_features = metadata_features if metadata_features is not None\
             else []
 
-    def set_params(self, **kwargs):
-        super().set_params(**kwargs)
-        self.lgb_pars.update(kwargs)
-        return self
+    def get_lgb_pars(self):
+        lgb_pars = {"objective": self.objective,
+                    "max_depth": self.max_depth,
+                    "n_estimators": self.n_estimators,
+                    "num_leaves": self.num_leaves,
+                    "learning_rate": self.learning_rate,
+                    "verbose": self.verbose,
+                    "metric": self.metric,
+                    "min_child_samples": self.min_child_samples,
+                    "n_jobs": self.n_jobs,
+                    "colsample_bytree": self.colsample_bytree}
+        return lgb_pars
 
     def fit(self, x, y):
+        lgb_pars = self.get_lgb_pars()
         x, y, x_val, y_val = self.train_val_split(x, y)
         for i in tqdm(range(self.n_single)):
             x_i = self.dataset_at_stepahead(x, i+1,  self.metadata_features, formatter=self.formatter,
                                             logger=self.logger, method='periodic', last_n_lags=5,
                                             tol_period=self.tol_period)
-            self.models.append(LGBMRegressor(**self.lgb_pars).fit(x_i, y.iloc[:, i]))
+            self.models.append(LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i]))
 
         n_sa = y.shape[1]
         self.n_multistep = n_sa - self.n_single
@@ -83,7 +106,7 @@ class LGBMHybrid(ScenarioGenerator):
             y_long = pd.concat(y_long)
 
             t_0 = time()
-            self.multi_step_model = LGBMRegressor(**self.lgb_pars).fit(x_long, y_long)
+            self.multi_step_model = LGBMRegressor(**lgb_pars).fit(x_long, y_long)
             self.logger.info('LGBMHybrid multistep fitted in {:0.2e} s, x shape: [{}, {}]'.format(time() - t_0,
                                                                                                      x.shape[0],
                                                                                                      x.shape[1]))
@@ -136,13 +159,8 @@ class LGBMHybrid(ScenarioGenerator):
 
 
 class LGBEnergyAware(LGBMHybrid):
-    def __init__(self,  lgb_pars=None, n_single=1, red_frac_multistep=0.1, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 formatter=None, metadata_features=None, tol_period='1h',
-                 **scengen_kwgs):
-        super().__init__(lgb_pars, n_single, red_frac_multistep, q_vect, val_ratio, nodes_at_step, formatter,
-                         metadata_features, tol_period, **scengen_kwgs)
-
     def fit(self, x, y):
+        lgb_pars = self.get_lgb_pars()
         x, y, x_val, y_val = self.train_val_split(x, y)
         e_unbalance = pd.DataFrame()
         for i in tqdm(range(self.n_single)):
@@ -153,7 +171,7 @@ class LGBEnergyAware(LGBMHybrid):
                 e_feature = e_unbalance.sum(axis=1)
                 e_feature.name = 'e_unbalance'
                 x_i = pd.concat([x_i, e_feature], axis=1)
-            self.models.append(LGBMRegressor(**self.lgb_pars).fit(x_i, y.iloc[:, i]))
+            self.models.append(LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i]))
 
             # retrieve energy unbalance
             preds_i = self.models[i].predict(x_i)
