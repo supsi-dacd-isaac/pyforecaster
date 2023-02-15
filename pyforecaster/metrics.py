@@ -3,12 +3,8 @@ import pandas as pd
 from itertools import permutations
 
 
-def feature_importance(x, m, n_epsilon=10):
-    # isotropic spherical sampling
-    n_o, n_f = x.shape()
-    eps = np.random.randn(n_epsilon, n_o, n_f)
-    preds = np.dstack([m.predict((x + eps_i)) for eps_i in eps])
-    std = np.std(preds, axis=-1)
+def chose_axis(x, agg_index):
+    return 0 if len(x) == len(agg_index) else 1
 
 
 def err(x, t):
@@ -21,17 +17,17 @@ def squerr(x, t):
 
 def rmse(x, t, agg_index=None):
     agg_index = x.index if agg_index is None else agg_index
-    return squerr(x, t).groupby(agg_index).mean() ** 0.5
+    return squerr(x, t).groupby(agg_index, axis=chose_axis(x, agg_index)).mean() ** 0.5
 
 
 def mape(x, t, agg_index=None):
     agg_index = x.index if agg_index is None else agg_index
-    return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index).mean()
+    return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
 def nmae(x, t, agg_index=None):
     agg_index = x.index if agg_index is None else agg_index
-    return (err(x, t) / (t.mean(axis=1).values.reshape(-1,1) + 1)).abs().groupby(agg_index).mean()
+    return (err(x, t) / (t.mean(axis=1).values.reshape(-1,1) + 1)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
 def make_scorer(metric):
@@ -41,8 +37,11 @@ def make_scorer(metric):
             y_hat = pd.DataFrame(y_hat, index=y.index, columns=y.columns)
         else:
             y_hat.columns = y.columns
-        score = metric(y_hat, y)
-        return score.mean().mean()
+        # default behaviour is to reduce metric over forecasting horizon.
+        # If just one step ahead is forecasted, metric is reduced on samples
+        agg_index = np.zeros(len(y)) if len(y.shape)<2 else np.zeros(y.shape[1])
+        score = metric(y_hat, y, agg_index=agg_index)
+        return score.mean()
     return scorer
 
 
@@ -57,7 +56,7 @@ def summary_score(x, t, score=rmse, agg_index=None):
     return score(x, t, agg_index)
 
 
-def summary_scores(x, t, scores, idxs: pd.DataFrame, mask=None, n_quantiles=10):
+def summary_scores(x, t, metrics, idxs: pd.DataFrame, mask=None, n_quantiles=10):
 
     agg_indexes = idxs.copy()
 
@@ -79,7 +78,7 @@ def summary_scores(x, t, scores, idxs: pd.DataFrame, mask=None, n_quantiles=10):
             agg_indexes.loc[:, replacement_idxs] = pd.concat(qcuts, axis=1)
 
     scores_df = {}
-    for s in scores:
-        index_scores = {k: summary_score(x, t, s, pd.Index(v)) for k, v in agg_indexes.items()}
-        scores_df[s.__name__] = pd.concat(index_scores, axis=0)
+    for m in metrics:
+        index_scores = {k: summary_score(x, t, m, pd.Index(v)) for k, v in agg_indexes.items()}
+        scores_df[m.__name__] = pd.concat(index_scores, axis=0)
     return scores_df

@@ -6,23 +6,26 @@ from abc import abstractmethod
 from lightgbm import LGBMRegressor, Dataset, train
 from sklearn.linear_model import RidgeCV, LinearRegression
 from pyforecaster.scenarios_generator import ScenGen
+from pyforecaster.utilities import get_logger
+from inspect import signature
 
 
 class ScenarioGenerator(object):
-    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
                                                                               scengen_kwgs.keys() else True
         self.val_ratio = val_ratio
         self.err_distr = {}
+        self.logger = get_logger() if logger is None else logger
 
     def set_params(self, **kwargs):
-        [self.__setattr__(k, v) for k, v in kwargs.items() if v in self.__dict__.items()]
+        [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
 
     @abstractmethod
-    def get_params(self, *args):
-        return {k: v for k, v in self.__dict__.items() if k in args}
+    def get_params(self, **kwargs):
+        return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         preds = self.predict(x)
@@ -51,6 +54,9 @@ class ScenarioGenerator(object):
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
         scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
+        q_from_scens = np.rollaxis(np.quantile(scenarios, self.q_vect, axis=-1), 0, 3)
+        mean_abs_dev = np.abs(q_from_scens - quantiles).mean(axis=0).mean(axis=0)
+        self.logger.info('mean abs deviations of re-estimated quantiles from scenarios: {}'.format(mean_abs_dev))
         return scenarios
 
     def predict_trees(self, x, n_scen=100, nodes_at_step=None, init_obs=None, random_state=None,
@@ -122,27 +128,41 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+                 n_jobs=8, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
-        self.lgb_pars = {"objective": "regression",
-                         "max_depth": 20,
-                         "n_estimators": 100,
-                         "num_leaves": 100,
-                         "learning_rate": 0.1,
+        self.max_depth = max_depth
+        self.n_estimators = n_estimators
+        self.num_leaves = num_leaves
+        self.learning_rate = learning_rate
+        self.min_child_samples = min_child_samples
+        self.n_jobs = n_jobs
+
+        self.lgbf_pars = {"objective": "regression",
+                         "max_depth": max_depth,
+                         "n_estimators": n_estimators,
+                         "num_leaves": num_leaves,
+                         "learning_rate": learning_rate,
                          "verbose": -1,
                          "metric": "l2",
-                         "min_child_samples": 20,
-                         "n_jobs": 8}
+                         "min_child_samples": min_child_samples,
+                         "n_jobs": n_jobs}
+
         if lgb_pars is not None:
-            self.lgb_pars.update(lgb_pars)
+            self.lgbf_pars.update(lgb_pars)
+
+    def set_params(self, **kwargs):
+        super().set_params(**kwargs)
+        self.lgbf_pars.update(kwargs)
+        return self
 
     def fit(self, x, y):
         x, y, x_val, y_val = self.train_val_split(x, y)
 
         for i in range(y.shape[1]):
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
-            m = train(self.lgb_pars, lgb_data)
+            m = train(self.lgbf_pars, lgb_data)
             self.m.append(m)
 
         super().fit(x_val, y_val)
