@@ -160,10 +160,10 @@ class LGBForecaster(ScenarioGenerator):
 
     def fit(self, x, y):
         lgb_pars = self.get_lgb_pars()
+        n_estimators = lgb_pars.pop('n_estimators', 100)
         x, y, x_val, y_val = self.train_val_split(x, y)
 
         for i in range(y.shape[1]):
-            n_estimators = lgb_pars.pop('n_estimators', 100)
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
             m = train(lgb_pars, lgb_data, num_boost_round=n_estimators)
             self.m.append(m)
