@@ -129,40 +129,44 @@ class LinearForecaster(ScenarioGenerator):
 
 class LGBForecaster(ScenarioGenerator):
     def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=8, lgb_pars=None, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+                 n_jobs=8, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bylevel=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
+        self.objective = objective
         self.max_depth = max_depth
         self.n_estimators = n_estimators
         self.num_leaves = num_leaves
         self.learning_rate = learning_rate
+        self.verbose = verbose
+        self.metric = metric
         self.min_child_samples = min_child_samples
+        self.colsample_bytree=colsample_bytree
+        self.colsample_bylevel = colsample_bylevel
+        self.colsample_bynode = colsample_bynode
         self.n_jobs = n_jobs
 
-        self.lgbf_pars = {"objective": "regression",
-                         "max_depth": max_depth,
-                         "n_estimators": n_estimators,
-                         "num_leaves": num_leaves,
-                         "learning_rate": learning_rate,
-                         "verbose": -1,
-                         "metric": "l2",
-                         "min_child_samples": min_child_samples,
-                         "n_jobs": n_jobs}
-
-        if lgb_pars is not None:
-            self.lgbf_pars.update(lgb_pars)
-
-    def set_params(self, **kwargs):
-        super().set_params(**kwargs)
-        self.lgbf_pars.update(kwargs)
-        return self
+    def get_lgb_pars(self):
+        lgb_pars = {"objective": self.objective,
+                    "max_depth": self.max_depth,
+                    "n_estimators": self.n_estimators,
+                    "num_leaves": self.num_leaves,
+                    "learning_rate": self.learning_rate,
+                    "verbose": self.verbose,
+                    "metric": self.metric,
+                    "min_child_samples": self.min_child_samples,
+                    "n_jobs": self.n_jobs,
+                    "colsample_bytree": self.colsample_bytree,
+                    "colsample_bylevel": self.colsample_bylevel,
+                    "colsample_bynode": self.colsample_bynode}
+        return lgb_pars
 
     def fit(self, x, y):
+        lgb_pars = self.get_lgb_pars()
         x, y, x_val, y_val = self.train_val_split(x, y)
 
         for i in range(y.shape[1]):
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
-            m = train(self.lgbf_pars, lgb_data)
+            m = train(lgb_pars, lgb_data)
             self.m.append(m)
 
         super().fit(x_val, y_val)

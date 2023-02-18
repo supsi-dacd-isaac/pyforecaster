@@ -10,9 +10,10 @@ from time import time
 
 class LGBMHybrid(ScenarioGenerator):
     def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=8, n_single=1, red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 formatter=None, metadata_features=None, objective='regression', tol_period='1h', colsample_bytree=1, verbose=-1, metric='l2',
-                 **scengen_kwgs):
+                 n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1, colsample_bylevel=1,
+                 colsample_bynode=1, verbose=-1, metric='l2', n_single=1,
+                 red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
+                 formatter=None, metadata_features=None, **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -41,19 +42,8 @@ class LGBMHybrid(ScenarioGenerator):
         self.min_child_samples = min_child_samples
         self.n_jobs = n_jobs
         self.colsample_bytree = colsample_bytree
-
-        # self.lgbf_pars = {"objective": "regression",
-        #                  "max_depth": max_depth,
-        #                  "n_estimators": n_estimators,
-        #                  "num_leaves": num_leaves,
-        #                  "learning_rate": learning_rate,
-        #                  "verbose": verbose,
-        #                  "metric": metric,
-        #                  "min_child_samples": min_child_samples,
-        #                  "n_jobs": n_jobs,
-        #                  "colsample_bytree":colsample_bytree}
-        # if lgb_pars is not None:
-        #     self.lgbf_pars.update(lgb_pars)
+        self.colsample_bylevel = colsample_bylevel
+        self.colsample_bynode = colsample_bynode
 
         self.models = []
         self.multi_step_model = None
@@ -73,7 +63,10 @@ class LGBMHybrid(ScenarioGenerator):
                     "metric": self.metric,
                     "min_child_samples": self.min_child_samples,
                     "n_jobs": self.n_jobs,
-                    "colsample_bytree": self.colsample_bytree}
+                    "colsample_bytree": self.colsample_bytree,
+                    "colsample_bylevel": self.colsample_bylevel,
+                    "colsample_bynode": self.colsample_bynode
+                    }
         return lgb_pars
 
     def fit(self, x, y):
