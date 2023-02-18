@@ -129,7 +129,7 @@ class LinearForecaster(ScenarioGenerator):
 
 class LGBForecaster(ScenarioGenerator):
     def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=8, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bylevel=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+                 n_jobs=8, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
         self.objective = objective
@@ -141,7 +141,6 @@ class LGBForecaster(ScenarioGenerator):
         self.metric = metric
         self.min_child_samples = min_child_samples
         self.colsample_bytree=colsample_bytree
-        self.colsample_bylevel = colsample_bylevel
         self.colsample_bynode = colsample_bynode
         self.n_jobs = n_jobs
 
@@ -156,7 +155,6 @@ class LGBForecaster(ScenarioGenerator):
                     "min_child_samples": self.min_child_samples,
                     "n_jobs": self.n_jobs,
                     "colsample_bytree": self.colsample_bytree,
-                    "colsample_bylevel": self.colsample_bylevel,
                     "colsample_bynode": self.colsample_bynode}
         return lgb_pars
 

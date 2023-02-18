@@ -10,7 +10,7 @@ from time import time
 
 class LGBMHybrid(ScenarioGenerator):
     def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1, colsample_bylevel=1,
+                 n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1,
                  colsample_bynode=1, verbose=-1, metric='l2', n_single=1,
                  red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
                  formatter=None, metadata_features=None, **scengen_kwgs):
@@ -42,7 +42,6 @@ class LGBMHybrid(ScenarioGenerator):
         self.min_child_samples = min_child_samples
         self.n_jobs = n_jobs
         self.colsample_bytree = colsample_bytree
-        self.colsample_bylevel = colsample_bylevel
         self.colsample_bynode = colsample_bynode
 
         self.models = []
@@ -64,7 +63,6 @@ class LGBMHybrid(ScenarioGenerator):
                     "min_child_samples": self.min_child_samples,
                     "n_jobs": self.n_jobs,
                     "colsample_bytree": self.colsample_bytree,
-                    "colsample_bylevel": self.colsample_bylevel,
                     "colsample_bynode": self.colsample_bynode
                     }
         return lgb_pars
