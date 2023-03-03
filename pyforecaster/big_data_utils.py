@@ -30,7 +30,28 @@ def get_logger(level=logging.INFO):
     return logger
 
 
-def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
+def array_split(df, n_splits, axis=0):
+    """
+    Do what np.array_split does, but without changing dtype (why in the world np.array_split does it?)
+    :param df:
+    :param n_splits:
+    :param axis:
+    :return:
+    """
+    is_df = isinstance(df, pd.DataFrame)
+    split_points = np.linspace(0, df.shape[axis], n_splits+1).astype(int)
+    dfs = []
+    for s in range(n_splits):
+        idxs = np.arange(split_points[s],split_points[s+1])
+        if axis == 1:
+            fold = df.iloc[:, idxs] if is_df else df[:, idxs]
+        else:
+            fold = df.iloc[idxs, :] if is_df else df[idxs, :]
+        dfs.append(fold)
+    return dfs
+
+
+def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0, use_ray=True):
     """
     Parallelize a function to be applied on a pd.DataFrame or on a list of pd.DataFrames.
     :param f:
@@ -48,7 +69,7 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
     # if a pd.DataFrame was passed, obtain df splits
     if isinstance(df, pd.DataFrame):
         if df.shape[1] > n_splits:
-            dfs = np.array_split(df, n_splits, axis=axis)
+            dfs = array_split(df, n_splits, axis=axis)
         else:
             dfs = [df]
     elif isinstance(df, list):
@@ -63,7 +84,7 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
     except:
         numpy_parallelizable = False
 
-    if numpy_parallelizable:
+    if numpy_parallelizable and not use_ray:
         if axis==0:
             df_shape_0 = sum([x.shape[0] for x in dfs])
             df_shape_1 = dfs[0].shape[1]
@@ -77,7 +98,7 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0):
 
         df_indexes = np.hstack([x.index.ravel() for x in dfs]) if axis==0 else dfs[0].index
 
-        res = mapper(f, [f.values for f in dfs])
+        res = mapper(f, [df.values for df in [dfs[0]]])
         res = np.vstack(res) if axis == 0 else np.hstack(res)
 
         if res.shape == df_shape:
@@ -144,7 +165,7 @@ def reduce_mem_usage_np(x):
     return x
 
 
-def reduce_mem_usage(df, parallel=True, logger=None, use_ray=False):
+def reduce_mem_usage(df, parallel=True, logger=None, use_ray=True):
     """ iterate through all the columns of a dataframe and modify the data type
         to reduce memory usage.
     """
@@ -155,9 +176,9 @@ def reduce_mem_usage(df, parallel=True, logger=None, use_ray=False):
 
     if parallel:
         if use_ray:
-            df = fdf_parallel(reduce_mem_usage_df, df, axis=1)
+            df = fdf_parallel(reduce_mem_usage_df, df, axis=1, use_ray=use_ray)
         else:
-            df = fdf_parallel(reduce_mem_usage_np, df, axis=1)
+            df = fdf_parallel(reduce_mem_usage_np, df, axis=1, use_ray=use_ray)
     else:
         for col in tqdm(df.columns):
             df[col] = reduce_mem_usage_series(df[col])

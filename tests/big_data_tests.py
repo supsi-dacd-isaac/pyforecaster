@@ -19,6 +19,12 @@ class TestBigData(unittest.TestCase):
         dfa = reduce_mem_usage(self.df, logger=self.logger, parallel=True)
         print(dfa.memory_usage().sum())
 
+    def test_dtype_ratain(self):
+        print(self.df.memory_usage().sum())
+        self.df[np.arange(1,13)] = self.df[np.arange(1,13)].astype(int)
+        dfa = reduce_mem_usage(self.df, logger=self.logger, parallel=True)
+        print(dfa.memory_usage().sum())
+
 
 if __name__ == '__main__':
     unittest.main()
