@@ -129,10 +129,11 @@ class LinearForecaster(ScenarioGenerator):
 
 
 class LGBForecaster(ScenarioGenerator):
-    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+    def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
                  n_jobs=8, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
+        self.device_type = device_type
         self.objective = objective
         self.max_depth = max_depth
         self.n_estimators = n_estimators
@@ -146,7 +147,8 @@ class LGBForecaster(ScenarioGenerator):
         self.n_jobs = n_jobs
 
     def get_lgb_pars(self):
-        lgb_pars = {"objective": self.objective,
+        lgb_pars = {"device_type": self.device_type,
+                    "objective": self.objective,
                     "max_depth": self.max_depth,
                     "n_estimators": self.n_estimators,
                     "num_leaves": self.num_leaves,

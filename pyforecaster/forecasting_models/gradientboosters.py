@@ -9,7 +9,7 @@ from time import time
 
 
 class LGBMHybrid(ScenarioGenerator):
-    def __init__(self, max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
+    def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
                  n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1,
                  colsample_bynode=1, verbose=-1, metric='l2', n_single=1,
                  red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
@@ -28,6 +28,7 @@ class LGBMHybrid(ScenarioGenerator):
         """
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+        self.device_type = device_type
         self.n_single = n_single
         self.red_frac_multistep = red_frac_multistep
         self.tol_period = tol_period
@@ -53,7 +54,8 @@ class LGBMHybrid(ScenarioGenerator):
             else []
 
     def get_lgb_pars(self):
-        lgb_pars = {"objective": self.objective,
+        lgb_pars = {"device_type": self.device_type,
+                    "objective": self.objective,
                     "max_depth": self.max_depth,
                     "n_estimators": self.n_estimators,
                     "num_leaves": self.num_leaves,
