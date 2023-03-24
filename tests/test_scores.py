@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import pyforecaster.metrics as pyme
 import logging
+from pyforecaster.forecaster import LinearForecaster
 
 
 class TestFormatDataset(unittest.TestCase):
@@ -13,10 +14,18 @@ class TestFormatDataset(unittest.TestCase):
         self.target = pd.DataFrame(
             np.sin(np.arange(len(times)) * 10 * np.pi / len(times)).reshape(-1, 1) * np.random.randn(1, self.n),
             index=times)
-        self.x = self.target + np.random.randn(len(self.target)).reshape(-1, 1)
+        self.x = self.target + np.random.randn(*self.target.shape)
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
+
+    def test_probabilit_metrics(self):
+        q_vect = [0.1, 0.5, 0.9]
+        m = LinearForecaster(q_vect=q_vect).fit(self.x, self.target)
+        q = m.predict_quantiles(self.x, quantiles=q_vect)
+        crps, reliability = pyme.quantile_scores(q, self.target, alphas=q_vect)
+        pyme.reliability(q, self.target, alphas=q_vect, get_score=True)
+        pyme.crps(q, self.target, alphas=q_vect)
 
     def test_summaryscore(self):
         agg_index = self.x.index.hour

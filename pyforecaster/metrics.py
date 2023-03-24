@@ -30,6 +30,60 @@ def nmae(x, t, agg_index=None):
     return (err(x, t) / (t.mean(axis=1).values.reshape(-1,1) + 1)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
+def quantile_scores(q_hat, t, alphas=None, agg_index=None):
+    """
+    :param q_hat: matrix of quanitles, preferred form (n_t, n_sa, n_quantiles)
+    :param t: target matrix or DataFrame (n_t, n_sa)
+    :param alphas: vector of quantiles, if none assume linear spacing from 0 1
+    :param agg_index:
+    :return:
+    """
+    agg_index = t.index if agg_index is None else agg_index
+
+    quantile_axis = 2 if q_hat.shape[1] == t.shape[1] else 1
+    n_quantiles = q_hat.shape[quantile_axis]
+    alphas = np.linspace(0, 1, n_quantiles) if alphas is None else alphas
+    qscore_alpha, reliability_alpha = {}, {}
+    for a, alpha in enumerate(alphas):
+        if quantile_axis == 1:
+            err_alpha = q_hat[:, a, :] - t.values
+        else:
+            err_alpha = q_hat[:, :, a] - t.values
+        I = (err_alpha > 0).astype(int)
+        qs_a = (I - alpha) * err_alpha
+        qs_a = pd.DataFrame(qs_a, index=t.index).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
+
+        qscore_alpha[alpha] = qs_a
+        reliability_alpha[alpha] = pd.DataFrame(I, index=t.index).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
+
+    qscore = pd.concat(qscore_alpha, axis=1)
+    reliability = pd.concat(reliability_alpha, axis=1)
+
+    return qscore, reliability
+
+
+def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True):
+    qscore, _ = quantile_scores(q_hat, t, alphas=alphas, agg_index=agg_index)
+
+    # collapse quantile axis
+    if collapse_quantile_axis:
+        qscore = qscore.groupby(axis=1, level=1).mean()
+
+    return qscore
+
+
+def reliability(q_hat, t, alphas=None, agg_index=None, get_score=False):
+    alphas = np.linspace(0, 1, q_hat.shape[2]) if alphas is None else alphas
+    _, reliability = quantile_scores(q_hat, t, alphas=alphas, agg_index=agg_index)
+
+    # subtract to reliability dataframe the name of the first level of the multiindex dataframe
+    if get_score:
+        for alpha in reliability.columns.get_level_values(0).unique():
+            reliability[alpha] = reliability[alpha] - alpha
+    return reliability
+
+
+
 def make_scorer(metric):
     def scorer(estimator, X, y):
         y_hat = estimator.predict(X)
@@ -41,17 +95,18 @@ def make_scorer(metric):
         # If just one step ahead is forecasted, metric is reduced on samples
         agg_index = np.zeros(len(y)) if len(y.shape)<2 else np.zeros(y.shape[1])
         score = metric(y_hat, y, agg_index=agg_index)
-        return score.mean()
+        return np.mean(score.mean()) if len(score.shape)>1 else score.mean()
     return scorer
 
 
 def summary_score(x, t, score=rmse, agg_index=None):
-    if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
-        x.columns = t.columns
-    elif isinstance(x, pd.DataFrame):
-        t = pd.DataFrame(t, index=x.index, columns=x.columns)
-    elif isinstance(t, pd.DataFrame):
-        x = pd.DataFrame(x, index=t.index, columns=t.columns)
+    if len(x.shape) < 3:
+        if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
+            x.columns = t.columns
+        elif isinstance(x, pd.DataFrame):
+            t = pd.DataFrame(t, index=x.index, columns=x.columns)
+        elif isinstance(t, pd.DataFrame):
+            x = pd.DataFrame(x, index=t.index, columns=t.columns)
 
     return score(x, t, agg_index)
 
