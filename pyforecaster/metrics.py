@@ -51,10 +51,10 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None):
             err_alpha = q_hat[:, :, a] - t.values
         I = (err_alpha > 0).astype(int)
         qs_a = (I - alpha) * err_alpha
-        qs_a = pd.DataFrame(qs_a, index=t.index).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
+        qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
 
         qscore_alpha[alpha] = qs_a
-        reliability_alpha[alpha] = pd.DataFrame(I, index=t.index).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
+        reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
 
     qscore = pd.concat(qscore_alpha, axis=1)
     reliability = pd.concat(reliability_alpha, axis=1)
