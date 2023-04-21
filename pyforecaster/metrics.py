@@ -25,9 +25,10 @@ def mape(x, t, agg_index=None):
     return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
-def nmae(x, t, agg_index=None):
+def nmae(x, t, agg_index=None, inter_normalization=True):
     agg_index = x.index if agg_index is None else agg_index
-    return (err(x, t) / (t.mean(axis=1).values.reshape(-1,1) + 1)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
+    offset = t.abs().mean(axis=1).quantile(0.5) * 0.01 if inter_normalization else 0
+    return (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
 def quantile_scores(q_hat, t, alphas=None, agg_index=None):
