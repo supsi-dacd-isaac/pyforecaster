@@ -39,6 +39,7 @@ class TestFormatDataset(unittest.TestCase):
         mask = self.x > 0.1
         scores = pyme.summary_scores(self.x, self.target, metrics=[pyme.rmse, pyme.mape, pyme.nmae],
                                      idxs=agg_index, mask=mask)
+        print(scores)
         print([s.shape[0]  for s in scores.values()])
         print([np.sum([len(v.value_counts()) for k, v in agg_index.items()]) for s in scores.values()])
 
