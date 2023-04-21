@@ -46,6 +46,7 @@ class TestFormatDataset(unittest.TestCase):
             plt.plot(y_te.iloc[i+1:i+self.periods[1]+1].values)
             plt.plot(y_hat[i, :])
             plt.pause(0.0001)
+        plt.close('all')
 
     def test_hw_difficult(self):
 
@@ -71,6 +72,8 @@ class TestFormatDataset(unittest.TestCase):
             plt.plot(y_hat_multi[i, :], label='yhat constrained')
             plt.legend()
             plt.pause(0.0001)
+        plt.close('all')
+
 
     def test_hw_multi(self):
         n_tr = int(len(self.x) * 0.5)
@@ -114,7 +117,7 @@ class TestFormatDataset(unittest.TestCase):
 
         plt.close('all')
         plot_quantiles([y_te, y_hat, y_hat_lgb], q, ['y_te', 'y_hat', 'y_hat_lgb'])
-
+        plt.close('all')
 
 if __name__ == '__main__':
     unittest.main()

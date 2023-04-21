@@ -1,5 +1,7 @@
 import os
 import unittest
+
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import pyforecaster.formatter as pyf
@@ -122,6 +124,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_transform([2], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x3)
         formatter.plot_transformed_feature(self.x3, 2)
+        plt.close('all')
 
     def test_aggregated_transform(self):
         """
@@ -153,6 +156,7 @@ class TestFormatDataset(unittest.TestCase):
 
         x_transformed, y_transformed = formatter.transform(self.x2)
         formatter.plot_transformed_feature(self.x2, 0, frames=100)
+        plt.close('all')
 
     def test_speed(self):
         t0 = time()

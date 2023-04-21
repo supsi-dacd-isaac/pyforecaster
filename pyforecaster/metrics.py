@@ -27,7 +27,7 @@ def mape(x, t, agg_index=None):
 
 def nmae(x, t, agg_index=None, inter_normalization=True):
     agg_index = x.index if agg_index is None else agg_index
-    offset = t.abs().mean(axis=1).quantile(0.5) * 0.01 if inter_normalization else 0
+    offset = t.abs().mean(axis=1).quantile(0.5) * 0.01 + 1e-12 if inter_normalization else 1e-12
     return (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 

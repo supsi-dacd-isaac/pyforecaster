@@ -24,8 +24,8 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 24])
         formatter.add_target_transform(['all'], lags=-np.arange(24)-1)
 
-        x, y = formatter.transform(self.data.iloc[:3000])
-        n_tr = int(len(x) * 0.99)
+        x, y = formatter.transform(self.data.iloc[:1000])
+        n_tr = int(len(x) * 0.1)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
@@ -41,8 +41,8 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_lgb = m_lgb.predict(x_te)
 
         plt.close('all')
-        plot_quantiles([y_te, y_hat_lin, y_hat_lgbh, y_hat_lgb], q, ['y_te', 'y_lin', 'y_lgbhybrid_1', 'y_hat_lgb'])
-
+        plot_quantiles([y_te.iloc[:10, :], y_hat_lin.iloc[:10, :], y_hat_lgbh.iloc[:10, :], y_hat_lgb.iloc[:10, :]], q[:10, :, :], ['y_te', 'y_lin', 'y_lgbhybrid_1', 'y_hat_lgb'])
+        plt.close('all')
 
 if __name__ == '__main__':
     unittest.main()
