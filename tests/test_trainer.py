@@ -48,7 +48,6 @@ class TestFormatDataset(unittest.TestCase):
         study, replies = hyperpar_optimizer(self.x, self.y.iloc[:, [0]], model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun= param_space_fun,
                                    hpo_type='one_fold')
-        optuna.visualization.matplotlib.plot_contour(study, [k for k in study.best_params.keys()])
         trials_df = retrieve_cv_results(study)
         assert trials_df['value'].isna().sum() == 0
 
