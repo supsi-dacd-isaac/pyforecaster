@@ -99,7 +99,7 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, **holidays_kwargs):
+    def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=True, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -133,12 +133,20 @@ class Formatter:
             n_cpu = cpu_count()
             n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
             xs, ys = [], []
-            for i in tqdm(range(n_folds)):
-                x, y = fdf_parallel(f=partial(self._transform, df=dfs[n_cpu * i:n_cpu * (i + 1)]), df=dfs[n_cpu * i:n_cpu * (i + 1)])
-                x = reduce_mem_usage(x, use_ray=True)
-                y = reduce_mem_usage(y, use_ray=True)
-                xs.append(x)
-                ys.append(y)
+            if parallel:
+                for i in tqdm(range(n_folds)):
+                    x, y = fdf_parallel(f=self._transform, df=dfs[n_cpu * i:n_cpu * (i + 1)])
+                    x = reduce_mem_usage(x, use_ray=True)
+                    y = reduce_mem_usage(y, use_ray=True)
+                    xs.append(x)
+                    ys.append(y)
+            else:
+                for df_i in dfs:
+                    x, y = self._transform(df_i)
+                    x = reduce_mem_usage(x, use_ray=True, parallel=False)
+                    y = reduce_mem_usage(y, use_ray=True, parallel=False)
+                    xs.append(x)
+                    ys.append(y)
             x = pd.concat(xs)
             target = pd.concat(ys)
         else:
