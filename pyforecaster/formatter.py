@@ -1,17 +1,20 @@
 #import category_encoders
 import functools
-
-import holidays as holidays_api
-from long_weekends.long_weekends import spot_holiday_bridges
-
-import numpy as np
-import pandas as pd
-from itertools import product
-from pyforecaster.plot_utils import ts_animation, ts_animation_bars
 import logging
 from functools import partial
-from scipy.stats import binned_statistic
+from itertools import product
+from multiprocessing import cpu_count
 from typing import Union
+
+import holidays as holidays_api
+import numpy as np
+import pandas as pd
+from long_weekends.long_weekends import spot_holiday_bridges
+from scipy.stats import binned_statistic
+from tqdm import tqdm
+
+from pyforecaster.big_data_utils import fdf_parallel, reduce_mem_usage
+from pyforecaster.plot_utils import ts_animation_bars
 
 
 def get_logger(level=logging.INFO):
@@ -96,7 +99,54 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
+    def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, **holidays_kwargs):
+        """
+        Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
+        the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
+        transformations like min-max scaling or categorical encoding are not yet applied.
+        :param x: pd.DataFrame
+        :param time_features: if True add time features
+        :param holidays: if True add holidays as a categorical feature
+        :param return_target: if True, returns also the transformed target. If False (e.g. at prediction time), returns
+                             only x
+        :param global_form: if True, assumes that columns of x which are not transformed are independent signals to be
+                            forecasted with a global model. In this case, all target transform must refer to a "target"
+                            column, which is the stacking of the independent signals. An additional column "name" is
+                            added to the transformed dataset, which contains the name of the signal to be forecasted.
+
+        :return x, target: the transformed dataset and the target DataFrame with correct dimensions
+        """
+        if global_form:
+            assert np.unique([tr.names for tr in self.target_transformers]) == 'target', 'When using global_form option,' \
+                                                                                         ' the only admissible target is' \
+                                                                                         ' "target"'
+
+            transformed_columns = [tr.names for tr in self.transformers]
+            transformed_columns = [item for sublist in transformed_columns for item in sublist]
+            independent_targets = [c for c in x.columns if c not in transformed_columns]
+            dfs = []
+            for c in independent_targets:
+                dfs.append(pd.concat(
+                    [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
+                     pd.DataFrame(c, columns=['name'], index=x.index)],
+                    axis=1))
+            n_cpu = cpu_count()
+            n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
+            xs, ys = [], []
+            for i in tqdm(range(n_folds)):
+                x, y = fdf_parallel(f=partial(self._transform, df=dfs[n_cpu * i:n_cpu * (i + 1)]), df=dfs[n_cpu * i:n_cpu * (i + 1)])
+                x = reduce_mem_usage(x, use_ray=True)
+                y = reduce_mem_usage(y, use_ray=True)
+                xs.append(x)
+                ys.append(y)
+            x = pd.concat(xs)
+            target = pd.concat(ys)
+        else:
+            x, target = self._transform(x, time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs)
+        return x, target
+
+    def _transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific

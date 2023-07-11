@@ -273,3 +273,10 @@ def plot_quantiles(signals:list, quantiles, labels:list, ax=None):
             ax.plot(s[i, :], label=l)
         plt.legend()
         plt.pause(0.0001)
+
+
+def plot_scenarios_from_multilevel(scens, i=0, ax=None):
+    ax = plt.gca() if ax is None else ax
+    sb.lineplot(scens.stack().loc[(scens.stack().index[i], slice(None)), :].reset_index(1).melt(id_vars='step'),
+        hue='scenario', x='step', y='value', ax=ax)
+    return ax

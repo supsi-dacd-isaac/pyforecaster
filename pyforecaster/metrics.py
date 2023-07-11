@@ -15,23 +15,23 @@ def squerr(x, t):
     return err(x, t)**2
 
 
-def rmse(x, t, agg_index=None):
-    agg_index = x.index if agg_index is None else agg_index
+def rmse(x, t, agg_index=None, **kwargs):
+    agg_index = np.ones_like(x.index) if agg_index is None else agg_index
     return squerr(x, t).groupby(agg_index, axis=chose_axis(x, agg_index)).mean() ** 0.5
 
 
-def mape(x, t, agg_index=None):
-    agg_index = x.index if agg_index is None else agg_index
+def mape(x, t, agg_index=None, **kwargs):
+    agg_index = np.ones_like(x.index) if agg_index is None else agg_index
     return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
-def nmae(x, t, agg_index=None, inter_normalization=True):
-    agg_index = x.index if agg_index is None else agg_index
+def nmae(x, t, agg_index=None, inter_normalization=True, **kwargs):
+    agg_index = np.ones_like(x.index) if agg_index is None else agg_index
     offset = t.abs().mean(axis=1).quantile(0.5) * 0.01 + 1e-12 if inter_normalization else 1e-12
     return (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
 
 
-def quantile_scores(q_hat, t, alphas=None, agg_index=None):
+def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):
     """
     :param q_hat: matrix of quanitles, preferred form (n_t, n_sa, n_quantiles)
     :param t: target matrix or DataFrame (n_t, n_sa)
@@ -39,10 +39,12 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None):
     :param agg_index:
     :return:
     """
-    agg_index = t.index if agg_index is None else agg_index
+    agg_index = np.ones_like(t.index) if agg_index is None else agg_index
 
     quantile_axis = 2 if q_hat.shape[1] == t.shape[1] else 1
     n_quantiles = q_hat.shape[quantile_axis]
+    if alphas is None:
+        print('warning: alphas not specified, assuming linear spacing from 0 to 1')
     alphas = np.linspace(0, 1, n_quantiles) if alphas is None else alphas
     qscore_alpha, reliability_alpha = {}, {}
     for a, alpha in enumerate(alphas):
@@ -57,13 +59,13 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None):
         qscore_alpha[alpha] = qs_a
         reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
 
-    qscore = pd.concat(qscore_alpha, axis=1)
-    reliability = pd.concat(reliability_alpha, axis=1)
+    qscore = pd.concat(qscore_alpha, axis=1, names=['alpha'])
+    reliability = pd.concat(reliability_alpha, axis=1, names=['alpha'])
 
     return qscore, reliability
 
 
-def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True):
+def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True, **kwargs):
     qscore, _ = quantile_scores(q_hat, t, alphas=alphas, agg_index=agg_index)
 
     # collapse quantile axis
@@ -73,7 +75,7 @@ def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True):
     return qscore
 
 
-def reliability(q_hat, t, alphas=None, agg_index=None, get_score=False):
+def reliability(q_hat, t, alphas=None, agg_index=None, get_score=False, **kwargs):
     alphas = np.linspace(0, 1, q_hat.shape[2]) if alphas is None else alphas
     _, reliability = quantile_scores(q_hat, t, alphas=alphas, agg_index=agg_index)
 
