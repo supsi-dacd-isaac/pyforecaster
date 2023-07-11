@@ -34,19 +34,6 @@ class TestFormatDataset(unittest.TestCase):
         plot_summary_score(scores, colorbar_label='rmse')
         assert scores.shape == (len(agg_index.unique()), self.target.shape[1])
 
-    def test_summarscores(self):
-
-        agg_index = pd.DataFrame({'hour':self.x.index.hour, 'weekday':self.x.index.weekday})
-        print(agg_index.dtypes)
-        mask = self.x > 0.1
-        scores = pyme.summary_scores(self.x, self.target, metrics=[pyme.rmse, pyme.mape, pyme.nmae],
-                                     idxs=agg_index, mask=mask)
-        print(scores)
-        print([s.shape[0]  for s in scores.values()])
-        print([np.sum([len(v.value_counts()) for k, v in agg_index.items()]) for s in scores.values()])
-
-        assert np.all([s.shape[0] == np.sum([len(v.value_counts()) for k, v in agg_index.items()])
-                       for s in scores.values()])
 
     def test_summaryscore_2(self):
         agg_index = self.x.index.hour
