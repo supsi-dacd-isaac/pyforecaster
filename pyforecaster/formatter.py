@@ -123,6 +123,7 @@ class Formatter:
 
             transformed_columns = [tr.names for tr in self.transformers]
             transformed_columns = [item for sublist in transformed_columns for item in sublist]
+            transformed_columns = list(set(np.unique(transformed_columns)) - {'target'})
             independent_targets = [c for c in x.columns if c not in transformed_columns]
             dfs = []
             for c in independent_targets:
