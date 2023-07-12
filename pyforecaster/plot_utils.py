@@ -161,7 +161,7 @@ def hist_2d(data, value, x, y, plot=True, qs=None, **basic_setup_kwargs):
     return hist
 
 
-def ts_animation(ys:list, ts=None, names=None, frames=150):
+def ts_animation(ys:list, ts=None, names=None, frames=150, interval=1, step=1, repeat=False):
     "plot the first n_rows of the two y_te and y_hat matrices"
     ts = [np.arange(len(ys[0][0]))]*len(ys) if ts is None else ts
     fig, ax = plt.subplots(1)
@@ -179,13 +179,13 @@ def ts_animation(ys:list, ts=None, names=None, frames=150):
 
     def animate(i):
         for y, l, t in zip(ys, lines, ts):
-            l.set_data(t, y[i, :])
+            l.set_data(t, y[i*step, :])
         for y, l, t in zip(ys, lines[len(ys):], ts):
             l.set_data(t, y[i, :])
         return lines
 
     plt.pause(1e-5)
-    ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=100, repeat=False)
+    ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=interval, repeat=repeat)
 
     return ani
 
@@ -245,34 +245,35 @@ def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150)
 
     return ani
 
-
-def plot_quantiles(signals:list, quantiles, labels:list, ax=None):
-    """
-    :param signals: list of pd.DataFrame or np.ndarray
-    :param quantiles:
-    :param labels:
-    :param ax:
-    :return:
-    """
-    assert len(signals) == len(labels)
-    if ax is None:
-        fig, ax = plt.subplots(1, 1)
+def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=False):
+    n_rows = np.minimum(signals[0].shape[0], n_rows)
+    qs = qs.values if isinstance(qs, pd.DataFrame) else qs
+    fig, ax = plt.subplots(1)
+    signals = signals if isinstance(signals, list) else [signals]
+    t = np.arange(signals[0].shape[1])
+    lines= []
     for i, s in enumerate(signals):
-        if isinstance(s, pd.DataFrame):
-            signals[i] = s.to_numpy()
+        signals[i] = s.values if isinstance(s, pd.DataFrame) else s
+        line, = ax.plot(signals[i][0, :], lw=2, label = labels[i])
+        lines.append(line)
+    lineq = ax.plot(np.squeeze(qs[0, :, :]), 'r', lw=2, alpha=0.3)
+    ax.set_ylim(np.min(qs[:n_rows]), np.max(qs[:n_rows])*1.05)
 
-    cm = plt.get_cmap('plasma', 4)
-    n_q = quantiles.shape[2]
-    h = quantiles.shape[1]
-    for i in range(quantiles.shape[0]):
-        ax.cla()
-        for q in range(int(n_q / 2)):
-            ax.fill_between(range(h), quantiles[i, :, q],
-                            quantiles[i, :, -q - 1], color=cm(q), alpha=0.2)
-        for s, l in zip(signals, labels):
-            ax.plot(s[i, :], label=l)
+    def animate(i):
+        i = i * step
+        for l, s in zip(lines, signals):
+            l.set_data(t, s[i, :])
+        [lineq[j].set_data(t, qsi) for j, qsi in enumerate(qs[i, :, :].T)]
+        return (*lines, *lineq, )
+
+    def init():
+        lines[0].set_data([], [])
         plt.legend()
-        plt.pause(0.0001)
+        return (lines[0],)
+
+    ani = animation.FuncAnimation(fig, animate, init_func=init, frames=n_rows, interval=interval, blit=True,
+                                  repeat=repeat)
+    return ani
 
 
 def plot_scenarios_from_multilevel(scens, i=0, ax=None):
