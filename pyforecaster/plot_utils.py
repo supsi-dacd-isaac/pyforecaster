@@ -246,7 +246,8 @@ def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150)
     return ani
 
 def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=False):
-    n_rows = np.minimum(signals[0].shape[0], n_rows)
+    n_max = np.minimum(signals[0].shape[0], int(n_rows*step))
+    n_rows = np.minimum(int(np.floor(signals[0].shape[0]/step)), n_rows)
     qs = qs.values if isinstance(qs, pd.DataFrame) else qs
     fig, ax = plt.subplots(1)
     signals = signals if isinstance(signals, list) else [signals]
@@ -257,7 +258,7 @@ def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=Fa
         line, = ax.plot(signals[i][0, :], lw=2, label = labels[i])
         lines.append(line)
     lineq = ax.plot(np.squeeze(qs[0, :, :]), 'r', lw=2, alpha=0.3)
-    ax.set_ylim(np.min(qs[:n_rows]), np.max(qs[:n_rows])*1.05)
+    ax.set_ylim(np.min(qs[:n_max]), np.max(qs[:n_max])*1.05)
 
     def animate(i):
         i = i * step
