@@ -508,6 +508,15 @@ class Transformer:
                                 partial_res.append(np.vstack(reducer.stats).tolist())
                             d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
                             d = d.shift(np.max(self.original_agg_bins)-1)
+                    else:
+                        if self.nested:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[1], self.original_agg_bins[p[0]],
+                                                                self.original_agg_bins[p[0] + 1]) for p in
+                                           product(np.arange(len(self.agg_bins) - 1), function_names)]
+                        else:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]],
+                                                                self.original_agg_bins[p[1] + 1]) for p in
+                                           product(function_names, np.arange(len(self.agg_bins) - 1))]
 
             if self.lags is not None:
                 trans_names = ['{}_lag_{:03d}'.format(p[1], p[0]) if p[0] >= 0 else '{}_lag_{:04d}'.format(p[1], p[0])
