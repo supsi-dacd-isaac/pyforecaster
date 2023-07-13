@@ -136,8 +136,8 @@ class Formatter:
             n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
             xs, ys = [], []
             if parallel:
-                # transform one fold single core to retrieve metadata
-                self._transform(dfs[0])
+                # simulate transform on one fold single core to retrieve metadata (ray won't persist class attributes)
+                self._simulate_transform(dfs[0])
                 for i in tqdm(range(n_folds)):
                     x, y = fdf_parallel(f=self._transform, df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     x = reduce_mem_usage(x, use_ray=True)
