@@ -91,7 +91,7 @@ class Formatter:
         return self
 
     def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
-        if np.any(np.array(lags)>0):
+        if lags is not None and np.any(np.array(lags) > 0):
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
