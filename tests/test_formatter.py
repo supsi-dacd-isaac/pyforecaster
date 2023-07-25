@@ -111,7 +111,7 @@ class TestFormatDataset(unittest.TestCase):
         x_transformed, y_transformed = formatter.transform(self.x2)
         crosspattern = pd.DataFrame()
         for i in range(10):
-            x_i = formatter.prune_dataset_at_stepahead(x_transformed, i+1,metadata_features=[], method='periodic', period='24H', tol_period='10m')
+            x_i = formatter.prune_dataset_at_stepahead(x_transformed, i, metadata_features=[], method='periodic', period='24H', tol_period='10m')
             crosspattern = crosspattern.combine_first(pd.DataFrame(1, index=x_i.columns, columns=[i]))
         sb.heatmap(crosspattern)
 

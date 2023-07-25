@@ -331,17 +331,17 @@ class Formatter:
         fold += '   -: train, |=test, x:skip'
         return fold
 
-    def prune_dataset_at_stepahead(self, df, sa, metadata_features, method='periodic', period='24H', tol_period='1H', sa_end=None, keep_last_n_lags=0):
+    def prune_dataset_at_stepahead(self, df, target_col_num, metadata_features, method='periodic', period='24H', tol_period='1H', keep_last_n_lags=0, keep_last_seconds=0):
 
         features = []
         # retrieve referring_time of the given sa for the target from target_transformers
         target_times = []
         for tt in self.target_transformers:
-            target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
+            target_times.append(tt.metadata.iloc[target_col_num, :]['end_time'])
+            #target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
 
-        assert len(np.unique(target_times)) == 1, 'target for step ahead {} have different referring_times, ' \
-                                             'not supported'.format(sa)
-        target_time = pd.to_timedelta(target_times[0])[0]
+
+        target_time = pd.to_timedelta(target_times[0])
 
         if method == 'periodic':
             # find signals with (target_time - referring_time) multiple of period
@@ -356,6 +356,14 @@ class Formatter:
             last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(np.arange(keep_last_n_lags))]
                                            for t in self.transformers]))
             features = np.unique(features + last_lag_features)
+        if keep_last_seconds >0:
+            closest_features = []
+            for t in self.transformers:
+                delta_sec = t.metadata.start_time.apply(lambda x: x.total_seconds())
+                keep_condition = (delta_sec> -keep_last_seconds) & (delta_sec<=0)
+                closest_features.append(t.metadata.index[keep_condition])
+            closest_features = np.unique(np.hstack(closest_features))
+            features = np.unique(features + closest_features)
 
         features = np.unique(list(features) + metadata_features)
         return df[features]

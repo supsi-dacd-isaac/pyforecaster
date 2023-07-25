@@ -13,7 +13,7 @@ class LGBMHybrid(ScenarioGenerator):
                  n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1,
                  colsample_bynode=1, verbose=-1, metric='l2', n_single=1,
                  red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 formatter=None, metadata_features=None, **scengen_kwgs):
+                 formatter=None, metadata_features=None, keep_last_n_lags=0, keep_last_seconds=0, **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -52,6 +52,9 @@ class LGBMHybrid(ScenarioGenerator):
         self.logger = get_logger()
         self.metadata_features = metadata_features if metadata_features is not None\
             else []
+        self.keep_last_n_lags = keep_last_n_lags
+        self.keep_last_seconds = keep_last_seconds
+
 
     def get_lgb_pars(self):
         lgb_pars = {"device_type": self.device_type,
@@ -73,8 +76,9 @@ class LGBMHybrid(ScenarioGenerator):
         lgb_pars = self.get_lgb_pars()
         x, y, x_val, y_val = self.train_val_split(x, y)
         for i in tqdm(range(self.n_single)):
-            x_i = self.dataset_at_stepahead(x, i+1,  self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', last_n_lags=5,
+            x_i = self.dataset_at_stepahead(x, i,  self.metadata_features, formatter=self.formatter,
+                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                            keep_last_seconds=self.keep_last_seconds,
                                             tol_period=self.tol_period)
             self.models.append(LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i]))
 
@@ -110,8 +114,9 @@ class LGBMHybrid(ScenarioGenerator):
         preds = []
         period = kwargs['period'] if 'period' in kwargs else '24H'
         for i in range(self.n_single):
-            x_i = self.dataset_at_stepahead(x, i+1, self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', last_n_lags=5,
+            x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
+                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                            keep_last_seconds=self.keep_last_seconds,
                                             tol_period=self.tol_period, period=period)
             preds.append(self.models[i].predict(x_i).reshape(-1, 1))
         x_pd = x
@@ -134,14 +139,14 @@ class LGBMHybrid(ScenarioGenerator):
         return np.hstack(y_hat)
 
     @staticmethod
-    def dataset_at_stepahead(df, sa, metadata_features, formatter, logger, method='periodic', last_n_lags=1, period="24H",
-                             tol_period='1h'):
+    def dataset_at_stepahead(df, target_col_num, metadata_features, formatter, logger, method='periodic', keep_last_n_lags=1, period="24H",
+                             tol_period='1h', keep_last_seconds=0):
         if formatter is None:
             logger.warning('dataset_at_stepahead returned the unmodified dataset since there is no self.formatter')
             return df
         else:
-            return formatter.prune_dataset_at_stepahead(df, sa, metadata_features=metadata_features, method=method,
-                                                        period=period, keep_last_n_lags=last_n_lags,
+            return formatter.prune_dataset_at_stepahead(df, target_col_num, metadata_features=metadata_features, method=method,
+                                                        period=period, keep_last_n_lags=keep_last_n_lags, keep_last_seconds=keep_last_seconds,
                                                         tol_period=tol_period)
 
     def predict_quantiles(self, x, **kwargs):
@@ -157,8 +162,9 @@ class LGBEnergyAware(LGBMHybrid):
         x, y, x_val, y_val = self.train_val_split(x, y)
         e_unbalance = pd.DataFrame()
         for i in tqdm(range(self.n_single)):
-            x_i = self.dataset_at_stepahead(x, i+1,  self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', last_n_lags=5,
+            x_i = self.dataset_at_stepahead(x, i,  self.metadata_features, formatter=self.formatter,
+                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                            keep_last_seconds=self.keep_last_seconds,
                                             tol_period=self.tol_period)
             if i > 0:
                 e_feature = e_unbalance.sum(axis=1)
@@ -180,8 +186,9 @@ class LGBEnergyAware(LGBMHybrid):
         preds = []
         e_unbalance = pd.DataFrame()
         for i in range(self.n_single):
-            x_i = self.dataset_at_stepahead(x, i+1, self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', last_n_lags=5,
+            x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
+                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                            keep_last_seconds=self.keep_last_seconds,
                                             tol_period=self.tol_period)
             if i > 0:
                 e_feature = e_unbalance.sum(axis=1)
