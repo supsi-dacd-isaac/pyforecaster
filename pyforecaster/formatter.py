@@ -362,7 +362,7 @@ class Formatter:
                 delta_sec = t.metadata.start_time.apply(lambda x: x.total_seconds())
                 keep_condition = (delta_sec> -keep_last_seconds) & (delta_sec<=0)
                 closest_features.append(t.metadata.index[keep_condition])
-            closest_features = np.unique(np.hstack(closest_features))
+            closest_features = list(np.unique(np.hstack(closest_features)))
             features = np.unique(features + closest_features)
 
         features = np.unique(list(features) + metadata_features)
