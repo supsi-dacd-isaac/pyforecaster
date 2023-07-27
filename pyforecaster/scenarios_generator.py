@@ -11,7 +11,7 @@ from copy import deepcopy
 
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
-                 online_tree_reduction=True, q_vect=None, nodes_at_step=None, **kwargs):
+                 online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,  **kwargs):
         self.logger = get_logger()
         self.copula_type = copula_type
         self.tree_type = tree_type
@@ -23,6 +23,7 @@ class ScenGen:
         self.tree = self.tree_class(nodes_at_step=nodes_at_step, **tree_kwargs)
         self.online_tree_reduction = online_tree_reduction
         self.trees = {}
+        self.k_max = max_iterations
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
 
     def fit(self, y: pd.DataFrame, x: pd.DataFrame = None, n_scen=100, **copula_kwargs):
@@ -52,7 +53,7 @@ class ScenGen:
                     y_h = y.loc[filt_h, :]
                     scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=None, **copula_kwargs)
                     start_tree = self.trees[0] if h>0 else None
-                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=100, start_tree=start_tree)
+                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=self.k_max, start_tree=start_tree)
             else:
                 raise NotImplementedError('pre-fit currently not available for copulas other than HourlyGaussianCopula')
 
@@ -106,7 +107,7 @@ class ScenGen:
                                       'with DatetimeIndex index'
             scenarios = self.sample_scenarios(x, n_scen, quantiles, init_obs, **copula_kwargs)
             for scenarios_t in scenarios:
-                nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=100, nodes_at_step=nodes_at_step)
+                nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=self.k_max, nodes_at_step=nodes_at_step)
                 trees.append(nx_tree)
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
