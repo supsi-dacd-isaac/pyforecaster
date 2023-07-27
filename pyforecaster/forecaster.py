@@ -12,7 +12,7 @@ from inspect import signature
 
 
 class ScenarioGenerator(object):
-    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
@@ -20,6 +20,7 @@ class ScenarioGenerator(object):
         self.val_ratio = val_ratio
         self.err_distr = {}
         self.logger = get_logger() if logger is None else logger
+        self.n_scen_fit = n_scen_fit
 
     def set_params(self, **kwargs):
         [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
@@ -31,7 +32,7 @@ class ScenarioGenerator(object):
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         preds = self.predict(x)
         errs = pd.DataFrame(y.values-preds.values, index=x.index)
-        self.scengen.fit(errs, x)
+        self.scengen.fit(errs, x, n_scen=self.n_scen_fit)
 
         self.err_distr = {}
         hours = np.arange(24)
@@ -51,7 +52,8 @@ class ScenarioGenerator(object):
     def predict_quantiles(self, x, **kwargs):
         pass
 
-    def predict_scenarios(self, x, n_scen=100, random_state=None, **predict_q_kwargs):
+    def predict_scenarios(self, x, n_scen=None, random_state=None, **predict_q_kwargs):
+        n_scen = self.n_scen_fit if n_scen is None else n_scen
         # retrieve quantiles from child class
         quantiles = self.predict_quantiles(x, **predict_q_kwargs)
         scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
