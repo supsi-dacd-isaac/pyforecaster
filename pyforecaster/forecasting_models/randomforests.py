@@ -15,7 +15,7 @@ class QRF(ScenarioGenerator):
                  min_samples_leaf=1, max_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=1.0,
                  max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, n_jobs=None,
                  random_state=None, verbose=0, warm_start=False, ccp_alpha=0.0, max_samples=None, parallel=True,
-                 **scengen_kwgs):
+                 max_parallel_workers=8, **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -64,6 +64,7 @@ class QRF(ScenarioGenerator):
         self.criterion = criterion
         self.ccp_alpha = ccp_alpha
         self.parallel = parallel
+        self.max_parallel_workers = max_parallel_workers
 
         self.qrf_pars = {
             "n_estimators":n_estimators,
@@ -97,8 +98,8 @@ class QRF(ScenarioGenerator):
     def fit(self, x, y):
         x, y, x_val, y_val = self.train_val_split(x, y)
         if self.parallel:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                self.models = [i for i in executor.map(partial(self._fit, x=x, y=y), range(self.n_single))]
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+                self.models = [i for i in tqdm(executor.map(partial(self._fit, x=x, y=y), range(self.n_single)),total=self.n_single)]
         else:
             for i in tqdm(range(self.n_single)):
                 model = self._fit(i, x, y)
@@ -136,8 +137,8 @@ class QRF(ScenarioGenerator):
         preds = []
         period = kwargs['period'] if 'period' in kwargs else '24H'
         if self.parallel:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                preds = [i for i in executor.map(partial(self._predict, x=x, period=period, **kwargs), range(self.n_single))]
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+                preds = [i for i in tqdm(executor.map(partial(self._predict, x=x, period=period, **kwargs), range(self.n_single)),total=self.n_single)]
 
         else:
             for i in range(self.n_single):
@@ -161,18 +162,16 @@ class QRF(ScenarioGenerator):
         p = self.models[i].predict(x_i, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean')
         return p
 
-    def predict_single(self, x, i, quantiles='mean', add_step=True):
+    def predict_single(self, i, x, quantiles='mean', add_step=True):
         if add_step:
             x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i, name='sa')], axis=1)
         return self.multi_step_model.predict(x, quantiles)
 
     def predict_parallel(self, x, quantiles='mean', add_step=True):
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self.predict_single, x, i, quantiles, add_step) for i in range(self.n_multistep)]
-            y_hat = []
-            for idx, future in enumerate(concurrent.futures.as_completed(futures)):
-                y_hat_i = future.result()  # This will also raise any exceptions
-                y_hat.append(y_hat_i)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+            y_hat = [i for i in
+                     tqdm(executor.map(partial(self.predict_single, x=x, quantiles=quantiles, add_step=add_step), range(self.n_multistep)),
+                          total=self.n_multistep)]
         return np.dstack(y_hat)
 
     @staticmethod
