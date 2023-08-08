@@ -104,7 +104,7 @@ class QRF(ScenarioGenerator):
             rand_idx = np.random.choice(x_pd.index, n_long).reshape(self.n_multistep, -1)
             x_long = []
             for sa in range(self.n_multistep):
-                x_i = pd.concat([x_pd.loc[rand_idx[sa], :].reset_index(drop=True), pd.Series(np.ones(n_batch) * sa)], axis=1)
+                x_i = pd.concat([x_pd.loc[rand_idx[sa], :].reset_index(drop=True), pd.Series(np.ones(n_batch) * sa, name='sa')], axis=1)
                 x_long.append(x_i)
             x_long = pd.concat(x_long, axis=0)
             y = y
@@ -141,7 +141,7 @@ class QRF(ScenarioGenerator):
         return preds
 
     def predict_single(self, x, i, quantiles='mean'):
-        x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i)], axis=1)
+        x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i, name='sa')], axis=1)
         return self.multi_step_model.predict(x, quantiles)
 
     def predict_parallel(self, x, quantiles='mean'):
