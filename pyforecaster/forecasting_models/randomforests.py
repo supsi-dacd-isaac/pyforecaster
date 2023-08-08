@@ -21,7 +21,6 @@ class QRF(ScenarioGenerator):
         :param red_frac_multistep: reduce the observations used for training the global model
         :param formatter: the formatter used to produce the x,y df. Needed for step ahead feature pruning
         :param metadata_features: list of features that shouldn't be pruned
-        :param n_estimators:
         :param learning_rate:
         :param tol_period:
         :param q_vect:
@@ -30,8 +29,8 @@ class QRF(ScenarioGenerator):
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
 
-        self.max_depth = max_depth
         self.n_estimators = n_estimators
+        self.max_depth = max_depth
         self.verbose = verbose
         self.n_jobs = n_jobs
         self.n_single = n_single
@@ -64,7 +63,9 @@ class QRF(ScenarioGenerator):
         self.criterion = criterion
         self.ccp_alpha = ccp_alpha
 
-        self.qrf_pars = {"bootstrap": bootstrap,
+        self.qrf_pars = {
+            "n_estimators":n_estimators,
+            "bootstrap": bootstrap,
             "oob_score": oob_score,
             "n_jobs": n_jobs,
             "random_state": random_state,
