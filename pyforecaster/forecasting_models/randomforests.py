@@ -92,7 +92,7 @@ class QRF(ScenarioGenerator):
                                         logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
                                         keep_last_seconds=self.keep_last_seconds,
                                         tol_period=self.tol_period)
-        model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i])
+        model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i], sparse_pickle=True)
         return model
 
     def fit(self, x, y):
@@ -126,7 +126,7 @@ class QRF(ScenarioGenerator):
             y_long = pd.concat(y_long)
 
             t_0 = time()
-            self.multi_step_model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_long, y_long)
+            self.multi_step_model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_long, y_long, sparse_pickle=True)
             self.logger.info('LGBMHybrid multistep fitted in {:0.2e} s, x shape: [{}, {}]'.format(time() - t_0,
                                                                                                      x.shape[0],
                                                                                                      x.shape[1]))
