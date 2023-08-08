@@ -128,6 +128,8 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_transform(['all'], lags=-np.arange(6))
 
         x, y = formatter.transform(self.data.iloc[:5000])
+        x.columns = x.columns.astype(str)
+        y.columns = y.columns.astype(str)
         n_tr = int(len(x) * 0.99)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
