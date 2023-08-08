@@ -147,9 +147,7 @@ class LGBForecaster(ScenarioGenerator):
         self.colsample_bytree=colsample_bytree
         self.colsample_bynode = colsample_bynode
         self.n_jobs = n_jobs
-
-    def get_lgb_pars(self):
-        lgb_pars = {"device_type": self.device_type,
+        self.lgb_pars = {"device_type": self.device_type,
                     "objective": self.objective,
                     "max_depth": self.max_depth,
                     "n_estimators": self.n_estimators,
@@ -161,16 +159,12 @@ class LGBForecaster(ScenarioGenerator):
                     "n_jobs": self.n_jobs,
                     "colsample_bytree": self.colsample_bytree,
                     "colsample_bynode": self.colsample_bynode}
-        return lgb_pars
 
     def fit(self, x, y):
-        lgb_pars = self.get_lgb_pars()
-        n_estimators = lgb_pars.pop('n_estimators', 100)
         x, y, x_val, y_val = self.train_val_split(x, y)
-
         for i in tqdm(range(y.shape[1]), 'fitting LGB models'):
             lgb_data = Dataset(x, y.iloc[:, i].values.ravel())
-            m = train(lgb_pars, lgb_data, num_boost_round=n_estimators)
+            m = train(self.lgb_pars, lgb_data, num_boost_round=self.lgb_pars['n_estimators'])
             self.m.append(m)
 
         super().fit(x_val, y_val)

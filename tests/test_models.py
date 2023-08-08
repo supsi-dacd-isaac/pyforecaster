@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import logging
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
+from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
@@ -29,7 +30,8 @@ class TestFormatDataset(unittest.TestCase):
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
-
+        from quantile_forest import RandomForestQuantileRegressor
+        qrf = RandomForestQuantileRegressor()
     def test_hw(self):
         n_tr = int(len(self.x)*0.8)
         x, y = self.x, self.y
@@ -119,5 +121,23 @@ class TestFormatDataset(unittest.TestCase):
         plot_quantiles([y_te, y_hat, y_hat_lgb], q, ['y_te', 'y_hat', 'y_hat_lgb'])
         plt.close('all')
 
+    def test_qrf(self):
+        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(24),
+                                                                    relative_lags=True)
+        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
+        formatter.add_target_transform(['all'], lags=-np.arange(6))
+
+        x, y = formatter.transform(self.data.iloc[:5000])
+        n_tr = int(len(x) * 0.99)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4).fit(x_tr, y_tr)
+        y_hat = qrf.predict(x_te)
+        q = qrf.predict_quantiles(x_te)
+
+        plt.close('all')
+        plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
+        plt.close('all')
 if __name__ == '__main__':
     unittest.main()
