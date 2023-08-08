@@ -137,7 +137,7 @@ class QRF(ScenarioGenerator):
         preds = []
         period = kwargs['period'] if 'period' in kwargs else '24H'
         if self.parallel:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallel_workers) as executor:
                 preds = [i for i in tqdm(executor.map(partial(self._predict, x=x, period=period, **kwargs), range(self.n_single)),total=self.n_single)]
 
         else:
@@ -168,7 +168,7 @@ class QRF(ScenarioGenerator):
         return self.multi_step_model.predict(x, quantiles)
 
     def predict_parallel(self, x, quantiles='mean', add_step=True):
-        with concurrent.futures.ProcessPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallel_workers) as executor:
             y_hat = [i for i in
                      tqdm(executor.map(partial(self.predict_single, x=x, quantiles=quantiles, add_step=add_step), range(self.n_multistep)),
                           total=self.n_multistep)]
