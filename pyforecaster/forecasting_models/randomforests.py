@@ -6,7 +6,7 @@ from pyforecaster.forecaster import ScenarioGenerator
 import numpy as np
 import concurrent.futures
 from time import time
-
+from functools import partial
 
 class QRF(ScenarioGenerator):
     def __init__(self, n_estimators=100, q_vect=None, val_ratio=None, nodes_at_step=None, formatter=None,
@@ -14,7 +14,8 @@ class QRF(ScenarioGenerator):
                 keep_last_n_lags=0, keep_last_seconds=0, criterion="squared_error", max_depth=None, min_samples_split=2,
                  min_samples_leaf=1, max_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=1.0,
                  max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, n_jobs=None,
-                 random_state=None, verbose=0, warm_start=False, ccp_alpha=0.0, max_samples=None,**scengen_kwgs):
+                 random_state=None, verbose=0, warm_start=False, ccp_alpha=0.0, max_samples=None, parallel=True,
+                 **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -62,6 +63,7 @@ class QRF(ScenarioGenerator):
         self.default_quantiles = q_vect
         self.criterion = criterion
         self.ccp_alpha = ccp_alpha
+        self.parallel = parallel
 
         self.qrf_pars = {
             "n_estimators":n_estimators,
@@ -84,15 +86,23 @@ class QRF(ScenarioGenerator):
              "ccp_alpha":ccp_alpha
         }
 
+    def _fit(self, i, x, y):
+        x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
+                                        logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                        keep_last_seconds=self.keep_last_seconds,
+                                        tol_period=self.tol_period)
+        model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i])
+        return model
 
     def fit(self, x, y):
         x, y, x_val, y_val = self.train_val_split(x, y)
-        for i in tqdm(range(self.n_single)):
-            x_i = self.dataset_at_stepahead(x, i,  self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
-                                            keep_last_seconds=self.keep_last_seconds,
-                                            tol_period=self.tol_period)
-            self.models.append(RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i]))
+        if self.parallel:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                self.models = [i for i in executor.map(partial(self._fit, x=x, y=y), range(self.n_single))]
+        else:
+            for i in tqdm(range(self.n_single)):
+                model = self._fit(i, x, y)
+                self.models.append(model)
 
         n_sa = y.shape[1]
         self.n_multistep = n_sa - self.n_single
@@ -125,12 +135,14 @@ class QRF(ScenarioGenerator):
     def predict(self, x, **kwargs):
         preds = []
         period = kwargs['period'] if 'period' in kwargs else '24H'
-        for i in range(self.n_single):
-            x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
-                                            keep_last_seconds=self.keep_last_seconds,
-                                            tol_period=self.tol_period, period=period)
-            preds.append(self.models[i].predict(x_i, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean'))
+        if self.parallel:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                preds = [i for i in executor.map(partial(self._predict, x=x, period=period, **kwargs), range(self.n_single))]
+
+        else:
+            for i in range(self.n_single):
+                p = self._predict(i, x, period, **kwargs)
+                preds.append(p)
         x_pd = x
         if self.n_multistep>0:
             preds.append(self.predict_parallel(x_pd, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean'))
@@ -141,13 +153,22 @@ class QRF(ScenarioGenerator):
             preds = np.swapaxes(preds, 1, 2)
         return preds
 
-    def predict_single(self, x, i, quantiles='mean'):
-        x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i, name='sa')], axis=1)
+    def _predict(self, i, x, period, **kwargs):
+        x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
+                                        logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                        keep_last_seconds=self.keep_last_seconds,
+                                        tol_period=self.tol_period, period=period)
+        p = self.models[i].predict(x_i, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean')
+        return p
+
+    def predict_single(self, x, i, quantiles='mean', add_step=True):
+        if add_step:
+            x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i, name='sa')], axis=1)
         return self.multi_step_model.predict(x, quantiles)
 
-    def predict_parallel(self, x, quantiles='mean'):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(self.predict_single, x, i, quantiles) for i in range(self.n_multistep)]
+    def predict_parallel(self, x, quantiles='mean', add_step=True):
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(self.predict_single, x, i, quantiles, add_step) for i in range(self.n_multistep)]
             y_hat = []
             for idx, future in enumerate(concurrent.futures.as_completed(futures)):
                 y_hat_i = future.result()  # This will also raise any exceptions
