@@ -126,7 +126,10 @@ class QRF(ScenarioGenerator):
             y_long = pd.concat(y_long)
 
             t_0 = time()
-            self.multi_step_model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_long, y_long, sparse_pickle=True)
+            qrf_pars_global = self.qrf_pars.copy()
+            if 'n_jobs' in qrf_pars_global and qrf_pars_global['n_jobs'] is not None and qrf_pars_global['n_jobs'] > 0:
+                qrf_pars_global['n_jobs'] *= self.max_parallel_workers
+            self.multi_step_model = RandomForestQuantileRegressor(**qrf_pars_global).fit(x_long, y_long, sparse_pickle=True)
             self.logger.info('LGBMHybrid multistep fitted in {:0.2e} s, x shape: [{}, {}]'.format(time() - t_0,
                                                                                                      x.shape[0],
                                                                                                      x.shape[1]))
