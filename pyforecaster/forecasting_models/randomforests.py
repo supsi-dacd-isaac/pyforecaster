@@ -147,11 +147,16 @@ class QRF(ScenarioGenerator):
         x_pd = x
         if self.n_multistep>0:
             preds.append(self.predict_parallel(x_pd, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean'))
-        preds = np.squeeze(np.dstack(preds))
-        if len(preds.shape)<=2:
-            preds = pd.DataFrame(preds, index=x.index)
+        preds = np.dstack(preds)
+        if 'quantiles' in kwargs:
+            if kwargs['quantiles'] is 'mean':
+                preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index)
+            else:
+                if len(preds.shape) == 2:
+                    preds = np.expand_dims(preds, 0)
+                preds = np.swapaxes(preds, 1, 2)
         else:
-            preds = np.swapaxes(preds, 1, 2)
+            preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index)
         return preds
 
     def _predict(self, i, x, period, **kwargs):

@@ -138,16 +138,17 @@ class TestFormatDataset(unittest.TestCase):
         y_hat = qrf.predict(x_te)
         q = qrf.predict_quantiles(x_te)
 
-        plt.close('all')
-        plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
-        plt.close('all')
+         #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
 
         qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4, n_single=2).fit(x_tr, y_tr)
         y_hat = qrf.predict(x_te)
         q = qrf.predict_quantiles(x_te)
 
         plt.close('all')
-        plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
+        #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
+
+        y_hat = qrf.predict(x_te.iloc[[0], :])
+        q = qrf.predict(x_te.iloc[[0], :])
 
 if __name__ == '__main__':
     unittest.main()
