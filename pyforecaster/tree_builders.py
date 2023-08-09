@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from os.path import join
 import networkx as nx
 from pyforecaster.utilities import get_logger
-
+from copy import deepcopy
 
 class ScenarioTree:
     def __init__(self, tree=None, nodes_at_step=None, savepath='', init='quantiles', base_tree='scenred', logger=None):
@@ -25,7 +25,7 @@ class ScenarioTree:
     @abstractmethod
     def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3,
                  nodes_at_step=None):
-        tree = self.gen_init_tree(scens, nodes_at_step) if start_tree is None else start_tree
+        tree = self.gen_init_tree(scens, nodes_at_step) if start_tree is None else deepcopy(start_tree)
 
         tree_idxs, leaves = retrieve_scenarios_indexes(tree)
         tree_vals = np.hstack(list(dict(tree.nodes('v')).values()))
