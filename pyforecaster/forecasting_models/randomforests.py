@@ -149,7 +149,7 @@ class QRF(ScenarioGenerator):
             preds.append(self.predict_parallel(x_pd, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean'))
         preds = np.dstack(preds)
         if 'quantiles' in kwargs:
-            if kwargs['quantiles'] is 'mean':
+            if str(kwargs['quantiles']) == 'mean':
                 preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index)
             else:
                 if len(preds.shape) == 2:
