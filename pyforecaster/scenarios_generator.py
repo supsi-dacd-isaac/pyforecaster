@@ -121,10 +121,10 @@ class ScenGen:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_count()-1) as executor:
                     trees = [i for i in tqdm(
                         executor.map(partial(tree_gen, trees=self.trees), predictions.iterrows()),
-                        total=predictions.shape[0])]
+                        total=predictions.shape[0], desc='predicting trees in parallel')]
 
             else:
-                for t in predictions.iterrows():
+                for t in tqdm(predictions.iterrows(), total=predictions.shape[0], desc='predicting trees sequentially'):
                     nx_tree = tree_gen(t, self.trees)
                     trees.append(nx_tree)
 
