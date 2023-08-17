@@ -104,7 +104,7 @@ class TestScenarios(unittest.TestCase):
     def test_forecaster(self):
         rand_idx = np.random.choice(np.arange(len(self.x)), 4)
 
-        lf = LinearForecaster(online_tree_reduction=True).fit(self.x, self.target)
+        lf = LinearForecaster(online_tree_reduction=False).fit(self.x, self.target)
         preds = lf.predict(self.x)
 
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx,:])

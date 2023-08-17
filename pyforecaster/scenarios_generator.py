@@ -7,11 +7,15 @@ import pyforecaster.dictionaries
 import numpy as np
 from inspect import signature
 from copy import deepcopy
-
+from multiprocessing import cpu_count
+import concurrent
+from tqdm import tqdm
+from functools import partial
 
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
-                 online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,  **kwargs):
+                 online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,
+                 parallel_preds=False, **kwargs):
         self.logger = get_logger()
         self.copula_type = copula_type
         self.tree_type = tree_type
@@ -25,6 +29,7 @@ class ScenGen:
         self.trees = {}
         self.k_max = max_iterations
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
+        self.parallel_preds = parallel_preds
 
     def fit(self, y: pd.DataFrame, x: pd.DataFrame = None, n_scen=100, **copula_kwargs):
         """
@@ -112,10 +117,16 @@ class ScenGen:
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
 
-            for i, t in enumerate(predictions.index):
-                nx_tree = deepcopy(self.trees[t.hour])
-                nx_tree = superimpose_signal_to_tree(predictions.iloc[i, :], nx_tree)
-                trees.append(nx_tree)
+            if self.parallel_preds:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_count()-1) as executor:
+                    trees = [i for i in tqdm(
+                        executor.map(partial(tree_gen, trees=self.trees), predictions.iterrows()),
+                        total=predictions.shape[0])]
+
+            else:
+                for t in predictions.iterrows():
+                    nx_tree = tree_gen(t, self.trees)
+                    trees.append(nx_tree)
 
         return trees
 
@@ -140,6 +151,12 @@ class ScenGen:
                 scenarios[t, :] = interp_scens(copula_sample_t, quantiles_t, self.q_vect)
         return scenarios
 
+
+def tree_gen(prediction_tuple, trees=None):
+    hour = prediction_tuple[0].hour
+    nx_tree = deepcopy(trees[hour])
+    nx_tree = superimpose_signal_to_tree(prediction_tuple[1], nx_tree)
+    return nx_tree
 
 def interp_scens(copula_samples, quantiles_mat, q_vect):
     """

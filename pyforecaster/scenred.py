@@ -7,6 +7,7 @@ import networkx as nx
 from itertools import count
 import copy
 import logging
+from numba import njit
 
 
 def get_dist(X, metric):
@@ -382,11 +383,20 @@ def superimpose_signal_to_scens(x, w, perms):
 def superimpose_signal_to_tree(x, tree):
     times = np.array(list(nx.get_node_attributes(tree, 't').values()))
     tree_vals = np.array(list(nx.get_node_attributes(tree, 'v').values()))
-    for t in np.unique(times):
-        tree_vals[times == t] += np.atleast_1d(x[t])
+
+    tree_vals = _superimpose_signal_to_tree(times, x.values, tree_vals)
+
+    #for t in np.unique(times):
+    #    tree_vals[times == t] += np.atleast_1d(x[t])
+
     replace_var(tree, tree_vals)
     return tree
 
+@njit
+def _superimpose_signal_to_tree(times, x, tree_vals):
+    for t in np.unique(times):
+        tree_vals[times == t] += x[t]
+    return tree_vals
 
 def get_nodes_per_time_from_tree(g):
     times = np.array(list(nx.get_node_attributes(g, 't').values()))
