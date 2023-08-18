@@ -155,7 +155,7 @@ class ScenGen:
 
 def tree_gen_chunk(predictions, trees):
     nx_trees = []
-    for t in tqdm(predictions.iterrows(), total=predictions.shape[0], desc='predicting trees sequentially'):
+    for t in predictions.iterrows():
         nx_tree = tree_gen(t, trees)
         nx_trees.append(nx_tree)
     return nx_trees
