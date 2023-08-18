@@ -51,7 +51,7 @@ def array_split(df, n_splits, axis=0):
     return dfs
 
 
-def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0, use_ray=True):
+def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0, use_ray=True, recast=True):
     """
     Parallelize a function to be applied on a pd.DataFrame or on a list of pd.DataFrames.
     :param f:
@@ -112,16 +112,19 @@ def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0, use_ray
             df = f(df)
             return df
         responses = ray.get([f_rem.remote(df_i) for df_i in dfs])
-        if isinstance(responses[0], pd.DataFrame):
-            res = pd.concat(responses, axis=axis)
-        elif isinstance(responses[0], tuple):
-            # this assumes all the outputs of the function are pd.DataFrames
-            res = []
-            for i in range(len(responses[0])):
-                res.append(pd.concat([r[i] for r in responses], axis=axis))
-            res = tuple(res)
+        if recast:
+            if isinstance(responses[0], pd.DataFrame):
+                res = pd.concat(responses, axis=axis)
+            elif isinstance(responses[0], tuple):
+                # this assumes all the outputs of the function are pd.DataFrames
+                res = []
+                for i in range(len(responses[0])):
+                    res.append(pd.concat([r[i] for r in responses], axis=axis))
+                res = tuple(res)
+            else:
+                res = np.vstack(responses) if axis == 0 else np.hstack(responses)
         else:
-            res = np.vstack(responses) if axis == 0 else np.hstack(responses)
+            res = responses
         ray.shutdown()
 
     return res

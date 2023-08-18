@@ -11,6 +11,7 @@ from multiprocessing import cpu_count
 import concurrent
 from tqdm import tqdm
 from functools import partial
+from pyforecaster.big_data_utils import fdf_parallel
 
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
@@ -117,11 +118,11 @@ class ScenGen:
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
 
-            if self.parallel_preds:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=cpu_count()-1) as executor:
-                    trees = [i for i in tqdm(
-                        executor.map(partial(tree_gen, trees=self.trees), predictions.iterrows()),
-                        total=predictions.shape[0], desc='predicting trees in parallel')]
+            if self.parallel_preds and predictions.shape[0]>1:
+                pred_trees = fdf_parallel(partial(tree_gen_chunk, trees=self.trees), predictions, np.minimum(cpu_count()-1, predictions.shape[0]),
+                                          axis=0, recast=False)
+                # unroll list of lists
+                trees = [item for sublist in pred_trees for item in sublist]
 
             else:
                 for t in tqdm(predictions.iterrows(), total=predictions.shape[0], desc='predicting trees sequentially'):
@@ -151,6 +152,13 @@ class ScenGen:
                 scenarios[t, :] = interp_scens(copula_sample_t, quantiles_t, self.q_vect)
         return scenarios
 
+
+def tree_gen_chunk(predictions, trees):
+    nx_trees = []
+    for t in tqdm(predictions.iterrows(), total=predictions.shape[0], desc='predicting trees sequentially'):
+        nx_tree = tree_gen(t, trees)
+        nx_trees.append(nx_tree)
+    return nx_trees
 
 def tree_gen(prediction_tuple, trees=None):
     hour = prediction_tuple[0].hour
