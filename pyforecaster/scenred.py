@@ -271,8 +271,8 @@ def plot_from_graph(g, lines=None, ax=None, color=None, **kwargs):
             lines.append(l[0])
     return lines
 
-
-def get_network(S_s, P_s):
+#@njit
+def _get_network(S_s, P_s):
     '''
     Get a network representation from the S_s and P_p matrices. The network is encoded in a networkx graph, each node
     has the following attribute:
@@ -289,49 +289,60 @@ def get_network(S_s, P_s):
 
     assert np.sum(P_s[0, :] > 0) == 1, 'there is more than one node at root with P>0. Something wrong, ' \
                                        'most likely some observations at first step are equal down to epsilon'
-    g = nx.DiGraph()
-    g.add_node(0, t=0, p=1, v=S_s[0, P_s[0, :] > 0, :].ravel())
 
+    new_node = 0
+    attributes = {new_node: {"t": 0, "p": 1, "v": S_s[0, P_s[0, :] > 0, :].ravel(), "label": new_node}}
+    edges = []
+    times, values = np.zeros(P_s.shape[0]*P_s.shape[1]) * np.nan, np.zeros((P_s.shape[0]*P_s.shape[1], S_s.shape[2])) * np.nan
+    k = 0
     for t in 1 + np.arange(P_s.shape[0] - 1):
         for s in np.arange(P_s.shape[1]):
+
             # span all the times, starting from second point (the root node is already defined)
             # consider current point mu, and its previous point in its scenario
             mu = S_s[t, s, :]
             p = P_s[t, s]
+
             # if probability of current point is zero, just go on
             if p == 0:
                 continue
             mu_past = S_s[t - 1, s, :]
             # get current times in the tree
-            times = np.array(list(nx.get_node_attributes(g, 't').values()))
+
+            #times = np.array(list(nx.get_node_attributes(g, 't').values()))
             # get values, filtered by current time
-            values = np.array(list(nx.get_node_attributes(g, 'v').values()))
+            #values = np.array(list(nx.get_node_attributes(g, 'v').values()))
             values_t = values[times == t, :]
             # values_past = values[times == t - 1, :]
             # check if values of current point s are present in the tree at current time
             if np.any([np.array_equal(mu, a) for a in values_t]):
                 continue
             else:
+                values[k] = mu
+                times[k] = t
+                k += 1
+                #values = np.vstack([values, mu])
+                #times = np.hstack([times, t])
                 # find parent node
                 try:
-                    parent_node = [x for x, y in g.nodes(data=True) if
+                    parent_node = [x for x, y in attributes.items() if
                                    y['t'] == t - 1 and np.array_equal(y['v'], mu_past)]
                 except:
                     print(
                         'The tree does not have a root! It is likely that you did required more than one node as first node')
                 # create the node and add an edge from current point to its parent
-                new_node = len(g.nodes())
-                g.add_node(new_node, t=t, p=p, v=mu, label=new_node)
-                g.add_edge(parent_node[0], new_node)
+                new_node += 1
+                attributes.update({new_node:{"t":t, "p":p, "v":mu, "label":new_node}})
+                edges.append((parent_node[0], new_node))
+                #g.add_node(new_node, t=t, p=p, v=mu, label=new_node)
+                #g.add_edge(parent_node[0], new_node)
                 # print('node %i added, with values' % (new_node), mu)
+    return edges, attributes
 
-    # approximated probabilities
-    for i in np.arange(len(g.nodes)):
-        g.nodes[i]['p2'] = np.sum([g.nodes[n]['t'] == t for n in nx.descendants(g, i)]) / np.sum(
-            [g.nodes[n]['t'] == t for n in nx.descendants(g, 0)])
-        if g.nodes[i]['p2'] == 0:
-            g.nodes[i]['p2'] = 1 / len(nx.descendants(g, 0))
-
+def get_network(S_s, P_s):
+    edges, attributes = _get_network(S_s, P_s)
+    g = nx.DiGraph(edges)
+    nx.set_node_attributes(g, attributes)
     return g
 
 
