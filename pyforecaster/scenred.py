@@ -271,7 +271,8 @@ def plot_from_graph(g, lines=None, ax=None, color=None, **kwargs):
             lines.append(l[0])
     return lines
 
-#@njit
+
+@njit
 def _get_network(S_s, P_s):
     '''
     Get a network representation from the S_s and P_p matrices. The network is encoded in a networkx graph, each node
@@ -291,13 +292,18 @@ def _get_network(S_s, P_s):
                                        'most likely some observations at first step are equal down to epsilon'
 
     new_node = 0
-    attributes = {new_node: {"t": 0, "p": 1, "v": S_s[0, P_s[0, :] > 0, :].ravel(), "label": new_node}}
-    edges = []
-    times, values = np.zeros(P_s.shape[0]*P_s.shape[1]) * np.nan, np.zeros((P_s.shape[0]*P_s.shape[1], S_s.shape[2])) * np.nan
+    attributes_t = []
+    attributes_p = []
+    attributes_v = []
+    attributes_t.append(0)
+    attributes_p.append(1)
+    attributes_v.append(S_s[0, P_s[0, :] > 0, :].ravel())
+    edges_start = []
+    edges_end = []
+    times, values = [], []
     k = 0
-    for t in 1 + np.arange(P_s.shape[0] - 1):
-        for s in np.arange(P_s.shape[1]):
-
+    for t in range(1, P_s.shape[0]):
+        for s in range(P_s.shape[1]):
             # span all the times, starting from second point (the root node is already defined)
             # consider current point mu, and its previous point in its scenario
             mu = S_s[t, s, :]
@@ -308,39 +314,42 @@ def _get_network(S_s, P_s):
                 continue
             mu_past = S_s[t - 1, s, :]
             # get current times in the tree
-
-            #times = np.array(list(nx.get_node_attributes(g, 't').values()))
-            # get values, filtered by current time
-            #values = np.array(list(nx.get_node_attributes(g, 'v').values()))
-            values_t = values[times == t, :]
-            # values_past = values[times == t - 1, :]
+            values_t = [v for v, time in zip(values, times) if time == t]
             # check if values of current point s are present in the tree at current time
-            if np.any([np.array_equal(mu, a) for a in values_t]):
+            equals = [el for el in [np.array_equal(mu, a) for a in values_t] if el]
+
+            if len(equals)>0:
                 continue
             else:
-                values[k] = mu
-                times[k] = t
-                k += 1
-                #values = np.vstack([values, mu])
-                #times = np.hstack([times, t])
-                # find parent node
+                values.append(mu)
+                times.append(t)
                 try:
-                    parent_node = [x for x, y in attributes.items() if
-                                   y['t'] == t - 1 and np.array_equal(y['v'], mu_past)]
+                    for x in range(len(attributes_t)):
+                        y_t = attributes_t[x]
+                        y_v = attributes_v[x]
+                        if y_t == t - 1 and np.array_equal(y_v, mu_past):
+                            parent_node = x
+                            break
                 except:
-                    print(
-                        'The tree does not have a root! It is likely that you did required more than one node as first node')
+                    print('The tree does not have a root! It is likely that you did required more than one node as first node')
                 # create the node and add an edge from current point to its parent
                 new_node += 1
-                attributes.update({new_node:{"t":t, "p":p, "v":mu, "label":new_node}})
-                edges.append((parent_node[0], new_node))
+                attributes_t.append(t)
+                attributes_p.append(p)
+                attributes_v.append(mu)
+
+                edges_start.append(parent_node)
+                edges_end.append(new_node)
                 #g.add_node(new_node, t=t, p=p, v=mu, label=new_node)
                 #g.add_edge(parent_node[0], new_node)
                 # print('node %i added, with values' % (new_node), mu)
-    return edges, attributes
+    return edges_start, edges_end, attributes_t, attributes_p, attributes_v
+
 
 def get_network(S_s, P_s):
-    edges, attributes = _get_network(S_s, P_s)
+    edges_start, edges_end, attributes_t, attributes_p, attributes_v = _get_network(S_s, P_s)
+    attributes = {i: {'t': t, 'p': p, 'v': v, 'label': i} for i, (t, p, v) in enumerate(zip(attributes_t, attributes_p, attributes_v))}
+    edges = [(s, e) for s, e in zip(edges_start, edges_end)]
     g = nx.DiGraph(edges)
     nx.set_node_attributes(g, attributes)
     return g
