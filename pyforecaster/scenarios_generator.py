@@ -112,7 +112,7 @@ class ScenGen:
                 assert x is not None, 'if quantiles are not pd.DataFrame, x must be passed, and must be a pd.DataFrame ' \
                                       'with DatetimeIndex index'
             scenarios = self.sample_scenarios(x, n_scen, quantiles, init_obs, **copula_kwargs)
-            for scenarios_t in scenarios:
+            for scenarios_t in tqdm(scenarios, desc='generating trees'):
                 nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=self.k_max, nodes_at_step=nodes_at_step)
                 trees.append(nx_tree)
         else:
