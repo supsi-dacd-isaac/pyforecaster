@@ -115,7 +115,7 @@ class ScenGen:
 
             if self.parallel_preds and scenarios.shape[0] > 1:
                 with concurrent.futures.ProcessPoolExecutor(max_workers=cpu_count() - 1) as executor:
-                    trees = [i for i in tqdm(executor.map(partial(self.tree.gen_tree, k_max=self.k_max, nodes_at_step=nodes_at_step), scenarios), total=scenarios.shape[0], desc='generating trees')]
+                    trees = [i for i, *_ in tqdm(executor.map(partial(self.tree.gen_tree, k_max=self.k_max, nodes_at_step=nodes_at_step), scenarios), total=scenarios.shape[0], desc='generating trees')]
             else:
                 for scenarios_t in tqdm(scenarios, desc='generating trees'):
                     nx_tree, _, _, _ = self.tree.gen_tree(scenarios_t, k_max=self.k_max, nodes_at_step=nodes_at_step)
