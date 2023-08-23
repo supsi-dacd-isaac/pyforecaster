@@ -385,7 +385,7 @@ def retrieve_scenarios_indexes(g, dyn_offset=False):
 def replace_var(tree, variable, dyn_offset=False):
     if dyn_offset:
         variable = np.hstack([np.nan, variable])
-    nx.set_node_attributes(tree, {i: v for i, v in enumerate(variable)}, name='v')
+    nx.set_node_attributes(tree, {i: np.atleast_1d(v) for i, v in enumerate(variable)}, name='v')
 
 
 def plot_vars(g, v, ax=None, color=None, dyn_offset=False, **kwargs):
