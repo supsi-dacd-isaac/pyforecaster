@@ -323,15 +323,14 @@ def _get_network(S_s, P_s):
             else:
                 values.append(mu)
                 times.append(t)
-                try:
-                    for x in range(len(attributes_t)):
-                        y_t = attributes_t[x]
-                        y_v = attributes_v[x]
-                        if y_t == t - 1 and np.array_equal(y_v, mu_past):
-                            parent_node = x
-                            break
-                except:
-                    print('The tree does not have a root! It is likely that you did required more than one node as first node')
+                for x in range(len(attributes_t)):
+                    y_t = attributes_t[x]
+                    y_v = attributes_v[x]
+                    if y_t == t - 1 and np.array_equal(y_v, mu_past):
+                        parent_node = x
+                        break
+                else:
+                    raise ValueError('The tree does not have a root! It is likely that you did required more than one node as first node')
                 # create the node and add an edge from current point to its parent
                 new_node += 1
                 attributes_t.append(t)
