@@ -155,7 +155,7 @@ class ScenGen:
             # for each temporal observation, generate scenarios from copula samples
             for t, copula_sample_t, quantiles_t in zip(range(len(copula_samples)), copula_samples, quantiles):
                 scenarios[t, :] = interp_scens(copula_sample_t, quantiles_t, self.q_vect)
-        return scenarios
+        return scenarios + np.random.randn(*scenarios.shape)*1e-9
 
 
 def tree_gen_chunk(predictions, trees):
