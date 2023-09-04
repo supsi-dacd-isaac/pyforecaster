@@ -38,7 +38,7 @@ class Formatter:
         self.cv_gen = []
         self.augment = augment
         self.timezone = None
-        self.dt = None
+        self.dt = dt
 
     def add_time_features(self, x):
         tz = x.index[0].tz
