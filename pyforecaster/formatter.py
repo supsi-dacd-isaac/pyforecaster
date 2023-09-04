@@ -96,7 +96,7 @@ class Formatter:
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt)
         self.target_transformers.append(transformer)
         return self
 
