@@ -254,7 +254,7 @@ class ScenredTree(ScenarioTree):
     def gen_tree(self, scens:Union[list, np.ndarray, pd.DataFrame], start_tree=None, k_max=1000, tol=1e-3,
                  nodes_at_step=None):
         scens = np.array(scens)
-        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, start_tree, nodes_at_step=nodes_at_step)
+        tree, tree_scens, tree_idxs, tree_vals = super().gen_tree(scens, None, nodes_at_step=nodes_at_step)
         return tree, tree_scens, tree_idxs, tree_vals
 
 
