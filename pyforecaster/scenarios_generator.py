@@ -56,7 +56,7 @@ class ScenGen:
                     filt_h = y.index.hour == h
                     err_distr[h] = np.expand_dims(np.quantile(y.loc[filt_h, :], self.q_vect, axis=0).T, 0)
 
-                for h in range(24):
+                for h in tqdm(range(24), 'Fitting HourlyGaussianCopula trees...'):
                     #scenarios = self.copula.sample(y_h.iloc[[0], :], n_scen, **copula_kwargs)
                     filt_h = y.index.hour == h
                     y_h = y.loc[filt_h, :]
