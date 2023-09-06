@@ -30,7 +30,7 @@ class Formatter:
     :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
                         recent data if you don't have at prediction time.
     """
-    def __init__(self, logger=None, augment=True):
+    def __init__(self, logger=None, augment=True, dt=None):
         self.logger = get_logger() if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
@@ -38,6 +38,7 @@ class Formatter:
         self.cv_gen = []
         self.augment = augment
         self.timezone = None
+        self.dt = dt
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -86,7 +87,7 @@ class Formatter:
 
     def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None, **kwargs):
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins, **kwargs)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt, **kwargs)
         self.transformers.append(transformer)
         return self
 
@@ -95,7 +96,7 @@ class Formatter:
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt)
         self.target_transformers.append(transformer)
         return self
 
@@ -400,7 +401,7 @@ class Transformer:
     """
     Anyarray = Union[tuple, np.ndarray, list, None]
     def __init__(self, names, functions:Anyarray=None, agg_freq:Union[str, int, None]=None, lags:Anyarray=None, logger=None,
-                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True):
+                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True, dt=None):
         """
         :param names: list of columns of the target dataset to which this transformer applies
         :param functions: list of functions
@@ -414,6 +415,7 @@ class Transformer:
                          elements (0, 1), the second one of 3 elements, (2, 3, 4).
         """
         assert isinstance(functions, list) or functions is None, 'functions must be a list of strings or functions'
+        self.dt = dt
         self.names = names
         self.functions = functions
         self.agg_freq = agg_freq
@@ -464,7 +466,7 @@ class Transformer:
             d = x[name].copy()
 
             # infer sampling time
-            dt = x[name].index.to_series().diff().median()
+            dt = self.dt if self.dt is not None else x[name].index.to_series().diff().median()
 
             if self.agg_freq is None:
                 self.agg_freq = dt
