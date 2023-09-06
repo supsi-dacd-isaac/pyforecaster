@@ -16,7 +16,7 @@ from pyforecaster.big_data_utils import fdf_parallel
 class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
                  online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,
-                 parallel_preds=False, **kwargs):
+                 parallel_preds=False, additional_node=False, prefit_trees=False, **kwargs):
         self.logger = get_logger()
         self.copula_type = copula_type
         self.tree_type = tree_type
@@ -25,12 +25,15 @@ class ScenGen:
         copula_kwargs = {p: kwargs[p] for p in signature(self.copula_class).parameters.keys() if p in kwargs}
         tree_kwargs = {p: kwargs[p] for p in signature(self.tree_class).parameters.keys() if p in kwargs}
         self.copula = self.copula_class(**copula_kwargs)
+        nodes_at_step = np.hstack([1, nodes_at_step]) if additional_node and nodes_at_step is not None else None
         self.tree = self.tree_class(nodes_at_step=nodes_at_step, **tree_kwargs)
         self.online_tree_reduction = online_tree_reduction
+        self.prefit_trees = (not online_tree_reduction) or prefit_trees
         self.trees = {}
         self.k_max = max_iterations
-        self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
+        self.q_vect = np.hstack([0.01, np.linspace(0, 1, 11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.parallel_preds = parallel_preds
+        self.additional_node = additional_node
 
     def fit(self, y: pd.DataFrame, x: pd.DataFrame = None, n_scen=100, **copula_kwargs):
         """
@@ -46,7 +49,7 @@ class ScenGen:
         self.copula.fit(y, x)
 
         # pre-fit trees if required
-        if not self.online_tree_reduction:
+        if self.prefit_trees:
             if self.copula_type == 'HourlyGaussianCopula':
                 err_distr = {}
                 for h in np.unique(x.index.hour):
@@ -57,9 +60,10 @@ class ScenGen:
                     #scenarios = self.copula.sample(y_h.iloc[[0], :], n_scen, **copula_kwargs)
                     filt_h = y.index.hour == h
                     y_h = y.loc[filt_h, :]
-                    scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=None, **copula_kwargs)
+                    init_obs = 0 if self.additional_node else None
+                    scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=init_obs, **copula_kwargs)
                     start_tree = self.trees[0] if h>0 else None
-                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=self.k_max, start_tree=start_tree)
+                    self.trees[h], _, _, _ = self.tree.gen_tree(np.squeeze(scenarios), k_max=self.k_max, start_tree=start_tree, nodes_at_step=self.tree.nodes_at_step)
             else:
                 raise NotImplementedError('pre-fit currently not available for copulas other than HourlyGaussianCopula')
 
@@ -102,6 +106,8 @@ class ScenGen:
     def predict_trees(self, predictions:pd.DataFrame=None, quantiles: Union[pd.DataFrame, np.ndarray] = None, n_scen: int = 100,
                           x: pd.DataFrame = None, init_obs=None, nodes_at_step=None, **copula_kwargs):
         trees = []
+        if init_obs is not None and nodes_at_step is not None:
+            nodes_at_step = np.hstack([1, nodes_at_step])
         if self.online_tree_reduction:
             assert quantiles is not None, 'if online_tree_reduction quantiles must be passed'
             if isinstance(quantiles, pd.DataFrame):
@@ -122,8 +128,8 @@ class ScenGen:
                     trees.append(nx_tree)
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
-
-            if self.parallel_preds and predictions.shape[0]>1:
+            assert self.trees != {}, 'if online_tree_reduction is false, trees must be prefitted'
+            if self.parallel_preds and predictions.shape[0] > 1:
                 pred_trees = fdf_parallel(partial(tree_gen_chunk, trees=self.trees), predictions, np.minimum(cpu_count()-1, predictions.shape[0]),
                                           axis=0, recast=False)
                 # unroll list of lists

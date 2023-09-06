@@ -12,15 +12,22 @@ from inspect import signature
 
 
 class ScenarioGenerator(object):
-    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
-        self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, **scengen_kwgs)
-        self.online_tree_reduction = scengen_kwgs['online_tree_reduction'] if 'online_tree_reduction' in \
-                                                                              scengen_kwgs.keys() else True
+        self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, additional_node=additional_node, **scengen_kwgs)
         self.val_ratio = val_ratio
         self.err_distr = {}
         self.logger = get_logger() if logger is None else logger
         self.n_scen_fit = n_scen_fit
+        self.additional_node = additional_node
+
+    @property
+    def online_tree_reduction(self):
+        return self.scengen.online_tree_reduction
+
+    @online_tree_reduction.setter
+    def online_tree_reduction(self, value):
+        self.scengen.online_tree_reduction = value
 
     def set_params(self, **kwargs):
         [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
