@@ -159,7 +159,8 @@ class TestScenarios(unittest.TestCase):
 
         preds = lf.predict(self.x)
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx, :])
-        trees = lf.predict_trees(self.x.iloc[rand_idx, :])
+        init_obs = self.target['target_0'].iloc[np.clip(rand_idx - 1, 0, np.inf).astype(int)].values
+        trees = lf.predict_trees(self.x.iloc[rand_idx, :], init_obs=init_obs)
 
         for i, rand_i in enumerate(rand_idx):
             plot_graph(trees[i])
@@ -175,8 +176,9 @@ class TestScenarios(unittest.TestCase):
         lf = LinearForecaster(online_tree_reduction=True, additional_node=True).fit(self.x, self.target)
         preds = lf.predict(self.x)
         q_preds = lf.predict_quantiles(self.x.iloc[rand_idx, :])
-        trees = lf.predict_trees(self.x.iloc[rand_idx, :], scenarios_per_step=np.linspace(1, 20, preds.shape[1], dtype=int))
+        trees = lf.predict_trees(self.x.iloc[rand_idx, :], nodes_at_step=np.linspace(4, 20, preds.shape[1], dtype=int))
 
+        plt.close('all')
         for i, rand_i in enumerate(rand_idx):
             plot_graph(trees[i])
             plot_from_graph(trees[i])
@@ -187,6 +189,7 @@ class TestScenarios(unittest.TestCase):
 
             plt.plot(self.target.iloc[rand_i, :].values, linestyle='--')
             plt.plot(preds.iloc[rand_idx[i], :])
+            plt.pause(0.1)
         assert 1 == 1
 
 

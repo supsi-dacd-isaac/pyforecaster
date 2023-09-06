@@ -58,8 +58,8 @@ class ScenGen:
 
                 for h in tqdm(range(24), 'Fitting HourlyGaussianCopula trees...'):
                     #scenarios = self.copula.sample(y_h.iloc[[0], :], n_scen, **copula_kwargs)
-                    filt_h = y.index.hour == h
-                    y_h = y.loc[filt_h, :]
+                    # find first observation at hour h
+                    y_h = y.loc[y.index.hour == h, :].iloc[[0], :]
                     init_obs = 0 if self.additional_node else None
                     scenarios = self.sample_scenarios(y_h, n_scen, err_distr[h], init_obs=init_obs, **copula_kwargs)
                     start_tree = self.trees[0] if h>0 else None
@@ -106,8 +106,10 @@ class ScenGen:
     def predict_trees(self, predictions:pd.DataFrame=None, quantiles: Union[pd.DataFrame, np.ndarray] = None, n_scen: int = 100,
                           x: pd.DataFrame = None, init_obs=None, nodes_at_step=None, **copula_kwargs):
         trees = []
-        if init_obs is not None and nodes_at_step is not None:
-            nodes_at_step = np.hstack([1, nodes_at_step])
+        if nodes_at_step is not None:
+            assert self.online_tree_reduction, 'nodes_at_step can be passed only if online_tree_reduction is True'
+            if self.additional_node:
+                nodes_at_step = np.hstack([1, nodes_at_step])
         if self.online_tree_reduction:
             assert quantiles is not None, 'if online_tree_reduction quantiles must be passed'
             if isinstance(quantiles, pd.DataFrame):
@@ -129,6 +131,11 @@ class ScenGen:
         else:
             assert predictions is not None, 'if online_tree_reduction is false, predictions must be passed'
             assert self.trees != {}, 'if online_tree_reduction is false, trees must be prefitted'
+            if self.additional_node:
+                if init_obs is None:
+                    init_obs = predictions.iloc[:, 0]
+                predictions = pd.concat([pd.Series(init_obs, index=predictions.index, name='additional_node'), predictions], axis=1)
+
             if self.parallel_preds and predictions.shape[0] > 1:
                 pred_trees = fdf_parallel(partial(tree_gen_chunk, trees=self.trees), predictions, np.minimum(cpu_count()-1, predictions.shape[0]),
                                           axis=0, recast=False)
@@ -143,12 +150,17 @@ class ScenGen:
         return trees
 
     def sample_scenarios(self, x, n_scen, quantiles, init_obs, **copula_kwargs):
+
+        t = x.shape[0]
+        t_q = quantiles.shape[0]
+        assert t_q == t, 'quantiles must have the same number of rows as x'
+
         # copula samples of dimension n_obs, n_steps, n_scen
         copula_samples = self.copula.sample(x, n_scen, **copula_kwargs)
 
-        if init_obs is not None:
+        if self.additional_node:
             scenarios = np.zeros((quantiles.shape[0], quantiles.shape[1] + 1, n_scen))
-            init_obs = np.atleast_1d(init_obs)
+            init_obs = np.atleast_1d(init_obs) if init_obs is not None else np.zeros(t)
             assert len(init_obs) == scenarios.shape[0], 'length of init_obs was {}, while should have been equal to ' \
                                                         '{}'.format(len(init_obs), scenarios.shape[0])
             for t, init_o in enumerate(init_obs):
