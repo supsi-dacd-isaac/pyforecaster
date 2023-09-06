@@ -25,7 +25,7 @@ class ScenGen:
         copula_kwargs = {p: kwargs[p] for p in signature(self.copula_class).parameters.keys() if p in kwargs}
         tree_kwargs = {p: kwargs[p] for p in signature(self.tree_class).parameters.keys() if p in kwargs}
         self.copula = self.copula_class(**copula_kwargs)
-        nodes_at_step = np.hstack([1, nodes_at_step]) if additional_node and nodes_at_step is not None else None
+        nodes_at_step = np.hstack([1, nodes_at_step]) if additional_node and nodes_at_step is not None else nodes_at_step
         self.tree = self.tree_class(nodes_at_step=nodes_at_step, **tree_kwargs)
         self.online_tree_reduction = online_tree_reduction
         self.prefit_trees = (not online_tree_reduction) or prefit_trees
