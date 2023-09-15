@@ -144,7 +144,6 @@ class TestFormatDataset(unittest.TestCase):
         y_hat = qrf.predict(x_te)
         q = qrf.predict_quantiles(x_te)
 
-        plt.close('all')
         #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
 
         y_hat = qrf.predict(x_te.iloc[[0], :])

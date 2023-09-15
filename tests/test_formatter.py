@@ -166,6 +166,16 @@ class TestFormatDataset(unittest.TestCase):
         x_transformed, y_transformed = formatter.transform(self.x4)
         print('elapsed time to transform {} points into a {}x{} df: {}s '.format(self.x4.shape[0], *x_transformed.shape, time()-t0))
 
+
+    def test_simulate_formatter(self):
+        formatter = pyf.Formatter(logger=self.logger, dt = pd.Timedelta('15min')).add_transform([0], ['mean'], lags=np.arange(10),                                                                    relative_lags=True)
+        formatter.add_transform([0, 1, 2], ['min', 'max'], agg_bins=np.hstack([144*7-np.arange(6)*144, 144-np.arange(int(144/6)+1)*6]))
+
+        time_lims = formatter.get_time_lims(include_target=True, extremes=True)
+
+        assert formatter.transformers[0].metadata is not None
+
+
     def test_pickability(self):
         """
         Pickability is needed to parallelize formatting operations

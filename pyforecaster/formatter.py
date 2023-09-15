@@ -199,7 +199,7 @@ class Formatter:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
-    def _simulate_transform(self, x):
+    def _simulate_transform(self, x=None):
         """
         This won't actually modify the dataframe, it will just populate the metqdata property of each transformer
         :param x:
@@ -395,6 +395,25 @@ class Formatter:
         return x
 
 
+    def get_time_lims(self, include_target=False, extremes=True):
+
+        transformers = self.transformers + self.target_transformers if include_target else self.transformers
+        if any([t.metadata is None for t in self.transformers]):
+            self._simulate_transform()
+
+        min_start_times = pd.DataFrame(pd.concat(
+            [t.metadata.groupby('name').min()['start_time'] for t in transformers])).groupby(
+            'name').min()
+
+        max_end_times = pd.DataFrame(pd.concat(
+            [t.metadata.groupby('name').max()['end_time'] for t in transformers])).groupby(
+            'name').max()
+
+        time_lims = pd.concat([min_start_times, max_end_times], axis=1)
+        if extremes:
+            time_lims = pd.DataFrame([time_lims['start_time'].min(), time_lims['end_time'].max()], index=['start_time', 'end_time']).T
+        return time_lims
+
 class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags
@@ -447,7 +466,7 @@ class Transformer:
         if agg_freq is not None and agg_bins is not None:
             self.logger.warning('Transformer: agg_freq will be ignored since agg_bins is not None')
 
-    def transform(self, x, augment=True, simulate=False):
+    def transform(self, x=None, augment=True, simulate=False):
         """
         Add transformations to the x pd.DataFrame, as specified by the Transformer's attributes
 
@@ -457,13 +476,20 @@ class Transformer:
                          with information on the name and time lags
         :return: transformed DataFrame
         """
-        assert np.all(np.isin(self.names, x.columns)), "transformers names, {},  " \
-                                                       "must be in x.columns:{}".format(self.names, x.columns)
+        if simulate:
+            if x is None:
+                assert self.dt is not None, "self.dt must be set if you don't pass x while simulating"
+        else:
+            assert x is not None, "x must be passed if simulate is False"
+            assert np.all(np.isin(self.names, x.columns)), "transformers names, {},  " \
+                                                           "must be in x.columns:{}".format(self.names, x.columns)
 
-        data = x.copy() if augment else pd.DataFrame(index=x.index)
+
+            data = x.copy() if augment else pd.DataFrame(index=x.index)
+
         self.metadata = pd.DataFrame()
         for name in self.names:
-            d = x[name].copy()
+            d = x[name].copy() if x is not None else None
 
             # infer sampling time
             dt = self.dt if self.dt is not None else x[name].index.to_series().diff().median()
@@ -568,9 +594,11 @@ class Transformer:
             metadata_n['name'] = name
 
             self.metadata = pd.concat([self.metadata, metadata_n])
-
-        self.generated_features = set(data.columns) - set(x.columns)
-        return data
+        if not simulate:
+            self.generated_features = set(data.columns) - set(x.columns)
+            return data
+        else:
+            return None
 
 
 class Reducer:
