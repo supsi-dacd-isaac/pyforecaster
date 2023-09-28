@@ -30,8 +30,7 @@ class TestFormatDataset(unittest.TestCase):
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
-        from quantile_forest import RandomForestQuantileRegressor
-        qrf = RandomForestQuantileRegressor()
+
     def test_hw(self):
         n_tr = int(len(self.x)*0.8)
         x, y = self.x, self.y

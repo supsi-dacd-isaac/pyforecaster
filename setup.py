@@ -36,7 +36,9 @@ setuptools.setup(
                       'python-long-weekends>=0.1.1',
                       'jax>=0.4.1',
                       'jaxlib>=0.4.1',
-                      'quantile-forest>=1.2.0'
+                      'quantile-forest>=1.2.0',
+                      "optax>=0.1.7",
+                      "flax>=0.7.4"
                       ],
     python_requires='>=3.8',
 )
