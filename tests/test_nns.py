@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import NN
+from pyforecaster.forecasting_models.neural_forecasters import PICNN
 from pyforecaster.formatter import Formatter
 from os import makedirs
 from os.path import exists
@@ -37,18 +37,23 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-        parameters = {"n_hidden":255, "n_out":y_tr.shape[1], "n_layers":3, "batch_size":1000, "learning_rate":1e-3}
 
-        optimization_vars = x_tr.columns[:5]
-        m = NN(learning_rate=1e-4,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+        optimization_vars = x_tr.columns[:100]
+
+
+        m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).train(x_tr,
                                                                                            y_tr, x_te, y_te,
-                                                                                           n_epochs=10,
+                                                                                           n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
                                                                                            stats_step=40)
 
+        y_hat_1 = m.predict(x_te.iloc[:100, :])
+        m.save('tests/results/ffnn_model.pk')
+        n = PICNN(load_path='tests/results/ffnn_model.pk')
+        y_hat_2 = n.predict(x_te.iloc[:100, :])
 
-
+        assert np.all(np.sum(y_hat_1-y_hat_2) == 0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,7 @@
 import jax.numpy as jnp
+import pandas as pd
 from flax import linen as nn
+import pickle as pk
 
 from jax import random, grad, jit, value_and_grad, vmap
 import optax
@@ -21,6 +23,7 @@ class PICNNLayer(nn.Module):
     features_y: int
     features_out: int
     n_layer: int = 0
+    prediction_layer: bool = False
     @nn.compact
     def __call__(self, y, u, z):
         # Traditional NN component
@@ -28,13 +31,14 @@ class PICNNLayer(nn.Module):
         u_next = nn.relu(u_next)
 
         # Input-Convex component without bias for the element-wise multiplicative interactions
-        wzu = nn.Dense(features=self.features_out, use_bias=True, name='wzu_{}'.format(self.n_layer))(u)
-        wyu = nn.Dense(features=self.features_y, use_bias=True, name='wyu_{}'.format(self.n_layer))(u)
+        wzu = nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u)
+        wyu = nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u)
 
-        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz_{}'.format(self.n_layer),kernel_init=positive_lecun_normal)(z * wzu)
-        y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy_{}'.format(self.n_layer))(y * wyu)
+        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz',kernel_init=positive_lecun_normal)(z * wzu)
+        y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
         z_next = z_next + y_next + nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
-        z_next = nn.relu(z_next)
+        if not self.prediction_layer:
+            z_next = nn.relu(z_next)
 
         return u_next, z_next
 
@@ -50,7 +54,8 @@ class PartiallyICNN(nn.Module):
         u = x
         z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
         for i in range(self.num_layers):
-            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out, n_layer=i)(y, u, z)
+            prediction_layer = i == self.num_layers -1
+            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out, n_layer=i, prediction_layer=prediction_layer)(y, u, z)
         return z
 
 
@@ -58,30 +63,37 @@ class PartiallyICNN(nn.Module):
 
 def reproject_weights(params):
     # Loop through each layer and reproject the input-convex weights
-    for layer_name in params:
+    for layer_name in params['params']:
         if 'PICNNLayer' in layer_name:
-            params[layer_name]['wzu']['kernel'] = jnp.maximum(0, params[layer_name]['wzu']['kernel'])
-            params[layer_name]['wyu']['kernel'] = jnp.maximum(0, params[layer_name]['wyu']['kernel'])
+            params['params'][layer_name]['wzu']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wzu']['kernel'])
+            #params[layer_name]['wyu']['kernel'] = jnp.maximum(0, params[layer_name]['wyu']['kernel'])
     return params
 
 
 
 
-class NN(object):
-    def __init__(self, learning_rate=None, batch_size=None, load_path=None, n_hidden_x=100, n_hidden_y=100, n_out=None, n_layers=None, optimization_vars:list=None, **kwargs):
-        self.optimization_vars = optimization_vars
-        self.n_hidden_x = n_hidden_x
-        self.n_hidden_y = len(optimization_vars)
-        self.features_out = n_out
-        self.n_layers = n_layers
-        self.pars = None
-        self.batch_size = batch_size
+class PICNN(object):
+    "Partially input-convex neural network"
+    learning_rate: float = 0.01
+    batch_size: int = None
+    load_path: str = None
+    n_hidden_x: int = 100
+    n_hidden_y: int = 100
+    n_out: int = None
+    n_layers: int = None
+    optimization_vars: list = ()
+    pars: dict = None
+    target_columns: list = None
+    def __init__(self, **kwargs):
+        self.set_attr(kwargs)
+        if self.load_path is not None:
+            self.load(self.load_path)
+
+        self.n_hidden_y = len(self.optimization_vars)
         model = self.set_arch()
         self.model = model
-        self.learning_rate = learning_rate if learning_rate is not None else 1e-3
-        self.optimizer = optax.adamw(learning_rate=learning_rate)
-        #self.core_attr = [k for k,v in self.get_all_attr().items()]
 
+        self.optimizer = optax.adamw(learning_rate=self.learning_rate)
         @jit
         def loss_fn(params, x, y, target):
             predictions = model.apply(params, x, y)
@@ -101,6 +113,28 @@ class NN(object):
         self.loss_fn = loss_fn
         self.predict_batch = predict_batch
 
+    @classmethod
+    def get_class_properties_names(cls):
+        return [key for key, value in cls.__dict__.items()
+                if not callable(value)
+                and not key.startswith('__')
+                and not isinstance(value, (classmethod, staticmethod))]
+
+    def get_class_properties(self):
+        return {k: getattr(self, k) for k in self.get_class_properties_names()}
+
+    def save(self, save_path):
+        attrdict = self.get_class_properties()
+        with open(save_path, 'wb') as f:
+            pk.dump(attrdict, f, protocol=pk.HIGHEST_PROTOCOL)
+    def set_attr(self, attrdict):
+        [self.__setattr__(k, v) for k, v in attrdict.items()]
+
+    def load(self, save_path):
+        with open(save_path, 'rb') as f:
+            attrdict = pk.load(f)
+        self.set_attr(attrdict)
+
     @staticmethod
     def init_arch(nn_init, n_inputs_x=1, n_inputs_opt=1):
         "divides data into training and test sets "
@@ -112,10 +146,11 @@ class NN(object):
         return init_params
 
     def set_arch(self):
-        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.features_out)
+        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
     def train(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000):
+        self.target_columns = target.columns
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
         num_batches = inputs.shape[0] // batch_size
 
@@ -155,7 +190,7 @@ class NN(object):
 
                 k += 1
             self.pars = pars
-
+        return self
     def training_plots(self, x, y, target, savepath, k):
         n_instances = x.shape[0]
         y_hat = self.predict_batch(self.pars, x, y)
@@ -167,6 +202,10 @@ class NN(object):
             a.set_title('instance {}, iter {}'.format(i, k))
         plt.savefig(join(savepath, 'iteration_{}.png'.format(k)))
 
-    def predict(self, x):
-        pass
+    def predict(self, inputs):
+        x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
+        y = inputs[self.optimization_vars].values
+        y_hat = self.predict_batch(self.pars, x, y)
+        return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
+
 
