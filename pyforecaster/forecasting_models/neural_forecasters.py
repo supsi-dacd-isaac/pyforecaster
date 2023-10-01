@@ -75,6 +75,7 @@ def reproject_weights(params):
 class PICNN(object):
     "Partially input-convex neural network"
     learning_rate: float = 0.01
+    inverter_learning_rate: float = 0.1
     batch_size: int = None
     load_path: str = None
     n_hidden_x: int = 100
@@ -94,6 +95,7 @@ class PICNN(object):
         self.model = model
 
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
+        self.inverter_optimizer = optax.adamw(learning_rate=self.inverter_learning_rate)
         @jit
         def loss_fn(params, x, y, target):
             predictions = model.apply(params, x, y)
@@ -112,6 +114,7 @@ class PICNN(object):
         self.train_step = train_step
         self.loss_fn = loss_fn
         self.predict_batch = predict_batch
+        self.iterate = None
 
     @classmethod
     def get_class_properties_names(cls):
@@ -154,8 +157,7 @@ class PICNN(object):
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
         num_batches = inputs.shape[0] // batch_size
 
-        x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
-        y = inputs[self.optimization_vars].values
+        x, y = self.get_inputs(inputs)
         target = target.values
 
         n_inputs_opt = len(self.optimization_vars)
@@ -203,9 +205,39 @@ class PICNN(object):
         plt.savefig(join(savepath, 'iteration_{}.png'.format(k)))
 
     def predict(self, inputs):
-        x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
-        y = inputs[self.optimization_vars].values
+        x, y = self.get_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x, y)
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
 
+    def optimize(self, inputs, objective, n_iter=200):
+        inputs = inputs.copy()
+        x, y = self.get_inputs(inputs)
+        def _objective(y, x):
+            return objective(self.model.apply(self.pars, x, y))
+
+        if self.iterate is None:
+            @jit
+            def iterate(x, y, opt_state):
+                for i in range(10):
+                    values, grads = value_and_grad(_objective)(y, x)
+                    updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
+                    y = optax.apply_updates(y, updates)
+                return y, values
+            self.iterate = iterate
+
+        opt_state = self.optimizer.init(y)
+        for i in range(n_iter//10):
+            y, values = self.iterate(x, y, opt_state)
+            print('iter {}, loss: {:0.2e}'.format((i+1)*10, values))
+
+
+        inputs.loc[:, self.optimization_vars] = y
+        target_opt = self.predict(inputs)
+        return target_opt, y, values
+
+
+    def get_inputs(self, inputs):
+        x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
+        y = inputs[self.optimization_vars].values
+        return x, y
