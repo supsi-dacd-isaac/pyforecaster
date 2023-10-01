@@ -10,6 +10,7 @@ import numpy as np
 from functools import partial
 from os.path import join
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 def positive_lecun_normal(key, shape, dtype=jnp.float32):
     # Start with standard lecun_normal initialization
     stddev = 1. / jnp.sqrt(shape[1])
@@ -85,6 +86,7 @@ class PICNN(ScenarioGenerator):
     optimization_vars: list = ()
     pars: dict = None
     target_columns: list = None
+    scaler = None
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
@@ -167,6 +169,9 @@ class PICNN(ScenarioGenerator):
         return model
 
     def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000):
+
+        self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
+
         inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, target)
         self.target_columns = target.columns
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
@@ -254,6 +259,7 @@ class PICNN(ScenarioGenerator):
 
 
     def get_inputs(self, inputs):
+        inputs = self.scaler.transform(inputs)
         x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
         y = inputs[self.optimization_vars].values
         return x, y
