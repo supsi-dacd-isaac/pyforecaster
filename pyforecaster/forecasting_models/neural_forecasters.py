@@ -85,9 +85,22 @@ class PICNN(ScenarioGenerator):
     optimization_vars: list = ()
     pars: dict = None
     target_columns: list = None
-    def __init__(self, q_vect=None, val_ratio=None, nodes_at_step=None, **kwargs):
-        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step)
-        self.set_attr(kwargs)
+    def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
+                 load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
+                 n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
+                 q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+        self.set_attr({"learning_rate": learning_rate,
+                       "inverter_learning_rate": inverter_learning_rate,
+                       "batch_size": batch_size,
+                       "load_path": load_path,
+                       "n_hidden_x": n_hidden_x,
+                       "n_out": n_out,
+                       "n_layers": n_layers,
+                       "optimization_vars": optimization_vars,
+                       "pars": pars,
+                       "target_columns": target_columns
+                       })
         if self.load_path is not None:
             self.load(self.load_path)
 
@@ -153,7 +166,8 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def train(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000):
+    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000):
+        inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, target)
         self.target_columns = target.columns
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
         num_batches = inputs.shape[0] // batch_size
@@ -193,6 +207,7 @@ class PICNN(ScenarioGenerator):
 
                 k += 1
             self.pars = pars
+        super().fit(inputs_val, targets_val)
         return self
     def training_plots(self, x, y, target, savepath, k):
         n_instances = x.shape[0]
@@ -205,7 +220,7 @@ class PICNN(ScenarioGenerator):
             a.set_title('instance {}, iter {}'.format(i, k))
         plt.savefig(join(savepath, 'iteration_{}.png'.format(k)))
 
-    def predict(self, inputs):
+    def predict(self, inputs, **kwargs):
         x, y = self.get_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x, y)
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)

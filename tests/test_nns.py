@@ -4,7 +4,9 @@ import pandas as pd
 import numpy as np
 import logging
 from pyforecaster.forecasting_models.neural_forecasters import PICNN
+from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
+from pyforecaster.metrics import nmae
 from os import makedirs
 from os.path import exists
 import jax.numpy as jnp
@@ -15,17 +17,19 @@ class TestFormatDataset(unittest.TestCase):
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
-
-    def test_ffnn(self):
         formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
                                                                     relative_lags=True)
         formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
         formatter.add_target_transform(['all'], lags=-np.arange(144))
 
-        x, y = formatter.transform(self.data.iloc[:40000])
+        self.x, self.y = formatter.transform(self.data.iloc[:40000])
+        self.x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        self.y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+    def test_ffnn(self):
         # normalize inputs
-        x = (x - x.mean(axis=0)) / (x.std(axis=0)+0.01)
-        y = (y - y.mean(axis=0)) / (y.std(axis=0)+0.01)
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
 
         n_tr = int(len(x) * 0.8)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
@@ -42,7 +46,7 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).train(x_tr,
+               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
                                                                                            y_tr, x_te, y_te,
                                                                                            n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
@@ -57,15 +61,10 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_optimization(self):
-        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
-                                                                    relative_lags=True)
-        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
-        formatter.add_target_transform(['all'], lags=-np.arange(144))
 
-        x, y = formatter.transform(self.data.iloc[:40000])
         # normalize inputs
-        x = (x - x.mean(axis=0)) / (x.std(axis=0)+0.01)
-        y = (y - y.mean(axis=0)) / (y.std(axis=0)+0.01)
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
 
         n_tr = int(len(x) * 0.8)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
@@ -82,7 +81,7 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).train(x_tr,
+               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
                                                                                            y_tr, x_te, y_te,
                                                                                            n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
@@ -97,6 +96,23 @@ class TestFormatDataset(unittest.TestCase):
         plt.plot(y_te.iloc[100, :].values.ravel(), label='y_te')
         plt.plot(y_hat.values.ravel(), label='y_hat')
         plt.legend()
+
+    def test_hyperpar_optimization(self):
+
+        model = PICNN(optimization_vars=self.x.columns[:10], n_out=self.y.shape[1])
+
+        n_folds = 2
+        cv_idxs = []
+        for i in range(n_folds):
+            tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
+            te_idx = ~tr_idx
+            cv_idxs.append((tr_idx, te_idx))
+
+        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=1, metric=nmae,
+                                            cv=(f for f in cv_idxs),
+                                            param_space_fun=None,
+                                            hpo_type='full')
+
 
 if __name__ == '__main__':
     unittest.main()
