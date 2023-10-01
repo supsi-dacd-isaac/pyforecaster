@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pandas as pd
 from flax import linen as nn
 import pickle as pk
-
+from pyforecaster.forecaster import ScenarioGenerator
 from jax import random, grad, jit, value_and_grad, vmap
 import optax
 from tqdm import tqdm
@@ -72,7 +72,7 @@ def reproject_weights(params):
 
 
 
-class PICNN(object):
+class PICNN(ScenarioGenerator):
     "Partially input-convex neural network"
     learning_rate: float = 0.01
     inverter_learning_rate: float = 0.1
@@ -85,7 +85,8 @@ class PICNN(object):
     optimization_vars: list = ()
     pars: dict = None
     target_columns: list = None
-    def __init__(self, **kwargs):
+    def __init__(self, q_vect=None, val_ratio=None, nodes_at_step=None, **kwargs):
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step)
         self.set_attr(kwargs)
         if self.load_path is not None:
             self.load(self.load_path)
