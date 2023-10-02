@@ -87,10 +87,13 @@ class PICNN(ScenarioGenerator):
     pars: dict = None
     target_columns: list = None
     scaler = None
+    n_epochs:int = 10
+    savepath_tr_plots:str = None
+    stats_step: int = 50
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
-                 q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None, stats_step:int=50, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
                        "inverter_learning_rate": inverter_learning_rate,
@@ -101,7 +104,10 @@ class PICNN(ScenarioGenerator):
                        "n_layers": n_layers,
                        "optimization_vars": optimization_vars,
                        "pars": pars,
-                       "target_columns": target_columns
+                       "target_columns": target_columns,
+                       "n_epochs": n_epochs,
+                       "savepath_tr_plots":savepath_tr_plots,
+                       "stats_step": stats_step
                        })
         if self.load_path is not None:
             self.load(self.load_path)
@@ -168,8 +174,9 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000, rel_tol=1e-4):
-
+    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=1e-4):
+        n_epochs = n_epochs if n_epochs is not None else self.n_epochs
+        stats_step = stats_step if stats_step is not None else self.stats_step
         self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
 
         inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, target)
@@ -209,7 +216,8 @@ class PICNN(ScenarioGenerator):
 
                     print('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
                     if len(tr_loss) > 1:
-                        if savepath_tr_plots is not None:
+                        if savepath_tr_plots is not None or self.savepath_tr_plots is not None:
+                            savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
                             rand_idx_plt = np.random.choice(x_test.shape[0], 9)
                             self.training_plots(x_test[rand_idx_plt, :], y_test[rand_idx_plt, :],
                                                 target_test.values[rand_idx_plt, :], tr_loss, te_loss, savepath_tr_plots, k)
