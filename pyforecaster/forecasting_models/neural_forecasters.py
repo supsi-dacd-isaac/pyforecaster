@@ -283,9 +283,13 @@ class PICNN(ScenarioGenerator):
             print('iter {}, loss: {:0.2e}'.format((i+1)*10, values))
 
 
-        inputs.loc[:, self.optimization_vars] = y
+        inputs.loc[:, self.optimization_vars] = y.ravel()
+        inputs.loc[:, [c for c in inputs.columns if c not in  self.optimization_vars]] = x.ravel()
+        inputs.loc[:, :] = self.scaler.inverse_transform(inputs.values)
         target_opt = self.predict(inputs)
-        return target_opt, y, values
+
+        y_opt = inputs.loc[:, self.optimization_vars].values.ravel()
+        return y_opt, inputs, target_opt, values
 
 
     def get_inputs(self, inputs):

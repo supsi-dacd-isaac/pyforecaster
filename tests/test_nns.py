@@ -81,21 +81,28 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
+               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3).fit(x_tr,
                                                                                            y_tr,
                                                                                            n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
                                                                                            stats_step=40)
 
         objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + jnp.sum(ctrl**2)
-        y_hat_opt, ctrl_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=200)
+        ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=2000)
         y_hat = m.predict(x_te.iloc[[100], :])
+
+        x_freeze = x_te.iloc[[100], :].copy()
+        x_freeze[optimization_vars] = ctrl_opt.ravel()
+
+        y_hat_opt_2 = m.predict(x_freeze)
 
         plt.figure()
         plt.plot(y_hat_opt.values.ravel(), label='y_hat_opt')
+        plt.plot(y_hat_opt_2.values.ravel(), label='y_hat_opt_2')
         plt.plot(y_te.iloc[100, :].values.ravel(), label='y_te')
         plt.plot(y_hat.values.ravel(), label='y_hat')
         plt.legend()
+        assert  (y_hat_opt_2-y_hat_opt).sum().sum() == 0
 
     def test_hyperpar_optimization(self):
 
