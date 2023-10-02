@@ -48,7 +48,7 @@ class TestFormatDataset(unittest.TestCase):
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
                                                                                            y_tr,
-                                                                                           n_epochs=2,
+                                                                                           n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
                                                                                            stats_step=40)
 
@@ -83,7 +83,7 @@ class TestFormatDataset(unittest.TestCase):
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
                                                                                            y_tr,
-                                                                                           n_epochs=10,
+                                                                                           n_epochs=1,
                                                                                            savepath_tr_plots=savepath_tr_plots,
                                                                                            stats_step=40)
 

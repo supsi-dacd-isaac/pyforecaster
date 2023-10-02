@@ -176,19 +176,19 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def fit(self, inputs, target, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
+    def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
         self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
 
-        inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, target)
-        self.target_columns = target.columns
+        inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, targets)
+        self.target_columns = targets.columns
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
         num_batches = inputs.shape[0] // batch_size
 
         x, y = self.get_inputs(inputs)
-        target = target.values
+        targets = targets.values
 
         n_inputs_opt = len(self.optimization_vars)
         n_inputs_x =  inputs.shape[1] - n_inputs_opt
@@ -200,11 +200,12 @@ class PICNN(ScenarioGenerator):
         k = 0
         finished = False
         for epoch in range(n_epochs):
+            rand_idx_all = np.random.choice(inputs.shape[0], inputs.shape[0], replace=False)
             for i in tqdm(range(num_batches)):
-                rand_idx = np.random.choice(inputs.shape[0], batch_size)
+                rand_idx = rand_idx_all[i*batch_size:(i+1)*batch_size]
                 x_batch = x[rand_idx, :]
                 y_batch = y[rand_idx, :]
-                target_batch = target[rand_idx, :]
+                target_batch = targets[rand_idx, :]
 
                 pars, opt_state, values = self.train_step(pars, opt_state, x_batch, y_batch, target_batch)
                 pars = reproject_weights(pars)
