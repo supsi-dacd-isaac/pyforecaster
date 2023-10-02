@@ -174,7 +174,7 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=1e-4):
+    def fit(self, inputs, target, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=1e-4):
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
         self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
@@ -206,11 +206,11 @@ class PICNN(ScenarioGenerator):
                 pars, opt_state, values = self.train_step(pars, opt_state, x_batch, y_batch, target_batch)
                 pars = reproject_weights(pars)
 
-                if k % stats_step == 0 and k > 0 and inputs_te is not None and target_test is not None:
+                if k % stats_step == 0 and k > 0:
                     self.pars = pars
-                    x_test = inputs_te[[c for c in inputs_te.columns if not c in self.optimization_vars]].values
-                    y_test = inputs_te[self.optimization_vars].values
-                    loss = self.loss_fn(pars, x_test[:batch_size, :], y_test[:batch_size, :], target_test.values[:batch_size, :])
+                    x_test = inputs_val[[c for c in inputs_val.columns if not c in self.optimization_vars]].values
+                    y_test = inputs_val[self.optimization_vars].values
+                    loss = self.loss_fn(pars, x_test[:batch_size, :], y_test[:batch_size, :], targets_val.values[:batch_size, :])
                     te_loss.append(np.array(jnp.mean(loss)))
                     tr_loss.append(np.array(jnp.mean(values)))
 
@@ -220,7 +220,7 @@ class PICNN(ScenarioGenerator):
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
                             rand_idx_plt = np.random.choice(x_test.shape[0], 9)
                             self.training_plots(x_test[rand_idx_plt, :], y_test[rand_idx_plt, :],
-                                                target_test.values[rand_idx_plt, :], tr_loss, te_loss, savepath_tr_plots, k)
+                                                targets_val.values[rand_idx_plt, :], tr_loss, te_loss, savepath_tr_plots, k)
 
                         rel_tr_err = (tr_loss[-2] - tr_loss[-1]) / np.abs(tr_loss[-2] + 1e-6)
                         rel_te_err = (te_loss[-2] - te_loss[-1]) / np.abs(te_loss[-2] + 1e-6)
