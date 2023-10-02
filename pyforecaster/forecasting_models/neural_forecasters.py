@@ -168,7 +168,7 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000):
+    def fit(self, inputs, target, inputs_te=None, target_test=None, n_epochs=10, savepath_tr_plots=None, stats_step=5000, rel_tol=1e-4):
 
         self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
 
@@ -188,6 +188,7 @@ class PICNN(ScenarioGenerator):
 
         tr_loss, te_loss = [], []
         k = 0
+        finished = False
         for epoch in range(n_epochs):
             for i in tqdm(range(num_batches)):
                 rand_idx = np.random.choice(inputs.shape[0], batch_size)
@@ -205,16 +206,27 @@ class PICNN(ScenarioGenerator):
                     loss = self.loss_fn(pars, x_test[:batch_size, :], y_test[:batch_size, :], target_test.values[:batch_size, :])
                     te_loss.append(np.array(jnp.mean(loss)))
                     tr_loss.append(np.array(jnp.mean(values)))
-                    if savepath_tr_plots is not None:
-                        rand_idx_plt = np.random.choice(x_test.shape[0], 9)
-                        self.training_plots(x_test[rand_idx_plt, :], y_test[rand_idx_plt, :], target_test.values[rand_idx_plt, :], savepath_tr_plots, k)
-                    print('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
 
+                    print('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
+                    if len(tr_loss) > 1:
+                        if savepath_tr_plots is not None:
+                            rand_idx_plt = np.random.choice(x_test.shape[0], 9)
+                            self.training_plots(x_test[rand_idx_plt, :], y_test[rand_idx_plt, :],
+                                                target_test.values[rand_idx_plt, :], tr_loss, te_loss, savepath_tr_plots, k)
+
+                        rel_tr_err = (tr_loss[-2] - tr_loss[-1]) / np.abs(tr_loss[-2] + 1e-6)
+                        rel_te_err = (te_loss[-2] - te_loss[-1]) / np.abs(te_loss[-2] + 1e-6)
+                        if rel_te_err<rel_tol:
+                            finished = True
+                            break
                 k += 1
+            if finished:
+                break
+
             self.pars = pars
         super().fit(inputs_val, targets_val)
         return self
-    def training_plots(self, x, y, target, savepath, k):
+    def training_plots(self, x, y, target, tr_loss, te_loss, savepath, k):
         n_instances = x.shape[0]
         y_hat = self.predict_batch(self.pars, x, y)
         # make the appropriate numbers of subplots disposed as a square
@@ -223,7 +235,14 @@ class PICNN(ScenarioGenerator):
             a.plot(y_hat[i, :])
             a.plot(target[i, :])
             a.set_title('instance {}, iter {}'.format(i, k))
-        plt.savefig(join(savepath, 'iteration_{}.png'.format(k)))
+        plt.savefig(join(savepath, 'examples_iter_{:05d}.png'.format(k)))
+
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(np.array(tr_loss), label='tr_loss')
+        ax.plot(np.array(te_loss), label='te_loss')
+        ax.legend()
+        plt.savefig(join(savepath, 'losses_iter_{:05d}.png'.format(k)))
+
 
     def predict(self, inputs, **kwargs):
         x, y = self.get_inputs(inputs)
