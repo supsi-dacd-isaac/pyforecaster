@@ -260,11 +260,11 @@ class PICNN(ScenarioGenerator):
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
 
-    def optimize(self, inputs, objective, n_iter=200):
+    def optimize(self, inputs, objective, n_iter=200, **objective_kwargs):
         inputs = inputs.copy()
         x, y = self.get_inputs(inputs)
         def _objective(y, x):
-            return objective(self.model.apply(self.pars, x, y))
+            return objective(self.model.apply(self.pars, x, y), y, **objective_kwargs)
 
         if self.iterate is None:
             @jit
