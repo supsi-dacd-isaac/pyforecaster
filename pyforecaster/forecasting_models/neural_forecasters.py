@@ -90,10 +90,11 @@ class PICNN(ScenarioGenerator):
     n_epochs:int = 10
     savepath_tr_plots:str = None
     stats_step: int = 50
+    rel_tol: float = 1e-4
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
-                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None, stats_step:int=50, **scengen_kwgs):
+                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None, stats_step:int=50, rel_tol:float=1e-4, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
                        "inverter_learning_rate": inverter_learning_rate,
@@ -107,7 +108,8 @@ class PICNN(ScenarioGenerator):
                        "target_columns": target_columns,
                        "n_epochs": n_epochs,
                        "savepath_tr_plots":savepath_tr_plots,
-                       "stats_step": stats_step
+                       "stats_step": stats_step,
+                       "rel_tol":rel_tol
                        })
         if self.load_path is not None:
             self.load(self.load_path)
@@ -174,7 +176,8 @@ class PICNN(ScenarioGenerator):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
         return model
 
-    def fit(self, inputs, target, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=1e-4):
+    def fit(self, inputs, target, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
+        rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
         self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
