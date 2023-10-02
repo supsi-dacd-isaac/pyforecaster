@@ -211,8 +211,7 @@ class PICNN(ScenarioGenerator):
 
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
-                    x_test = inputs_val[[c for c in inputs_val.columns if not c in self.optimization_vars]].values
-                    y_test = inputs_val[self.optimization_vars].values
+                    x_test, y_test = self.get_inputs(inputs_val)
                     loss = self.loss_fn(pars, x_test[:batch_size, :], y_test[:batch_size, :], targets_val.values[:batch_size, :])
                     te_loss.append(np.array(jnp.mean(loss)))
                     tr_loss.append(np.array(jnp.mean(values)))
