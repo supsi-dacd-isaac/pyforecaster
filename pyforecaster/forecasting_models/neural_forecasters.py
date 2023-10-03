@@ -201,7 +201,7 @@ class PICNN(ScenarioGenerator):
         finished = False
         for epoch in range(n_epochs):
             rand_idx_all = np.random.choice(inputs.shape[0], inputs.shape[0], replace=False)
-            for i in tqdm(range(num_batches)):
+            for i in tqdm(range(num_batches), desc='epoch {}/{}'.format(epoch, n_epochs)):
                 rand_idx = rand_idx_all[i*batch_size:(i+1)*batch_size]
                 x_batch = x[rand_idx, :]
                 y_batch = y[rand_idx, :]
@@ -217,7 +217,7 @@ class PICNN(ScenarioGenerator):
                     te_loss.append(np.array(jnp.mean(loss)))
                     tr_loss.append(np.array(jnp.mean(values)))
 
-                    print('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
+                    self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
                     if len(tr_loss) > 1:
                         if savepath_tr_plots is not None or self.savepath_tr_plots is not None:
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
@@ -240,6 +240,7 @@ class PICNN(ScenarioGenerator):
     def training_plots(self, x, y, target, tr_loss, te_loss, savepath, k):
         n_instances = x.shape[0]
         y_hat = self.predict_batch(self.pars, x, y)
+
         # make the appropriate numbers of subplots disposed as a square
         fig, ax = plt.subplots(int(np.ceil(np.sqrt(n_instances))), int(np.ceil(np.sqrt(n_instances))))
         for i, a  in enumerate(ax.ravel()):
@@ -261,7 +262,8 @@ class PICNN(ScenarioGenerator):
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
 
-    def optimize(self, inputs, objective, n_iter=200, **objective_kwargs):
+    def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, **objective_kwargs):
+        rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         inputs = inputs.copy()
         x, y = self.get_inputs(inputs)
         def _objective(y, x):
@@ -278,10 +280,20 @@ class PICNN(ScenarioGenerator):
             self.iterate = iterate
 
         opt_state = self.optimizer.init(y)
+        y, values_old = self.iterate(x, y, opt_state)
+        values_init = np.copy(values_old)
+
+        # do 10 iterations at a time to speed up, check for convergence
         for i in range(n_iter//10):
             y, values = self.iterate(x, y, opt_state)
-            print('iter {}, loss: {:0.2e}'.format((i+1)*10, values))
+            rel_improvement = (values_old - values) / (np.abs(values_old)+ 1e-6)
+            values_old = values
+            if rel_improvement < rel_tol:
+                break
 
+        self.logger.info('optimization terminated at iter {}, final objective value: {:0.2e} '
+                         'rel improvement: {:0.2e}'.format((i+1)*10, values,
+                                                          (values_init-values)/(np.abs(values_init)+1e-6)))
 
         inputs.loc[:, self.optimization_vars] = y.ravel()
         inputs.loc[:, [c for c in inputs.columns if c not in  self.optimization_vars]] = x.ravel()
