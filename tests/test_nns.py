@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN
+from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -56,6 +56,13 @@ class TestFormatDataset(unittest.TestCase):
         m.save('tests/results/ffnn_model.pk')
         n = PICNN(load_path='tests/results/ffnn_model.pk')
         y_hat_2 = n.predict(x_te.iloc[:100, :])
+
+        m = RecStablePICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=1, n_layers=3, optimization_vars=optimization_vars).fit(x_tr,y_tr.iloc[:, [0]],
+                                                                                            n_epochs=1,
+                                                                                            savepath_tr_plots=savepath_tr_plots,
+                                                                                            stats_step=40)
+        m.predict(x_te.iloc[:100, :])
 
         assert np.all(np.sum(y_hat_1-y_hat_2) == 0)
 

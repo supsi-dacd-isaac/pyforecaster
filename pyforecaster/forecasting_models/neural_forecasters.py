@@ -19,12 +19,19 @@ def positive_lecun_normal(key, shape, dtype=jnp.float32):
     return jnp.abs(weights)/10
 
 
+def identity(x):
+    return x
+
+
 class PICNNLayer(nn.Module):
+
     features_x: int
     features_y: int
     features_out: int
     n_layer: int = 0
     prediction_layer: bool = False
+    activation: callable = identity
+
     @nn.compact
     def __call__(self, y, u, z):
         # Traditional NN component
@@ -32,8 +39,8 @@ class PICNNLayer(nn.Module):
         u_next = nn.relu(u_next)
 
         # Input-Convex component without bias for the element-wise multiplicative interactions
-        wzu = nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u)
-        wyu = nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u)
+        wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
+        wyu = self.activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
 
         z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz',kernel_init=positive_lecun_normal)(z * wzu)
         y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
@@ -49,27 +56,27 @@ class PartiallyICNN(nn.Module):
     features_x: int
     features_y: int
     features_out: int
-
+    activation: callable = identity
     @nn.compact
     def __call__(self, x, y):
         u = x
         z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
         for i in range(self.num_layers):
             prediction_layer = i == self.num_layers -1
-            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out, n_layer=i, prediction_layer=prediction_layer)(y, u, z)
+            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
+                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation)(y, u, z)
         return z
 
 
-
-
-def reproject_weights(params):
+def reproject_weights(params, rec_stable=False):
     # Loop through each layer and reproject the input-convex weights
     for layer_name in params['params']:
         if 'PICNNLayer' in layer_name:
             params['params'][layer_name]['wzu']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wzu']['kernel'])
-            #params[layer_name]['wyu']['kernel'] = jnp.maximum(0, params[layer_name]['wyu']['kernel'])
-    return params
+            if rec_stable:
+                params['params'][layer_name]['wyu']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wyu']['kernel'])
 
+    return params
 
 
 
@@ -91,6 +98,7 @@ class PICNN(ScenarioGenerator):
     savepath_tr_plots:str = None
     stats_step: int = 50
     rel_tol: float = 1e-4
+    rec_stable: bool = False
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
@@ -188,7 +196,10 @@ class PICNN(ScenarioGenerator):
         num_batches = inputs.shape[0] // batch_size
 
         x, y = self.get_inputs(inputs)
+        x_val, y_val = self.get_inputs(inputs_val)
+
         targets = targets.values
+        targets_val = targets_val.values
 
         n_inputs_opt = len(self.optimization_vars)
         n_inputs_x =  inputs.shape[1] - n_inputs_opt
@@ -196,7 +207,7 @@ class PICNN(ScenarioGenerator):
         opt_state = self.optimizer.init(pars)
 
 
-        tr_loss, te_loss = [], []
+        tr_loss, val_loss = [], []
         k = 0
         finished = False
         for epoch in range(n_epochs):
@@ -208,25 +219,26 @@ class PICNN(ScenarioGenerator):
                 target_batch = targets[rand_idx, :]
 
                 pars, opt_state, values = self.train_step(pars, opt_state, x_batch, y_batch, target_batch)
-                pars = reproject_weights(pars)
+                pars = reproject_weights(pars, rec_stable=self.rec_stable)
 
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
-                    x_test, y_test = self.get_inputs(inputs_val)
-                    loss = self.loss_fn(pars, x_test[:batch_size, :], y_test[:batch_size, :], targets_val.values[:batch_size, :])
-                    te_loss.append(np.array(jnp.mean(loss)))
-                    tr_loss.append(np.array(jnp.mean(values)))
 
-                    self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], te_loss[-1]))
+                    te_loss_i = self.loss_fn(pars, x_val, y_val, targets_val)
+                    tr_loss_i = self.loss_fn(pars, x, y, targets)
+                    val_loss.append(np.array(jnp.mean(te_loss_i)))
+                    tr_loss.append(np.array(jnp.mean(tr_loss_i)))
+
+                    self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], val_loss[-1]))
                     if len(tr_loss) > 1:
                         if savepath_tr_plots is not None or self.savepath_tr_plots is not None:
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
-                            rand_idx_plt = np.random.choice(x_test.shape[0], 9)
-                            self.training_plots(x_test[rand_idx_plt, :], y_test[rand_idx_plt, :],
-                                                targets_val.values[rand_idx_plt, :], tr_loss, te_loss, savepath_tr_plots, k)
+                            rand_idx_plt = np.random.choice(x_val.shape[0], 9)
+                            self.training_plots(x_val[rand_idx_plt, :], y_val[rand_idx_plt, :],
+                                                targets_val.values[rand_idx_plt, :], tr_loss, val_loss, savepath_tr_plots, k)
 
                         rel_tr_err = (tr_loss[-2] - tr_loss[-1]) / np.abs(tr_loss[-2] + 1e-6)
-                        rel_te_err = (te_loss[-2] - te_loss[-1]) / np.abs(te_loss[-2] + 1e-6)
+                        rel_te_err = (val_loss[-2] - val_loss[-1]) / np.abs(val_loss[-2] + 1e-6)
                         if rel_te_err<rel_tol:
                             finished = True
                             break
@@ -309,3 +321,20 @@ class PICNN(ScenarioGenerator):
         x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
         y = inputs[self.optimization_vars].values
         return x, y
+
+
+class RecStablePICNN(PICNN):
+    rec_stable = True
+    def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
+                 load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
+                 n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
+                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None,
+                 stats_step:int=50, rel_tol:float=1e-4, **scengen_kwgs):
+        super().__init__(learning_rate, inverter_learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers,
+                         optimization_vars, pars, target_columns, q_vect, val_ratio, nodes_at_step, n_epochs,
+                         savepath_tr_plots, stats_step, rel_tol, **scengen_kwgs)
+
+    def set_arch(self):
+        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
+                              features_out=self.n_out, activation=nn.relu)
+        return model
