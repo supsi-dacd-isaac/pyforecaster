@@ -199,7 +199,6 @@ class PICNN(ScenarioGenerator):
         x_val, y_val = self.get_inputs(inputs_val)
 
         targets = targets.values
-        targets_val = targets_val.values
 
         n_inputs_opt = len(self.optimization_vars)
         n_inputs_x =  inputs.shape[1] - n_inputs_opt
@@ -224,7 +223,7 @@ class PICNN(ScenarioGenerator):
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
 
-                    te_loss_i = self.loss_fn(pars, x_val, y_val, targets_val)
+                    te_loss_i = self.loss_fn(pars, x_val, y_val, targets_val.values)
                     tr_loss_i = self.loss_fn(pars, x, y, targets)
                     val_loss.append(np.array(jnp.mean(te_loss_i)))
                     tr_loss.append(np.array(jnp.mean(tr_loss_i)))
