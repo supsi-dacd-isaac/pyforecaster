@@ -223,5 +223,22 @@ class TestFormatDataset(unittest.TestCase):
         df = formatter.transform(self.x2, time_features=True, holidays=True, prov='ZH')
 
 
+
+    def test_global_multiindex(self):
+        x_private = pd.DataFrame(np.random.randn(500, 15), index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'), columns=pd.MultiIndex.from_product([['b1', 'b2', 'b3'], ['a', 'b', 'c', 'd', 'e']]))
+        x_shared =  pd.DataFrame(np.random.randn(500, 5), index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'), columns=pd.MultiIndex.from_product([['shared'], [0, 1, 2, 3, 4]]))
+
+        df_mi = pd.concat([x_private, x_shared], axis=1)
+
+        formatter = pyf.Formatter(logger=self.logger).add_transform([0,1 , 2, 3, 4], lags=np.arange(10), agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_transform(['a','b', 'c', 'd'], lags=np.arange(10),
+                                                                    agg_freq='20min',
+                                                                    relative_lags=True)
+        formatter.add_target_transform(['target'], ['mean'], agg_bins=[-10, -15, -20])
+        df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -31,7 +31,7 @@ class Formatter:
                         recent data if you don't have at prediction time.
     """
     def __init__(self, logger=None, augment=True, dt=None):
-        self.logger = get_logger() if logger is None else logger
+        self.logger = get_logger(level=logging.WARNING) if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
         self.target_transformers = []
@@ -121,18 +121,34 @@ class Formatter:
             assert np.unique([tr.names for tr in self.target_transformers]) == 'target', 'When using global_form option,' \
                                                                                          ' the only admissible target is' \
                                                                                          ' "target"'
-
             transformed_columns = [tr.names for tr in self.transformers]
             transformed_columns = [item for sublist in transformed_columns for item in sublist]
             transformed_columns = list(set(np.unique(transformed_columns)) - {'target'})
+            # if x is multiindex pd.DataFrame do something
+            if isinstance(x.columns, pd.MultiIndex):
+                # find columns names at level 0 that contains the targets
+                c_l_0 = x.columns.get_level_values(0).unique()
+                private_cols_l0 = [c for c in c_l_0 if not np.all([str(t) in transformed_columns for t in x[c].columns])]
+                shared_cols_l0 = list(set(c_l_0) - set(private_cols_l0))
+                x_shared = x[shared_cols_l0].droplevel(0, 1)
+                dfs = []
+                for p in private_cols_l0:
+                    x_p = x[p]
+                    target_name_l1 = [c for c in x_p.columns if c not in transformed_columns]
+                    assert len(target_name_l1) == 1, 'something went wrong, there should be only one target column. You must add a transform for all the non-target columns'
+                    target_name_l1 = target_name_l1[0]
+                    x_p = x_p.rename({target_name_l1:'target'}, axis=1)
+                    dfs.append(pd.concat([x_p, x_shared, pd.DataFrame(p, columns=['name'], index=x.index)], axis=1))
+            else:
 
-            independent_targets = [c for c in x.columns if c not in transformed_columns]
-            dfs = []
-            for c in independent_targets:
-                dfs.append(pd.concat(
-                    [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
-                     pd.DataFrame(c, columns=['name'], index=x.index)],
-                    axis=1))
+                independent_targets = [c for c in x.columns if c not in transformed_columns]
+                dfs = []
+                for c in independent_targets:
+                    dfs.append(pd.concat(
+                        [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
+                         pd.DataFrame(c, columns=['name'], index=x.index)],
+                        axis=1))
+
             n_cpu = cpu_count()
             n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
             xs, ys = [], []

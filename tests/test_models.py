@@ -37,7 +37,7 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
-        hw = HoltWinters(periods=self.periods, n_sa=self.n_sa, optimization_budget=100, q_vect=np.arange(11)/10, target_name='target').fit(pd.concat([x_tr, y_tr], axis=1), y_tr)
+        hw = HoltWinters(periods=self.periods, n_sa=self.n_sa, optimization_budget=10, q_vect=np.arange(11)/10, target_name='target').fit(pd.concat([x_tr, y_tr], axis=1), y_tr)
         #hw.reinit(x_tr['target'])
         y_hat = hw.predict(pd.concat([x_te,y_te], axis=1))
 
@@ -57,7 +57,7 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
-        hw = HoltWinters(periods=self.periods, n_sa=self.n_sa, optimization_budget=50, q_vect=np.arange(11)/10,
+        hw = HoltWinters(periods=self.periods, n_sa=self.n_sa, optimization_budget=5, q_vect=np.arange(11)/10,
                          target_name='target').fit(None, y_tr)
         y_hat = hw.predict(y_te)
 
@@ -80,7 +80,7 @@ class TestFormatDataset(unittest.TestCase):
         n_tr = int(len(self.x) * 0.5)
         df_tr, df_te = self.data.iloc[:n_tr], self.data.iloc[n_tr:]
 
-        hw = HoltWinters(periods=[144, 144 * 7], n_sa=144, optimization_budget=50, q_vect=np.arange(11) / 10,
+        hw = HoltWinters(periods=[144, 144 * 7], n_sa=144, optimization_budget=5, q_vect=np.arange(11) / 10,
                          target_name='all').fit(df_tr, df_tr['all'])
         hw_multi = HoltWintersMulti(periods=[144, 144 * 7], n_sa=144, optimization_budget=50, q_vect=np.arange(11) / 10,
                          target_name='all', models_periods=np.array([1,2,144])).fit(df_tr, df_tr['all'])
