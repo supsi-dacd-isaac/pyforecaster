@@ -156,14 +156,16 @@ class Formatter:
                 # simulate transform on one fold single core to retrieve metadata (ray won't persist class attributes)
                 self._simulate_transform(dfs[0])
                 for i in tqdm(range(n_folds)):
-                    x, y = fdf_parallel(f=self._transform, df=dfs[n_cpu * i:n_cpu * (i + 1)])
+                    x, y = fdf_parallel(f=partial(self._transform, time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs), df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     x = reduce_mem_usage(x, use_ray=True)
                     y = reduce_mem_usage(y, use_ray=True)
                     xs.append(x)
                     ys.append(y)
             else:
                 for df_i in dfs:
-                    x, y = self._transform(df_i)
+                    x, y = self._transform(df_i,time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs)
                     x = reduce_mem_usage(x, use_ray=True, parallel=False)
                     y = reduce_mem_usage(y, use_ray=True, parallel=False)
                     xs.append(x)
