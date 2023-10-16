@@ -7,6 +7,7 @@ from multiprocessing import Pool, cpu_count
 import sharedmem
 from time import time
 from typing import Union
+from pyforecaster.utilities import get_logger
 
 
 def mapper(f, pars, *argv, sharedmem=False, **kwarg):
@@ -22,12 +23,6 @@ def mapper(f, pars, *argv, sharedmem=False, **kwarg):
     pool.join()
     return a
 
-
-def get_logger(level=logging.INFO):
-    logger = logging.getLogger()
-    logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s')
-    logger.setLevel(level)
-    return logger
 
 
 def array_split(df, n_splits, axis=0):
@@ -172,7 +167,7 @@ def reduce_mem_usage(df, parallel=True, logger=None, use_ray=True):
     """ iterate through all the columns of a dataframe and modify the data type
         to reduce memory usage.
     """
-    logger = logger if logger is not None else get_logger()
+    logger = logger if logger is not None else get_logger(name='reduce_mem_usage')
 
     start_mem = df.memory_usage().sum() / 1024 ** 2
     logger.info('Memory usage of dataframe is {:.2f} MB'.format(start_mem))

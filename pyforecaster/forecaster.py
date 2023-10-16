@@ -17,7 +17,7 @@ class ScenarioGenerator(object):
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, additional_node=additional_node, **scengen_kwgs)
         self.val_ratio = val_ratio
         self.err_distr = {}
-        self.logger = get_logger() if logger is None else logger
+        self.logger = get_logger(name='Forecaster', level='WARNING') if logger is None else logger
         self.n_scen_fit = n_scen_fit
         self.additional_node = additional_node
 

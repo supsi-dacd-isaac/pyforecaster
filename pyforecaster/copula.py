@@ -4,20 +4,14 @@ import logging
 from sklearn.covariance import GraphicalLasso, GraphicalLassoCV, ShrunkCovariance
 from scipy.stats import multivariate_normal, norm
 import matplotlib.pyplot as plt
-
-
-def get_logger(level=logging.INFO):
-    logger = logging.getLogger()
-    logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s')
-    logger.setLevel(level)
-    return logger
+from pyforecaster.utilities import get_logger
 
 
 class GaussianCopula:
     def __init__(self, cov_est_method='vanilla', logger=None):
         self.pars = None
         self.cov_est_method = cov_est_method
-        self.logger = logger if logger is not None else get_logger()
+        self.logger = logger if logger is not None else get_logger(name='Copula')
         self.dim = None
 
     def fit(self, y, x=None, do_plot=True):

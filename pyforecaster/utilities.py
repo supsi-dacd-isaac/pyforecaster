@@ -17,8 +17,8 @@ def convert_multiindex_pandas_to_tensor(df, zero_first=True):
     else:
         return np.swapaxes(df.values.reshape(-1, c_shape[0], c_shape[1]), 1, 2)
 
-def get_logger(level=logging.INFO):
-    logger = logging.getLogger()
+def get_logger(level=logging.INFO, name='pyforecaster'):
+    logger = logging.getLogger(name)
     logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s')
     logger.setLevel(level)
     return logger

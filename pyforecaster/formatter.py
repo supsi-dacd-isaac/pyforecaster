@@ -15,14 +15,7 @@ from tqdm import tqdm
 
 from pyforecaster.big_data_utils import fdf_parallel, reduce_mem_usage
 from pyforecaster.plot_utils import ts_animation_bars
-
-
-def get_logger(level=logging.INFO):
-
-    logger = logging.getLogger()
-    logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s')
-    logger.setLevel(level)
-    return logger
+from pyforecaster.utilities import get_logger
 
 
 class Formatter:
@@ -31,7 +24,7 @@ class Formatter:
                         recent data if you don't have at prediction time.
     """
     def __init__(self, logger=None, augment=True, dt=None):
-        self.logger = get_logger(level=logging.WARNING) if logger is None else logger
+        self.logger = get_logger(level=logging.WARNING, name='Formatter') if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
         self.target_transformers = []

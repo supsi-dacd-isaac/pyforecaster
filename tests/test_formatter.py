@@ -41,26 +41,26 @@ class TestFormatDataset(unittest.TestCase):
 
     def test_transformer(self):
 
-        tr = pyf.Transformer([0], ['mean'], logger=self.logger)
+        tr = pyf.Transformer([0], ['mean'])
         _ = tr.transform(self.x)
-        tr = pyf.Transformer([0], ['mean'], agg_freq='2h', logger=self.logger)
+        tr = pyf.Transformer([0], ['mean'], agg_freq='2h' )
         _ = tr.transform(self.x)
-        tr = pyf.Transformer([0], ['mean'], agg_freq='2h', lags=[1, 2, -1, -2], logger=self.logger)
+        tr = pyf.Transformer([0], ['mean'], agg_freq='2h', lags=[1, 2, -1, -2])
         _ = tr.transform(self.x)
-        tr = pyf.Transformer([0, 1], ['mean', 'max'], '3h', [-1, -2], logger=self.logger)
+        tr = pyf.Transformer([0, 1], ['mean', 'max'], '3h', [-1, -2])
         _ = tr.transform(self.x)
-        tr = pyf.Transformer([0, 1], ['mean', 'max', lambda x: np.sum(x**2)-1], '3h', [-1, -2], logger=self.logger)
+        tr = pyf.Transformer([0, 1], ['mean', 'max', lambda x: np.sum(x**2)-1], '3h', [-1, -2])
         _ = tr.transform(self.x)
-        tr = pyf.Transformer([0], agg_freq='3h', lags=[-1, -2, -3], logger=self.logger)
+        tr = pyf.Transformer([0], agg_freq='3h', lags=[-1, -2, -3])
         _ = tr.transform(self.x, augment=False)
 
-        tr = pyf.Transformer([0], ['mean'], '3h', [-1], logger=self.logger)
+        tr = pyf.Transformer([0], ['mean'], '3h', [-1])
         x_tr = tr.transform(self.x, augment=False)
 
         assert x_tr.shape[1] == 1
 
     def test_time_zone_features(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
         formatter.add_target_transform([3], lags=np.arange(10))
         x_tr, y_tr = formatter.transform(self.x)
         assert 'utc_offset' in x_tr.columns
@@ -69,7 +69,7 @@ class TestFormatDataset(unittest.TestCase):
         assert 'utc_offset' in x_tr.columns
         assert np.all(x_tr['utc_offset'] == 0)
 
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
         formatter.add_target_transform([3], lags=np.arange(10))
         x_tr, y_tr = formatter.transform(self.x)
         assert 'utc_offset' not in x_tr.columns
@@ -81,7 +81,7 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_formatter(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10])
         formatter.add_target_transform([3], lags=np.arange(10))
         formatter.plot_transformed_feature(self.x, 3)
         formatter.plot_transformed_feature(self.x, 0)
@@ -89,7 +89,7 @@ class TestFormatDataset(unittest.TestCase):
         assert x_tr.isna().sum().sum() == 0 and y_tr.isna().sum().sum() == 0 and y_tr.shape[0] == x_tr.shape[0]
 
     def test_tkfcv_simulate_transform(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
                                                                     lags=[-1, -2, -10])
         formatter.add_target_transform([3], lags=np.arange(10))
         folds_df = formatter.time_kfcv(self.x.index, 4, 3, x=self.x)
@@ -97,7 +97,7 @@ class TestFormatDataset(unittest.TestCase):
             assert np.sum(dfi[0]) + np.sum(dfi[1]) < len(self.x) -1
 
     def test_tkfcv_pretransform(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10], relative_lags=True)
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h', lags=[-1,-2, -10], relative_lags=True)
         formatter.add_target_transform([3], lags=np.arange(10))
         formatter.transform(self.x2)
         folds_df = formatter.time_kfcv(self.x2.index, 4, 3)
@@ -105,7 +105,7 @@ class TestFormatDataset(unittest.TestCase):
             assert np.sum(dfi[0]) + np.sum(dfi[1]) < len(self.x2) -1
 
     def test_prune_at_stepahead(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3], ['mean', 'max'], agg_freq='2h',
                                                                     lags=np.arange(24*3), relative_lags=False)
         formatter.add_target_transform([3], lags=-np.arange(10)-1)
         x_transformed, y_transformed = formatter.transform(self.x2)
@@ -120,7 +120,7 @@ class TestFormatDataset(unittest.TestCase):
         You should see 30 steps of future green target following two series of 2 points.
         :return:
         """
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0, 1, 2], ['mean', 'min'], agg_freq='80min', lags=np.arange(2), relative_lags=True)
+        formatter = pyf.Formatter().add_transform([0, 1, 2], ['mean', 'min'], agg_freq='80min', lags=np.arange(2), relative_lags=True)
         formatter.add_target_transform([2], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x3)
         formatter.plot_transformed_feature(self.x3, 2)
@@ -131,7 +131,7 @@ class TestFormatDataset(unittest.TestCase):
         You should see min-max transform enveloping the signal
         :return:
         """
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=False)
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
@@ -139,7 +139,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.plot_transformed_feature(self.x2, 0, frames=100)
 
         # test nested transform (much faster)
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=True)
         formatter.add_target_transform([0], lags=-np.arange(30) - 1)
@@ -147,7 +147,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.plot_transformed_feature(self.x2, 0, frames=100)
 
 
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], ['min', 'max'], agg_bins=[0, 1, 4, 10])
+        formatter = pyf.Formatter().add_transform([0], ['min', 'max'], agg_bins=[0, 1, 4, 10])
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
         formatter.add_transform([0], ['mean'], lags=np.arange(10), agg_freq='20min', relative_lags=True)
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
@@ -160,7 +160,7 @@ class TestFormatDataset(unittest.TestCase):
 
     def test_speed(self):
         t0 = time()
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], ['mean'], lags=np.arange(10),
+        formatter = pyf.Formatter().add_transform([0], ['mean'], lags=np.arange(10),
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=np.hstack([144*7-np.arange(6)*144, 144-np.arange(int(144/6)+1)*6]))
         x_transformed, y_transformed = formatter.transform(self.x4)
@@ -168,7 +168,7 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_simulate_formatter(self):
-        formatter = pyf.Formatter(logger=self.logger, dt = pd.Timedelta('15min')).add_transform([0], ['mean'], lags=np.arange(10),                                                                    relative_lags=True)
+        formatter = pyf.Formatter( dt = pd.Timedelta('15min')).add_transform([0], ['mean'], lags=np.arange(10),                                                                    relative_lags=True)
         formatter.add_transform([0, 1, 2], ['min', 'max'], agg_bins=np.hstack([144*7-np.arange(6)*144, 144-np.arange(int(144/6)+1)*6]))
 
         time_lims = formatter.get_time_lims(include_target=True, extremes=True)
@@ -181,7 +181,7 @@ class TestFormatDataset(unittest.TestCase):
         Pickability is needed to parallelize formatting operations
         """
         temp_file_path = 'test_pickle_temp.pk'
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
@@ -205,7 +205,7 @@ class TestFormatDataset(unittest.TestCase):
         os.remove(temp_file_path)
 
     def test_parallel_transformations(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
@@ -217,7 +217,7 @@ class TestFormatDataset(unittest.TestCase):
         #print(res[1].shape)
 
     def test_holidays(self):
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
         df = formatter.transform(self.x2, time_features=True, holidays=True, prov='ZH')
@@ -230,7 +230,7 @@ class TestFormatDataset(unittest.TestCase):
 
         df_mi = pd.concat([x_private, x_shared], axis=1)
 
-        formatter = pyf.Formatter(logger=self.logger).add_transform([0,1 , 2, 3, 4], lags=np.arange(10), agg_freq='20min',
+        formatter = pyf.Formatter().add_transform([0,1 , 2, 3, 4], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform(['a','b', 'c', 'd'], lags=np.arange(10),
                                                                     agg_freq='20min',
