@@ -11,10 +11,17 @@ from functools import partial
 from os.path import join
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-def positive_lecun_normal(key, shape, dtype=jnp.float32):
+
+
+def positive_lecun(key, shape, dtype=jnp.float32, init_type='normal'):
     # Start with standard lecun_normal initialization
     stddev = 1. / jnp.sqrt(shape[1])
-    weights = random.normal(key, shape, dtype) * stddev
+    if init_type == 'normal':
+        weights = random.normal(key, shape, dtype) * stddev
+    elif init_type == 'uniform':
+        weights = random.uniform(key, shape, dtype) * stddev
+    else:
+        raise NotImplementedError('init_type {} not implemented'.format(init_type))
     # Ensure weights are non-negative
     return jnp.abs(weights)/10
 
@@ -31,6 +38,7 @@ class PICNNLayer(nn.Module):
     n_layer: int = 0
     prediction_layer: bool = False
     activation: callable = identity
+    init_type: str = 'normal'
 
     @nn.compact
     def __call__(self, y, u, z):
@@ -42,7 +50,7 @@ class PICNNLayer(nn.Module):
         wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
         wyu = self.activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
 
-        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz',kernel_init=positive_lecun_normal)(z * wzu)
+        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz',kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
         y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
         z_next = z_next + y_next + nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
         if not self.prediction_layer:
@@ -57,6 +65,7 @@ class PartiallyICNN(nn.Module):
     features_y: int
     features_out: int
     activation: callable = identity
+    init_type: str = 'normal'
     @nn.compact
     def __call__(self, x, y):
         u = x
@@ -64,7 +73,8 @@ class PartiallyICNN(nn.Module):
         for i in range(self.num_layers):
             prediction_layer = i == self.num_layers -1
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
-                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation)(y, u, z)
+                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
+                              init_type=self.init_type)(y, u, z)
         return z
 
 
@@ -99,10 +109,12 @@ class PICNN(ScenarioGenerator):
     stats_step: int = 50
     rel_tol: float = 1e-4
     rec_stable: bool = False
+    init_type: str = 'normal'
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
-                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None, stats_step:int=50, rel_tol:float=1e-4, **scengen_kwgs):
+                 q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None,
+                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
                        "inverter_learning_rate": inverter_learning_rate,
@@ -117,7 +129,8 @@ class PICNN(ScenarioGenerator):
                        "n_epochs": n_epochs,
                        "savepath_tr_plots":savepath_tr_plots,
                        "stats_step": stats_step,
-                       "rel_tol":rel_tol
+                       "rel_tol":rel_tol,
+                       "init_type":init_type
                        })
         if self.load_path is not None:
             self.load(self.load_path)
@@ -181,7 +194,8 @@ class PICNN(ScenarioGenerator):
         return init_params
 
     def set_arch(self):
-        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y, features_out=self.n_out)
+        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
+                              features_out=self.n_out, init_type=self.init_type)
         return model
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
@@ -328,12 +342,12 @@ class RecStablePICNN(PICNN):
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
                  q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None,
-                 stats_step:int=50, rel_tol:float=1e-4, **scengen_kwgs):
+                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', **scengen_kwgs):
         super().__init__(learning_rate, inverter_learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers,
                          optimization_vars, pars, target_columns, q_vect, val_ratio, nodes_at_step, n_epochs,
-                         savepath_tr_plots, stats_step, rel_tol, **scengen_kwgs)
+                         savepath_tr_plots, stats_step, rel_tol, init_type, **scengen_kwgs)
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, activation=nn.relu)
+                              features_out=self.n_out, activation=nn.relu, init_type=self.init_type)
         return model
