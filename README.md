@@ -1,4 +1,4 @@
-![build and test](https://github.com/nepslor/pyforecaster/actions/workflows/python-app.yml/badge.svg)
+![build and test](https://github.com/hivepower/pyforecaster/actions/workflows/python-app.yml/badge.svg)
 
 # Pyforecaster
 Forecasting utils

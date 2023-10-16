@@ -7,6 +7,7 @@ import networkx as nx
 from itertools import count
 import copy
 import logging
+from numba import njit
 
 
 def get_dist(X, metric):
@@ -245,17 +246,34 @@ def plot_graph(g, ax=None):
     return ax, cb
 
 
-def plot_from_graph(g):
-    f = plt.figure()
+def obs_at_step_t(g, t):
     s_idx, leaves = retrieve_scenarios_indexes(g)
     values = np.array(list(nx.get_node_attributes(g, 'v').values()))
+    return np.unique(values[s_idx[t, :]])
+
+
+def plot_from_graph(g, lines=None, ax=None, color=None, **kwargs):
+    s_idx, leaves = retrieve_scenarios_indexes(g)
+    values = np.array(list(nx.get_node_attributes(g, 'v').values()))
+    times = np.array(list(nx.get_node_attributes(g, 't').values()))
     cmap = plt.get_cmap('Set1')
-    line_colors = cmap(np.arange(3))
-    for s in np.arange(s_idx.shape[1]):
-        plt.plot(values[s_idx[:, s]], color=line_colors[0, :], linewidth=1, alpha=1)
+    if color is None:
+        color = cmap(np.arange(3))[1, :]
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+    if lines is not None:
+        for s, l in zip(np.arange(s_idx.shape[1]), lines):
+            l.set_data(times[s_idx[:, s]], values[s_idx[:, s]])
+    else:
+        lines = []
+        for s in np.arange(s_idx.shape[1]):
+            l = ax.plot(values[s_idx[:, s]], color=color, **kwargs)
+            lines.append(l[0])
+    return lines
 
 
-def get_network(S_s, P_s):
+@njit
+def _get_network(S_s, P_s):
     '''
     Get a network representation from the S_s and P_p matrices. The network is encoded in a networkx graph, each node
     has the following attribute:
@@ -270,49 +288,69 @@ def get_network(S_s, P_s):
     :return: g: a networkx graph with time, probability and values encoded with the connectivity of the nodes
     '''
 
-    g = nx.DiGraph()
-    g.add_node(0, t=0, p=1, v=S_s[0, P_s[0, :] > 0, :].ravel())
+    assert np.sum(P_s[0, :] > 0) == 1, 'there is more than one node at root with P>0. Something wrong, ' \
+                                       'most likely some observations at first step are equal down to epsilon'
 
-    for t in 1 + np.arange(P_s.shape[0] - 1):
-        for s in np.arange(P_s.shape[1]):
+    new_node = 0
+    attributes_t = []
+    attributes_p = []
+    attributes_v = []
+    attributes_t.append(0)
+    attributes_p.append(1)
+    attributes_v.append(S_s[0, P_s[0, :] > 0, :].ravel())
+    edges_start = []
+    edges_end = []
+    times, values = [], []
+    k = 0
+    for t in range(1, P_s.shape[0]):
+        for s in range(P_s.shape[1]):
             # span all the times, starting from second point (the root node is already defined)
             # consider current point mu, and its previous point in its scenario
             mu = S_s[t, s, :]
             p = P_s[t, s]
+
             # if probability of current point is zero, just go on
             if p == 0:
                 continue
             mu_past = S_s[t - 1, s, :]
             # get current times in the tree
-            times = np.array(list(nx.get_node_attributes(g, 't').values()))
-            # get values, filtered by current time
-            values = np.array(list(nx.get_node_attributes(g, 'v').values()))
-            values_t = values[times == t, :]
-            values_past = values[times == t - 1, :]
+            values_t = [v for v, time in zip(values, times) if time == t]
             # check if values of current point s are present in the tree at current time
-            if np.any([np.array_equal(mu, a) for a in values_t]):
+            equals = [el for el in [np.array_equal(mu, a) for a in values_t] if el]
+
+            if len(equals)>0:
                 continue
             else:
-                # find parent node
-                try:
-                    parent_node = [x for x, y in g.nodes(data=True) if
-                                   y['t'] == t - 1 and np.array_equal(y['v'], mu_past)]
-                except:
-                    print(
-                        'The tree does not have a root! It is likely that you did required more than one node as first node')
+                values.append(mu)
+                times.append(t)
+                for x in range(len(attributes_t)):
+                    y_t = attributes_t[x]
+                    y_v = attributes_v[x]
+                    if y_t == t - 1 and np.array_equal(y_v, mu_past):
+                        parent_node = x
+                        break
+                else:
+                    raise ValueError('The tree does not have a root! It is likely that you did required more than one node as first node')
                 # create the node and add an edge from current point to its parent
-                new_node = len(g.nodes())
-                g.add_node(new_node, t=t, p=p, v=mu, label=new_node)
-                g.add_edge(parent_node[0], new_node)
+                new_node += 1
+                attributes_t.append(t)
+                attributes_p.append(p)
+                attributes_v.append(mu)
+
+                edges_start.append(parent_node)
+                edges_end.append(new_node)
+                #g.add_node(new_node, t=t, p=p, v=mu, label=new_node)
+                #g.add_edge(parent_node[0], new_node)
                 # print('node %i added, with values' % (new_node), mu)
+    return edges_start, edges_end, attributes_t, attributes_p, attributes_v
 
-    # approximated probabilities
-    for i in np.arange(len(g.nodes)):
-        g.nodes[i]['p2'] = np.sum([g.nodes[n]['t'] == t for n in nx.descendants(g, i)]) / np.sum(
-            [g.nodes[n]['t'] == t for n in nx.descendants(g, 0)])
-        if g.nodes[i]['p2'] == 0:
-            g.nodes[i]['p2'] = 1 / len(nx.descendants(g, 0))
 
+def get_network(S_s, P_s):
+    edges_start, edges_end, attributes_t, attributes_p, attributes_v = _get_network(S_s, P_s)
+    attributes = {i: {'t': t, 'p': p, 'v': v, 'label': i} for i, (t, p, v) in enumerate(zip(attributes_t, attributes_p, attributes_v))}
+    edges = [(s, e) for s, e in zip(edges_start, edges_end)]
+    g = nx.DiGraph(edges)
+    nx.set_node_attributes(g, attributes)
     return g
 
 
@@ -325,18 +363,63 @@ def set_distance(alphas, samples, metric):
     return d, D
 
 
-def retrieve_scenarios_indexes(g):
+def retrieve_scenarios_indexes(g, dyn_offset=False):
     n_n = len(g.nodes)
     node_set = np.linspace(0, n_n - 1, n_n, dtype=int)
     all_t = np.array(list(nx.get_node_attributes(g, 't').values()))
     t = np.unique(all_t)
-    leafs = np.array([n for n in node_set[all_t == np.max(t)]])
-    scen_idxs_hist = np.zeros((max(t) + 1, len(leafs)), dtype=int)
-    for s in np.arange(len(leafs)):
-        scen_idxs = np.sort(np.array(list(nx.ancestors(g, leafs[s]))))
-        scen_idxs = np.asanyarray(np.insert(scen_idxs, len(scen_idxs), leafs[s], 0), int)
+    leaves = np.array([n for n in node_set[all_t == np.max(t)]])
+    scen_idxs_hist = np.zeros((max(t) + 1, len(leaves)), dtype=int)
+    for s in np.arange(len(leaves)):
+        scen_idxs = np.sort(np.array(list(nx.ancestors(g, leaves[s]))))
+        scen_idxs = np.asanyarray(np.insert(scen_idxs, len(scen_idxs), leaves[s], 0), int)
         scen_idxs_hist[:, s] = scen_idxs
-    return scen_idxs_hist, leafs
+    if dyn_offset:
+        scen_idxs_hist = scen_idxs_hist[1:, :]
+        scen_idxs_hist -= 1
+        leaves -= 1
+    return scen_idxs_hist, leaves
+
+
+def replace_var(tree, variable, dyn_offset=False):
+    if dyn_offset:
+        variable = np.hstack([np.nan, variable])
+    nx.set_node_attributes(tree, {i: np.atleast_1d(v) for i, v in enumerate(variable)}, name='v')
+
+
+def plot_vars(g, v, ax=None, color=None, dyn_offset=False, **kwargs):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+    replace_var(g, v, dyn_offset)
+    ax = plot_from_graph(g, ax=ax, color=color, **kwargs)
+    return ax
+
+
+def superimpose_signal_to_scens(x, w, perms):
+    return w + x[:, perms]
+
+
+def superimpose_signal_to_tree(x, tree):
+    times = np.array(list(nx.get_node_attributes(tree, 't').values()))
+    tree_vals = np.array(list(nx.get_node_attributes(tree, 'v').values()))
+
+    tree_vals = _superimpose_signal_to_tree(times, x.values, tree_vals)
+
+    #for t in np.unique(times):
+    #    tree_vals[times == t] += np.atleast_1d(x[t])
+
+    replace_var(tree, tree_vals)
+    return tree
+
+@njit
+def _superimpose_signal_to_tree(times, x, tree_vals):
+    for t in np.unique(times):
+        tree_vals[times == t] += x[t]
+    return tree_vals
+
+def get_nodes_per_time_from_tree(g):
+    times = np.array(list(nx.get_node_attributes(g, 't').values()))
+    return [np.sum(times==t) for t in np.unique(times)]
 
 
 def refine_scenarios(g, samples, metric):

@@ -6,6 +6,7 @@ import ray
 from multiprocessing import Pool, cpu_count
 import sharedmem
 from time import time
+from typing import Union
 
 
 def mapper(f, pars, *argv, sharedmem=False, **kwarg):
@@ -29,11 +30,32 @@ def get_logger(level=logging.INFO):
     return logger
 
 
-def fdf_parallel(f, df, n_splits=None, axis=0):
+def array_split(df, n_splits, axis=0):
     """
-    Parallelize a function to apply on a pandas DataFrame.
-    :param f:
+    Do what np.array_split does, but without changing dtype (why in the world np.array_split does it?)
     :param df:
+    :param n_splits:
+    :param axis:
+    :return:
+    """
+    is_df = isinstance(df, pd.DataFrame)
+    split_points = np.linspace(0, df.shape[axis], n_splits+1).astype(int)
+    dfs = []
+    for s in range(n_splits):
+        idxs = np.arange(split_points[s],split_points[s+1])
+        if axis == 1:
+            fold = df.iloc[:, idxs] if is_df else df[:, idxs]
+        else:
+            fold = df.iloc[idxs, :] if is_df else df[idxs, :]
+        dfs.append(fold)
+    return dfs
+
+
+def fdf_parallel(f, df:Union[pd.DataFrame, list], n_splits=None, axis=0, use_ray=True, recast=True):
+    """
+    Parallelize a function to be applied on a pd.DataFrame or on a list of pd.DataFrames.
+    :param f:
+    :param df: pd.DataFrame to be splitted or a list of pd.DataFrame already separated
     :param n_splits:
     :param axis: parallelization axis. If 0, df is splitted in horizontal slices, if 1 df is splitted vertically
     :return:
@@ -44,26 +66,43 @@ def fdf_parallel(f, df, n_splits=None, axis=0):
     if n_splits is None:
         n_splits = cpu_count()
 
-    if df.shape[1] > n_splits:
-        dfs = np.array_split(df, n_splits, axis=axis)
+    # if a pd.DataFrame was passed, obtain df splits
+    if isinstance(df, pd.DataFrame):
+        if df.shape[1] > n_splits:
+            dfs = array_split(df, n_splits, axis=axis)
+        else:
+            dfs = [df]
+    elif isinstance(df, list):
+        dfs = df
     else:
-        dfs = [df]
-    test_df = df.iloc[:n_splits, :n_splits]
+        raise TypeError('df must be a list or a pd.DataFrame')
+
+    test_df = dfs[0].iloc[:n_splits, :] if axis == 0 else dfs[0].iloc[:, :n_splits]
     try:
         f(test_df.values)
         numpy_parallelizable = True
     except:
         numpy_parallelizable = False
 
-    if numpy_parallelizable:
-        res = mapper(f, [f.values for f in dfs])
-
+    if numpy_parallelizable and not use_ray:
         if axis==0:
-            res = np.vstack(res)
+            df_shape_0 = sum([x.shape[0] for x in dfs])
+            df_shape_1 = dfs[0].shape[1]
+            df_columns = np.unique(dfs[0].columns)
         else:
-            res = np.hstack(res)
-        if res.shape == df.shape:
-            res = pd.DataFrame(res, columns=df.columns, index=df.index)
+            df_shape_0 = dfs[0].shape[0]
+            df_shape_1 = sum([x.shape[1] for x in dfs])
+            df_columns = np.unique([x.columns for x in dfs])
+
+        df_shape = (df_shape_0, df_shape_1)
+
+        df_indexes = np.hstack([x.index.ravel() for x in dfs]) if axis==0 else dfs[0].index
+
+        res = mapper(f, [df.values for df in [dfs[0]]])
+        res = np.vstack(res) if axis == 0 else np.hstack(res)
+
+        if res.shape == df_shape:
+            res = pd.DataFrame(res, columns=df_columns, index=df_indexes)
 
     else:
         if not ray.is_initialized():
@@ -72,7 +111,20 @@ def fdf_parallel(f, df, n_splits=None, axis=0):
         def f_rem(df):
             df = f(df)
             return df
-        res = pd.concat(ray.get([f_rem.remote(df_i) for df_i in dfs]), axis=axis)
+        responses = ray.get([f_rem.remote(df_i) for df_i in dfs])
+        if recast:
+            if isinstance(responses[0], pd.DataFrame):
+                res = pd.concat(responses, axis=axis)
+            elif isinstance(responses[0], tuple):
+                # this assumes all the outputs of the function are pd.DataFrames
+                res = []
+                for i in range(len(responses[0])):
+                    res.append(pd.concat([r[i] for r in responses], axis=axis))
+                res = tuple(res)
+            else:
+                res = np.vstack(responses) if axis == 0 else np.hstack(responses)
+        else:
+            res = responses
         ray.shutdown()
 
     return res
@@ -116,7 +168,7 @@ def reduce_mem_usage_np(x):
     return x
 
 
-def reduce_mem_usage(df, parallel=True, logger=None, use_ray=False):
+def reduce_mem_usage(df, parallel=True, logger=None, use_ray=True):
     """ iterate through all the columns of a dataframe and modify the data type
         to reduce memory usage.
     """
@@ -127,9 +179,9 @@ def reduce_mem_usage(df, parallel=True, logger=None, use_ray=False):
 
     if parallel:
         if use_ray:
-            df = fdf_parallel(reduce_mem_usage_df, df, axis=1)
+            df = fdf_parallel(reduce_mem_usage_df, df, axis=1, use_ray=use_ray)
         else:
-            df = fdf_parallel(reduce_mem_usage_np, df, axis=1)
+            df = fdf_parallel(reduce_mem_usage_np, df, axis=1, use_ray=use_ray)
     else:
         for col in tqdm(df.columns):
             df[col] = reduce_mem_usage_series(df[col])

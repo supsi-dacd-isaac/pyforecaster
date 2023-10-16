@@ -3,14 +3,13 @@ from os.path import join
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import ptitprince as pt
 import seaborn as sb
 from scipy.stats import norm
 
 from pyforecaster.plot_utils import basic_setup
 
 
-def bootstrap(series, stat_fun, save_plots_dir=None):
+def bootstrap(series, stat_fun, save_plots_dir=None, n_sampling=4000):
     """
     :param df: a one column df or time series containing a random variable
     :param stat_fun: string or function, used to retrieve the statistic on each pool/sample
@@ -20,7 +19,6 @@ def bootstrap(series, stat_fun, save_plots_dir=None):
     assert isinstance(series, pd.Series), 'series must be a pd.Series instance, you passed {}'.format(type(series))
 
     n = len(series)
-    n_sampling = 5000
     samples = np.random.choice(series.index, (n_sampling, n), replace=True)
 
     sample_at = np.arange(100, n_sampling, 500).astype(int)
@@ -51,7 +49,7 @@ def bootstrap(series, stat_fun, save_plots_dir=None):
 
         pal = "Set2"
         fig, ax = basic_setup((1,1), 4, 3, b=0.2, l=0.2, style='seaborn-paper')
-        pt.half_violinplot(data=history, x='bootsrtap samples', y='stats', palette=pal, bw=.2)
+        #pt.half_violinplot(data=history, x='bootsrtap samples', y='stats', palette=pal, bw=.2)
         sb.stripplot(data=history, x='bootsrtap samples', y='stats', s=2, palette=pal)
         ax.set_xticklabels(ax.get_xticklabels(), rotation=30)
         xlimm = np.abs(np.max(ax.get_xlim()))

@@ -1,14 +1,21 @@
 #import category_encoders
 import functools
-
-import numpy as np
-import pandas as pd
-from itertools import product
-from pyforecaster.plot_utils import ts_animation, ts_animation_bars
 import logging
 from functools import partial
-from scipy.stats import binned_statistic
+from itertools import product
+from multiprocessing import cpu_count
 from typing import Union
+
+import holidays as holidays_api
+import numpy as np
+import pandas as pd
+from long_weekends.long_weekends import spot_holiday_bridges
+from scipy.stats import binned_statistic
+from tqdm import tqdm
+
+from pyforecaster.big_data_utils import fdf_parallel, reduce_mem_usage
+from pyforecaster.plot_utils import ts_animation_bars
+
 
 def get_logger(level=logging.INFO):
 
@@ -19,64 +26,198 @@ def get_logger(level=logging.INFO):
 
 
 class Formatter:
-    def __init__(self, logger=None):
-        self.logger = get_logger() if logger is None else logger
+    """
+    :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
+                        recent data if you don't have at prediction time.
+    """
+    def __init__(self, logger=None, augment=True, dt=None):
+        self.logger = get_logger(level=logging.WARNING) if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
         self.target_transformers = []
         self.cv_gen = []
+        self.augment = augment
+        self.timezone = None
+        self.dt = dt
 
     def add_time_features(self, x):
-        self.logger.info('Adding time features')
-        time_df = pd.DataFrame(np.vstack([x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]).T,
-                               columns=['hour', 'dayofweek', 'minuteofday'], index=x.index)
+        tz = x.index[0].tz
+        self.logger.info('Adding time features. Time zone for the df: {}'.format(tz))
+        if self.timezone is None:
+            if tz is None:
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]
+                col_names = ['hour', 'dayofweek', 'minuteofday']
+                self.timezone = False
+            else:
+                utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute, utc_offset]
+                col_names = ['hour', 'dayofweek', 'minuteofday', 'utc_offset']
+                self.timezone = True
+        else:
+            if self.timezone:
+                if tz is not None:
+                    utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
+                else:
+                    self.logger.warning('I am setting UTC offset feature to zero since the timeindex you passed was '
+                                        'not time zone localized')
+                    utc_offset = np.zeros(x.shape[0])
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute, utc_offset]
+                col_names = ['hour', 'dayofweek', 'minuteofday', 'utc_offset']
+            else:
+                time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]
+                col_names = ['hour', 'dayofweek', 'minuteofday']
+        time_df = pd.DataFrame(np.vstack(time_features).T, columns=col_names, index=x.index)
+
         x = pd.concat([x, time_df], axis=1)
         return x
 
-    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
+    def add_holidays(self, x, state_code='CH', **kwargs):
+        self.logger.info('Adding holidays')
+        holidays = holidays_api.country_holidays(country=state_code, years=x.index.year.unique(), **kwargs)
+        bridges, long_weekends = spot_holiday_bridges(start=x.index[0]-pd.Timedelta('2D'), end=x.index[-1]+pd.Timedelta('2D'), holidays=holidays)
+        bridges = np.array([b.date() for b in bridges])
+        long_weekends = np.array([b.date() for b in long_weekends])
+
+
+        x['holidays'] = 0
+        x.loc[np.isin(x.index.date, bridges), 'holidays'] = 1
+        x.loc[np.isin(x.index.date, long_weekends), 'holidays'] = 2
+        x.loc[np.isin(x.index.date, list(holidays.keys())), 'holidays'] = 3
+        return x
+
+    def add_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None, **kwargs):
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt, **kwargs)
         self.transformers.append(transformer)
         return self
 
     def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
-        if np.any(lags>0):
+        if lags is not None and np.any(np.array(lags) > 0):
             self.logger.critical('some lags are positive, which mean you are adding a target in the past. '
                                  'Is this intended?')
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
-                                  relative_lags=relative_lags, agg_bins=agg_bins)
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt)
         self.target_transformers.append(transformer)
         return self
 
-    def transform(self, x):
+    def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=True, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
         transformations like min-max scaling or categorical encoding are not yet applied.
         :param x: pd.DataFrame
+        :param time_features: if True add time features
+        :param holidays: if True add holidays as a categorical feature
+        :param return_target: if True, returns also the transformed target. If False (e.g. at prediction time), returns
+                             only x
+        :param global_form: if True, assumes that columns of x which are not transformed are independent signals to be
+                            forecasted with a global model. In this case, all target transform must refer to a "target"
+                            column, which is the stacking of the independent signals. An additional column "name" is
+                            added to the transformed dataset, which contains the name of the signal to be forecasted.
+
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
+        if global_form:
+            assert np.unique([tr.names for tr in self.target_transformers]) == 'target', 'When using global_form option,' \
+                                                                                         ' the only admissible target is' \
+                                                                                         ' "target"'
+            transformed_columns = [tr.names for tr in self.transformers]
+            transformed_columns = [item for sublist in transformed_columns for item in sublist]
+            transformed_columns = list(set(np.unique(transformed_columns)) - {'target'})
+            # if x is multiindex pd.DataFrame do something
+            if isinstance(x.columns, pd.MultiIndex):
+                # find columns names at level 0 that contains the targets
+                c_l_0 = x.columns.get_level_values(0).unique()
+                private_cols_l0 = [c for c in c_l_0 if not np.all([str(t) in transformed_columns for t in x[c].columns])]
+                shared_cols_l0 = list(set(c_l_0) - set(private_cols_l0))
+                x_shared = x[shared_cols_l0].droplevel(0, 1)
+                dfs = []
+                for p in private_cols_l0:
+                    x_p = x[p]
+                    target_name_l1 = [c for c in x_p.columns if c not in transformed_columns]
+                    assert len(target_name_l1) == 1, 'something went wrong, there should be only one target column. You must add a transform for all the non-target columns'
+                    target_name_l1 = target_name_l1[0]
+                    x_p = x_p.rename({target_name_l1:'target'}, axis=1)
+                    dfs.append(pd.concat([x_p, x_shared, pd.DataFrame(p, columns=['name'], index=x.index)], axis=1))
+            else:
+
+                independent_targets = [c for c in x.columns if c not in transformed_columns]
+                dfs = []
+                for c in independent_targets:
+                    dfs.append(pd.concat(
+                        [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
+                         pd.DataFrame(c, columns=['name'], index=x.index)],
+                        axis=1))
+
+            n_cpu = cpu_count()
+            n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
+            xs, ys = [], []
+            if parallel:
+                # simulate transform on one fold single core to retrieve metadata (ray won't persist class attributes)
+                self._simulate_transform(dfs[0])
+                for i in tqdm(range(n_folds)):
+                    x, y = fdf_parallel(f=partial(self._transform, time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs), df=dfs[n_cpu * i:n_cpu * (i + 1)])
+                    x = reduce_mem_usage(x, use_ray=True)
+                    y = reduce_mem_usage(y, use_ray=True)
+                    xs.append(x)
+                    ys.append(y)
+            else:
+                for df_i in dfs:
+                    x, y = self._transform(df_i,time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs)
+                    x = reduce_mem_usage(x, use_ray=True, parallel=False)
+                    y = reduce_mem_usage(y, use_ray=True, parallel=False)
+                    xs.append(x)
+                    ys.append(y)
+            x = pd.concat(xs)
+            target = pd.concat(ys)
+        else:
+            x, target = self._transform(x, time_features=time_features, holidays=holidays,
+                                        return_target=return_target, **holidays_kwargs)
+        return x, target
+
+    def _transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
+        """
+        Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
+        the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
+        transformations like min-max scaling or categorical encoding are not yet applied.
+        :param x: pd.DataFrame
+        :param time_features: if True add time features
+        :param holidays: if True add holidays as a categorical feature
+        :param return_target: if True, returns also the transformed target. If False (e.g. at prediction time), returns
+                             only x
+        :return x, target: the transformed dataset and the target DataFrame with correct dimensions
+        """
+        original_columns = x.columns
         if np.any(x.isna()):
            self.logger.warning('There are {} nans in x, nans are not supported yet, '
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
         for tr in self.transformers:
             x = tr.transform(x)
-
+        transformed_columns = [c for c in x.columns if c not in original_columns]
         target = pd.DataFrame(index=x.index)
-        for tr in self.target_transformers:
-           target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
+        if return_target:
+            for tr in self.target_transformers:
+               target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
 
-        # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
-        x = x.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
-        target = target.loc[~np.any(x.isna(), axis=1) & ~np.any(target.isna(), axis=1)]
-
+            # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
+            x = x.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+            target = target.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+        else:
+            x = x.loc[~np.any(x[transformed_columns].isna(), axis=1)]
+        if not self.augment:
+            x = x[transformed_columns]
         # adding time features
-        x = self.add_time_features(x)
+        if time_features:
+            x = self.add_time_features(x)
+
+        if holidays:
+            x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
-
-    def _simulate_transform(self, x):
+    def _simulate_transform(self, x=None):
         """
         This won't actually modify the dataframe, it will just populate the metqdata property of each transformer
         :param x:
@@ -209,17 +350,17 @@ class Formatter:
         fold += '   -: train, |=test, x:skip'
         return fold
 
-    def prune_dataset_at_stepahead(self, df, sa, metadata_features, method='periodic', period='24H', tol_period='1H', sa_end=None, keep_last_n_lags=0):
+    def prune_dataset_at_stepahead(self, df, target_col_num, metadata_features, method='periodic', period='24H', tol_period='1H', keep_last_n_lags=0, keep_last_seconds=0):
 
         features = []
         # retrieve referring_time of the given sa for the target from target_transformers
         target_times = []
         for tt in self.target_transformers:
-            target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
+            target_times.append(tt.metadata.iloc[target_col_num, :]['end_time'])
+            #target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
 
-        assert len(np.unique(target_times)) == 1, 'target for step ahead {} have different referring_times, ' \
-                                             'not supported'.format(sa)
-        target_time = pd.to_timedelta(target_times[0])[0]
+
+        target_time = pd.to_timedelta(target_times[0])
 
         if method == 'periodic':
             # find signals with (target_time - referring_time) multiple of period
@@ -234,6 +375,14 @@ class Formatter:
             last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(np.arange(keep_last_n_lags))]
                                            for t in self.transformers]))
             features = np.unique(features + last_lag_features)
+        if keep_last_seconds >0:
+            closest_features = []
+            for t in self.transformers:
+                delta_sec = t.metadata.start_time.apply(lambda x: x.total_seconds())
+                keep_condition = (delta_sec> -keep_last_seconds) & (delta_sec<=0)
+                closest_features.append(t.metadata.index[keep_condition])
+            closest_features = list(np.unique(np.hstack(closest_features)))
+            features = np.unique(features + closest_features)
 
         features = np.unique(list(features) + metadata_features)
         return df[features]
@@ -264,13 +413,32 @@ class Formatter:
         return x
 
 
+    def get_time_lims(self, include_target=False, extremes=True):
+
+        transformers = self.transformers + self.target_transformers if include_target else self.transformers
+        if any([t.metadata is None for t in self.transformers]):
+            self._simulate_transform()
+
+        min_start_times = pd.DataFrame(pd.concat(
+            [t.metadata.groupby('name').min()['start_time'] for t in transformers])).groupby(
+            'name').min()
+
+        max_end_times = pd.DataFrame(pd.concat(
+            [t.metadata.groupby('name').max()['end_time'] for t in transformers])).groupby(
+            'name').max()
+
+        time_lims = pd.concat([min_start_times, max_end_times], axis=1)
+        if extremes:
+            time_lims = pd.DataFrame([time_lims['start_time'].min(), time_lims['end_time'].max()], index=['start_time', 'end_time']).T
+        return time_lims
+
 class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags
     """
     Anyarray = Union[tuple, np.ndarray, list, None]
-    def __init__(self, names, functions:Anyarray=None, agg_freq=None, lags:Anyarray=None, logger=None,
-                 relative_lags:bool=False, agg_bins:Anyarray=None):
+    def __init__(self, names, functions:Anyarray=None, agg_freq:Union[str, int, None]=None, lags:Anyarray=None, logger=None,
+                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True, dt=None):
         """
         :param names: list of columns of the target dataset to which this transformer applies
         :param functions: list of functions
@@ -284,6 +452,7 @@ class Transformer:
                          elements (0, 1), the second one of 3 elements, (2, 3, 4).
         """
         assert isinstance(functions, list) or functions is None, 'functions must be a list of strings or functions'
+        self.dt = dt
         self.names = names
         self.functions = functions
         self.agg_freq = agg_freq
@@ -293,18 +462,29 @@ class Transformer:
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
         self.metadata = None
+        self.nested = nested
         if agg_bins is not None:
             self.original_agg_bins = np.copy(np.sort(agg_bins)[::-1])
-            assert np.sum(np.sort(agg_bins) - np.array(agg_bins)) == 0, 'agg bins must be a monotone array'
+            assert np.all(np.diff(agg_bins) <= 0) or np.all(np.diff(agg_bins) >= 0), 'agg bins must be a monotone array'
             self.agg_bins = np.max(agg_bins) - np.sort(agg_bins)[::-1] # descending order
+            if nested:
+                self.transformers = []
+                for i in range(len(self.original_agg_bins) - 1):
+                    step_from = self.original_agg_bins[i]
+                    step_to = self.original_agg_bins[i + 1]
+                    freq = step_from - step_to
+                    tr = Transformer(names, functions, agg_freq=freq, lags=[step_to], nested=False,
+                                     logger=get_logger(logging.WARNING))
+                    self.transformers.append(tr)
         else:
-            self.agg_bins = agg_bins
-            self.original_agg_bins = agg_bins
+            self.agg_bins = None
+            self.original_agg_bins = None
+
 
         if agg_freq is not None and agg_bins is not None:
             self.logger.warning('Transformer: agg_freq will be ignored since agg_bins is not None')
 
-    def transform(self, x, augment=True, simulate=False):
+    def transform(self, x=None, augment=True, simulate=False):
         """
         Add transformations to the x pd.DataFrame, as specified by the Transformer's attributes
 
@@ -314,19 +494,28 @@ class Transformer:
                          with information on the name and time lags
         :return: transformed DataFrame
         """
-        assert np.all(np.isin(self.names, x.columns)), "transformers names, {},  " \
-                                                       "must be in x.columns:{}".format(self.names, x.columns)
+        if simulate:
+            if x is None:
+                assert self.dt is not None, "self.dt must be set if you don't pass x while simulating"
+        else:
+            assert x is not None, "x must be passed if simulate is False"
+            assert np.all(np.isin(self.names, x.columns)), "transformers names, {},  " \
+                                                           "must be in x.columns:{}".format(self.names, x.columns)
 
-        data = x.copy() if augment else pd.DataFrame(index=x.index)
+
+            data = x.copy() if augment else pd.DataFrame(index=x.index)
+
         self.metadata = pd.DataFrame()
         for name in self.names:
-            d = x[name].copy()
+            d = x[name].copy() if x is not None else None
 
             # infer sampling time
-            dt = x[name].index.to_series().diff().median()
+            dt = self.dt if self.dt is not None else x[name].index.to_series().diff().median()
 
             if self.agg_freq is None:
                 self.agg_freq = dt
+            elif isinstance(self.agg_freq, (np.int8, np.int32, np.int64, int)):
+                self.agg_freq *= dt
 
             # agg_steps = number of steps on which aggregation stats are retrieved
             # agg_time = time range on which aggregation stats are retrieved
@@ -350,17 +539,38 @@ class Transformer:
                         d = d.rolling(self.agg_freq, min_periods=agg_steps).agg(self.functions)
                         d.columns = trans_names
                 else:
-                    trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]], self.original_agg_bins[p[1]+1]) for p in
-                                   product(function_names, np.arange(len(self.agg_bins)-1))]
                     if not simulate:
-                        partial_res = []
-                        for agg_fun in self.functions:
-                            reducer = Reducer(bins=self.agg_bins, agg_fun=agg_fun)
-                            indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=agg_steps)
-                            d_rolled = d.rolling(window=indexer, min_periods=agg_steps).apply(reducer.reduce)
-                            partial_res.append(np.vstack(reducer.stats).tolist())
-                        d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
-                        d = d.shift(np.max(self.original_agg_bins)-1)
+                        if self.nested:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[1], self.original_agg_bins[p[0]],
+                                                                self.original_agg_bins[p[0] + 1]) for p in
+                                           product(np.arange(len(self.agg_bins) - 1), function_names)]
+                            d = pd.DataFrame(d)
+                            for i, tr in enumerate(self.transformers):
+                                tr.names = [name]
+                                d = tr.transform(d)
+                            del d[name]
+                            d.columns = trans_names
+                        else:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]],
+                                                                self.original_agg_bins[p[1] + 1]) for p in
+                                           product(function_names, np.arange(len(self.agg_bins) - 1))]
+                            partial_res = []
+                            for agg_fun in self.functions:
+                                reducer = Reducer(bins=self.agg_bins, agg_fun=agg_fun)
+                                indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=agg_steps)
+                                d_rolled = d.rolling(window=indexer, min_periods=agg_steps).apply(reducer.reduce)
+                                partial_res.append(np.vstack(reducer.stats).tolist())
+                            d = pd.DataFrame(np.hstack(partial_res), index=d_rolled.index[~d_rolled.isna()], columns=trans_names)
+                            d = d.shift(np.max(self.original_agg_bins)-1)
+                    else:
+                        if self.nested:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[1], self.original_agg_bins[p[0]],
+                                                                self.original_agg_bins[p[0] + 1]) for p in
+                                           product(np.arange(len(self.agg_bins) - 1), function_names)]
+                        else:
+                            trans_names = ['{}_{}_{}_{}'.format(name, p[0], self.original_agg_bins[p[1]],
+                                                                self.original_agg_bins[p[1] + 1]) for p in
+                                           product(function_names, np.arange(len(self.agg_bins) - 1))]
 
             if self.lags is not None:
                 trans_names = ['{}_lag_{:03d}'.format(p[1], p[0]) if p[0] >= 0 else '{}_lag_{:04d}'.format(p[1], p[0])
@@ -381,24 +591,32 @@ class Transformer:
                 metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
                 metadata_n['aggregation_time'] = self.agg_freq
                 metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
-                metadata_n['start_time'] = - spacing_time * metadata_n['lag'] - agg_steps * dt
-                metadata_n['end_time'] = - spacing_time * metadata_n['lag']
+                metadata_n['start_time'] = - spacing_time * metadata_n['lag'] - agg_steps * dt + dt
+                metadata_n['end_time'] = - spacing_time * metadata_n['lag'] + dt
             else:
                 lags_expanded = np.outer(lag_steps, np.ones(len(self.agg_bins) - 1)).ravel()
                 lags_and_fun =product(function_names, lags_expanded)
                 metadata_n = pd.DataFrame(lags_and_fun, columns=['function', 'lag'], index=trans_names)
                 metadata_n['aggregation_time'] = self.agg_freq
                 metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
-                metadata_n['start_time'] = [-dt * (self.original_agg_bins[i+1] + l)  for name, i, l in
-                                            product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
-                metadata_n['end_time'] = [-dt * (self.original_agg_bins[i]+l) for name, i, l in
-                                          product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
+                if self.nested:
+                    metadata_n['start_time'] = [-dt * (self.original_agg_bins[i] + l) + dt for i, name, l in
+                                                product(np.arange(len(self.agg_bins) - 1), function_names, lag_steps)]
+                    metadata_n['end_time'] = [-dt * (self.original_agg_bins[i+1]+l) + dt for i, name, l in
+                                                product(np.arange(len(self.agg_bins) - 1), function_names, lag_steps)]
+                else:
+                    metadata_n['start_time'] = [-dt * (self.original_agg_bins[i] + l) + dt for name, i, l in
+                                                product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
+                    metadata_n['end_time'] = [-dt * (self.original_agg_bins[i+1]+l) + dt for name, i, l in
+                                              product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
             metadata_n['name'] = name
 
             self.metadata = pd.concat([self.metadata, metadata_n])
-
-        self.generated_features = set(data.columns) - set(x.columns)
-        return data
+        if not simulate:
+            self.generated_features = set(data.columns) - set(x.columns)
+            return data
+        else:
+            return None
 
 
 class Reducer:
@@ -437,12 +655,12 @@ def hr_timedelta(t, zero_padding=False):
         time = '{:02d}d'.format(days) \
                + '{:02d}h'.format(hours) \
                + '{:02d}m'.format(minutes) \
-               + '{:02d}s'.format(s) * (s > 0)
+               + '{:02d}s'.format(s) * int(s > 0)
     else:
-        time = '{}d'.format(days) * (days > 0)\
-               + '{}h'.format(hours) * (hours > 0)\
-               + '{}m'.format(minutes) * (minutes > 0) \
-               + '{}s'.format(s) * (s > 0)
+        time = '{}d'.format(days) * int(days > 0)\
+               + '{}h'.format(hours) * int(hours > 0)\
+               + '{}m'.format(minutes) * int(minutes > 0) \
+               + '{}s'.format(s) * int(s > 0)
     time = '-' + time if sign_t == -1 else time
     return time
 

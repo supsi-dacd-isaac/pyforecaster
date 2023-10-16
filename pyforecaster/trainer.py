@@ -4,11 +4,12 @@ import pandas as pd
 from pyforecaster.metrics import nmae, make_scorer
 from functools import partial
 import numpy as np
-
+from pyforecaster.dictionaries import HYPERPAR_MAP
+from inspect import signature
 
 def default_param_space_fun(trial):
     param_space = {'model__n_estimators': trial.suggest_int('n_estimators', 10, 300),
-                   'model__learning_rate': trial.suggest_uniform('learning_rate', 0.005, 0.2)}
+                   'model__learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2)}
     return param_space
 
 
@@ -29,8 +30,11 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, 
     """
 
     # set optuna parameter space
-    param_space = param_space_fun(trial)
-    model.set_params(**param_space)
+    params = param_space_fun(trial)
+    if not np.all([k in list(signature(model.__class__).parameters.keys()) + list(model.get_params().keys()) for k in params.keys()]):
+        raise ValueError('not all parameter space names are in the model signature. This means they will not affect the'
+                         ' performance of your model. Something is wrong')
+    model.set_params(**params)
     # create generator
     cv_gen = (f for f in cv)
 
@@ -70,19 +74,29 @@ def objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, 
     return score
 
 
-def hyperpar_optimizer(x, y, model, n_trials=40, scoring=None, cv=5, param_space_fun=default_param_space_fun,
-                       hpo_type='full', sampler=None, callbacks=None, storage_fun=None,  **cv_kwargs):
+def hyperpar_optimizer(x, y, model, n_trials=40, metric=None, cv=5, param_space_fun=None,
+                       hpo_type='full', sampler=None, callbacks=None, storage_fun=None, formatter=None, **cv_kwargs):
     # set default scorer
-    if scoring is None:
-        scoring = make_scorer(nmae)
+    scoring = make_scorer(metric) if metric is not None else make_scorer(nmae)
+
+    # set default param_space_function if needed
+    forecaster_name = model.__class__.__name__
+    def_param_space = HYPERPAR_MAP[forecaster_name] if forecaster_name in HYPERPAR_MAP.keys()\
+        else default_param_space_fun
+    param_space_fun = def_param_space if param_space_fun is None else param_space_fun
 
     if sampler is None:
         sampler = optuna.samplers.TPESampler()
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    if cv is not list:
-        if isinstance(cv, int) or isinstance(cv, float):
+    if isinstance(cv, int) or isinstance(cv, float):
+        if formatter is not None:
+            fold_generator = formatter.time_kfcv(x.index, int(cv))
+            cv = list(fold_generator)
+        else:
             cv = list(KFold(int(cv)).split(x, y))
+    elif cv is not list:
         cv = list(cv)
+
 
     if storage_fun is not None:
         stored_replies = []

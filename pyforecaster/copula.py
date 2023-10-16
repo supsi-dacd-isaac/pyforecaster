@@ -38,7 +38,7 @@ class HourlyGaussianCopula(GaussianCopula):
     def __init__(self, cov_est_method='vanilla', logger=None):
         super().__init__(cov_est_method, logger)
 
-    def fit(self, y, x=None,  do_plot=True):
+    def fit(self, y, x=None,  do_plot=False):
         self.dim = y.shape[1]
         est_covs = {}
         alpha_glasso = 0.01
@@ -55,14 +55,16 @@ class HourlyGaussianCopula(GaussianCopula):
             x_h = y.loc[hour_filt, :]
             if self.cov_est_method == 'vanilla':
                 # force positive semidefinite matrix
-                est_cov = np.cov(x_h.T) + np.eye(self.dim)*1e-6
+                est_cov = np.corrcoef(x_h.T) + np.eye(self.dim)*1e-6
             elif self.cov_est_method == 'shrunk':
                 sh = ShrunkCovariance().fit(x_h)
-                est_cov = sh.covariance_
+                std = np.std(x_h.values, axis=0)
+                est_cov = sh.covariance_ / np.outer(std, std)
             elif self.cov_est_method in ['glasso', 'glasso_cv']:
                 self.logger.info('alpha glasso: {}'.format(alpha_glasso))
                 gl = GraphicalLasso(alpha=alpha_glasso).fit(x_h)
-                est_cov = gl.covariance_
+                std = np.std(x_h.values, axis=0)
+                est_cov = gl.covariance_ / np.outer(std, std)
             else:
                 raise ValueError('cov_est_method not recognized')
             est_covs[h] = est_cov
@@ -74,7 +76,7 @@ class HourlyGaussianCopula(GaussianCopula):
         self.pars = est_covs
         return self
 
-    def sample(self, x: pd.DataFrame, n_scen: int):
+    def sample(self, x: pd.DataFrame, n_scen: int, random_state=None):
         """
         Return samples from a multivariate random variable whose properties depends on x
         :param x: pd.DataFrame of conditional variables
@@ -93,7 +95,7 @@ class HourlyGaussianCopula(GaussianCopula):
             if sum(hour_filt) == 0:
                 continue
             else:
-                mvr_samples = mvr.rvs((np.sum(hour_filt), n_scen))
+                mvr_samples = mvr.rvs((np.sum(hour_filt), n_scen), random_state=random_state)
                 if len(mvr_samples.shape) == 2:
                     mvr_samples = np.expand_dims(mvr_samples, 0)
                 mvr_samples = np.swapaxes(mvr_samples, 1, 2)

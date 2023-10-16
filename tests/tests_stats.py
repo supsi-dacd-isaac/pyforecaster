@@ -8,14 +8,14 @@ import logging
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 500
-        self.n = 10
+        self.n = 3
         self.x = pd.DataFrame(np.sin(np.arange(self.t)*10*np.pi/self.t).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)
 
     def test_bootstrap(self):
-        summary = bootstrap(self.x[0], 'mean')
+        summary = bootstrap(self.x[0], 'mean', n_sampling=500)
         assert len(summary) == 2
 
 
