@@ -239,6 +239,55 @@ class TestFormatDataset(unittest.TestCase):
         df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
 
 
+    def test_normalizers(self):
+        df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
+        formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='b')
+        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+
+        formatter.add_normalization_expr('(target-a)/b')
+        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='target*b+a')
+
+        # check if back-transform works
+        assert (y_unnorm-y).sum().sum() < 1e-6
+
+
+    def test_normalizers_complex(self):
+        df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
+        formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b')
+
+        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+
+        formatter.add_normalization_expr('exp(target+a) + b')
+        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='log(target - b) - a')
+
+        # check if back-transform works
+        assert (y_unnorm-y).sum().sum() < 1e-6
+
+
+    def test_normalizers_impossible(self):
+        df = pd.DataFrame(np.random.randn(100, 5)+20, index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
+        formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b')
+
+        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+
+        formatter.add_normalization_expr('(target+a)**2 + b')
+        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='sqrt(target - b) - a')
+
+        # check if back-transform works
+        assert (y_unnorm-y).sum().sum() < 1e-6
 
 if __name__ == '__main__':
     unittest.main()

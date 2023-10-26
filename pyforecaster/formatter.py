@@ -29,11 +29,13 @@ class Formatter:
         self.transformers = []
         self.fold_transformers = []
         self.target_transformers = []
+        self.target_normalizers = []
         self.cv_gen = []
         self.augment = augment
         self.timezone = None
         self.dt = dt
         self.n_parallel = n_parallel if n_parallel is not None else cpu_count()
+        self.normalization_expr = None
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -94,6 +96,36 @@ class Formatter:
                                   relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt)
         self.target_transformers.append(transformer)
         return self
+
+    def add_normalization_expr(self, expr:str):
+        if not 'target' in expr:
+            self.logger.warning('the normalization expression must contain the word "target" which refer to the target variable')
+            self.logger.warning('e.g. (target - normalization_col_name_1) / normalization_col_name_2')
+        self.normalization_expr = expr
+
+    def add_target_normalizer(self, target, function:str=None, agg_freq:str=None, lags:list=None, relative_lags=False, agg_bins=None, name='mean'):
+        if isinstance(target, str):
+            target = [target]
+        if isinstance(function, str):
+            function = [function]
+        if len(np.shape(lags))==0 and lags is not None:
+            lags = [lags]
+
+
+        if len(self.target_normalizers)>0:
+            if np.any([n.name==name for n in self.target_normalizers]):
+                self.logger.warning('You already have a target normalizer with this name. This normalizer is not added, choose another one')
+                return
+
+        assert len(target) == 1, 'only one target can be normalized per time. If you want to normalize two targets call this method twice'
+        if lags is not None:
+            assert len(lags) == 1, 'only one lag is admissible for the normalization.'
+            assert np.all(lags>0), 'you cannot normalize with future values, all lags should be positive'
+
+        transformer = Transformer(target, functions=function, agg_freq=agg_freq, lags=lags, logger=self.logger,
+                                  relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt, name=name)
+
+        self.target_normalizers.append(transformer)
 
     def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=False,
                   reduce_memory=True, **holidays_kwargs):
@@ -195,6 +227,14 @@ class Formatter:
            self.logger.warning('There are {} nans in x, nans are not supported yet, '
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
+        if return_target:
+            target = pd.DataFrame(index=x.index)
+            for tr in self.target_transformers:
+                target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
+            # apply normalization if any
+            if len(self.target_normalizers)>0:
+                target = self.normalize(x, target)
+
         if len(self.transformers)>0:
             if self.n_parallel>1:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.n_parallel) as executor:
@@ -204,11 +244,7 @@ class Formatter:
                 for tr in self.transformers:
                     x = tr.transform(x)
         transformed_columns = [c for c in x.columns if c not in original_columns]
-        target = pd.DataFrame(index=x.index)
         if return_target:
-            for tr in self.target_transformers:
-               target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
-
             # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
             target = target.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
@@ -223,6 +259,40 @@ class Formatter:
         if holidays:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
+
+    def normalize(self, x, y, normalizing_expr=None):
+
+        normalizing_expr = self.normalization_expr if normalizing_expr is None else normalizing_expr
+        if self.normalization_expr is None:
+            self.logger.warning('You did not pass any normalization expression, ** no normalization will be applied **. '
+                                '\bYou can set a normalization expression by calling Formatter.add_normalization_expr '
+                                '\bor by passing the noralizing_expr argument to this function')
+            return y
+        # compute normalizers if any
+        normalizers = pd.concat([nr.transform(x, augment=False) for nr in self.target_normalizers], axis = 1)
+
+        # get normalizers names
+        target_to_norm_names = [nr.names for nr in self.target_normalizers]
+        target_to_norm_names = [item for sublist in target_to_norm_names for item in sublist]
+
+        # rename normalizers with tag names
+        normalizers.columns = [nr.name for nr in self.target_normalizers]
+
+        # join target and normalizers in a single df
+        df_n = pd.concat([y, normalizers], axis=1)
+
+
+        for target_to_norm in np.unique(target_to_norm_names):
+            for tr in self.target_transformers:
+                # find df_n columns to normalize
+                nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
+                for c in nr_columns:
+                    expr = normalizing_expr.replace("target", '`{}`'.format(c))
+                    df_n[c] = df_n.eval(expr)
+
+        df_n = df_n[[c for c in y.columns]]
+        return df_n
+
 
     def _simulate_transform(self, x=None):
         """
@@ -445,7 +515,7 @@ class Transformer:
     """
     Anyarray = Union[tuple, np.ndarray, list, None]
     def __init__(self, names, functions:Anyarray=None, agg_freq:Union[str, int, None]=None, lags:Anyarray=None, logger=None,
-                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True, dt=None):
+                 relative_lags:bool=False, agg_bins:Anyarray=None, nested=True, dt=None, name=None):
         """
         :param names: list of columns of the target dataset to which this transformer applies
         :param functions: list of functions
@@ -460,6 +530,7 @@ class Transformer:
         """
         assert isinstance(functions, list) or functions is None, 'functions must be a list of strings or functions'
         self.dt = dt
+        self.name = name
         self.names = names
         self.functions = functions
         self.agg_freq = agg_freq
