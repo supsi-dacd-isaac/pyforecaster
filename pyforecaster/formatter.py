@@ -227,8 +227,8 @@ class Formatter:
            self.logger.warning('There are {} nans in x, nans are not supported yet, '
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
+        target = pd.DataFrame(index=x.index)
         if return_target:
-            target = pd.DataFrame(index=x.index)
             for tr in self.target_transformers:
                 target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
             # apply normalization if any
