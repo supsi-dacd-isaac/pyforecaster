@@ -146,46 +146,18 @@ class Formatter:
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
         if global_form:
-            assert np.unique([tr.names for tr in self.target_transformers]) == 'target', 'When using global_form option,' \
-                                                                                         ' the only admissible target is' \
-                                                                                         ' "target"'
-            transformed_columns = [tr.names for tr in self.transformers]
-            transformed_columns = [item for sublist in transformed_columns for item in sublist]
-            transformed_columns = list(set(np.unique(transformed_columns)) - {'target'})
-            # if x is multiindex pd.DataFrame do something
-            if isinstance(x.columns, pd.MultiIndex):
-                # find columns names at level 0 that contains the targets
-                c_l_0 = x.columns.get_level_values(0).unique()
-                private_cols_l0 = [c for c in c_l_0 if not np.all([str(t) in transformed_columns for t in x[c].columns])]
-                shared_cols_l0 = list(set(c_l_0) - set(private_cols_l0))
-                x_shared = x[shared_cols_l0].droplevel(0, 1)
-                dfs = []
-                for p in private_cols_l0:
-                    x_p = x[p]
-                    target_name_l1 = [c for c in x_p.columns if c not in transformed_columns]
-                    assert len(target_name_l1) == 1, 'something went wrong, there should be only one target column. You must add a transform for all the non-target columns'
-                    target_name_l1 = target_name_l1[0]
-                    x_p = x_p.rename({target_name_l1:'target'}, axis=1)
-                    dfs.append(pd.concat([x_p, x_shared, pd.DataFrame(p, columns=['name'], index=x.index)], axis=1))
-            else:
+            dfs = self.global_form_preprocess(x)
 
-                independent_targets = [c for c in x.columns if c not in transformed_columns]
-                dfs = []
-                for c in independent_targets:
-                    dfs.append(pd.concat(
-                        [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
-                         pd.DataFrame(c, columns=['name'], index=x.index)],
-                        axis=1))
-
-            n_cpu = cpu_count()
-            n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
             xs, ys = [], []
             if parallel:
+                n_cpu = cpu_count()
+                n_folds = np.ceil(len(dfs) / n_cpu).astype(int)
                 # simulate transform on one fold single core to retrieve metadata (ray won't persist class attributes)
                 self._simulate_transform(dfs[0])
                 for i in tqdm(range(n_folds)):
                     x, y = fdf_parallel(f=partial(self._transform, time_features=time_features, holidays=holidays,
-                                        return_target=return_target, **holidays_kwargs), df=dfs[n_cpu * i:n_cpu * (i + 1)])
+                                                  return_target=return_target, **holidays_kwargs),
+                                        df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     if reduce_memory:
                         x = reduce_mem_usage(x, use_ray=True)
                         y = reduce_mem_usage(y, use_ray=True)
@@ -193,8 +165,8 @@ class Formatter:
                     ys.append(y)
             else:
                 for df_i in dfs:
-                    x, y = self._transform(df_i,time_features=time_features, holidays=holidays,
-                                        return_target=return_target, **holidays_kwargs)
+                    x, y = self._transform(df_i, time_features=time_features, holidays=holidays,
+                                           return_target=return_target, **holidays_kwargs)
                     if reduce_memory:
                         x = reduce_mem_usage(x, use_ray=False, parallel=False)
                         y = reduce_mem_usage(y, use_ray=False, parallel=False)
@@ -292,7 +264,6 @@ class Formatter:
 
         df_n = df_n[[c for c in y.columns]]
         return df_n
-
 
     def _simulate_transform(self, x=None):
         """
@@ -509,6 +480,39 @@ class Formatter:
             time_lims = pd.DataFrame([time_lims['start_time'].min(), time_lims['end_time'].max()], index=['start_time', 'end_time']).T
         return time_lims
 
+    def global_form_preprocess(self, x):
+        assert np.unique([tr.names for tr in self.target_transformers]) == 'target', 'When using global_form option,' \
+                                                                                     ' the only admissible target is' \
+                                                                                     ' "target"'
+        transformed_columns = [tr.names for tr in self.transformers]
+        transformed_columns = [item for sublist in transformed_columns for item in sublist]
+        transformed_columns = list(set(np.unique(transformed_columns)) - {'target'})
+        # if x is multiindex pd.DataFrame do something
+        if isinstance(x.columns, pd.MultiIndex):
+            # find columns names at level 0 that contains the targets
+            c_l_0 = x.columns.get_level_values(0).unique()
+            private_cols_l0 = [c for c in c_l_0 if not np.all([str(t) in transformed_columns for t in x[c].columns])]
+            shared_cols_l0 = list(set(c_l_0) - set(private_cols_l0))
+            x_shared = x[shared_cols_l0].droplevel(0, 1)
+            dfs = []
+            for p in private_cols_l0:
+                x_p = x[p]
+                target_name_l1 = [c for c in x_p.columns if c not in transformed_columns]
+                assert len(
+                    target_name_l1) == 1, 'something went wrong, there should be only one target column. You must add a transform for all the non-target columns'
+                target_name_l1 = target_name_l1[0]
+                x_p = x_p.rename({target_name_l1: 'target'}, axis=1)
+                dfs.append(pd.concat([x_p, x_shared, pd.DataFrame(p, columns=['name'], index=x.index)], axis=1))
+        else:
+
+            independent_targets = [c for c in x.columns if c not in transformed_columns]
+            dfs = []
+            for c in independent_targets:
+                dfs.append(pd.concat(
+                    [pd.DataFrame(x[c].rename(), columns=['target']), x[transformed_columns],
+                     pd.DataFrame(c, columns=['name'], index=x.index)],
+                    axis=1))
+        return dfs
 class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags

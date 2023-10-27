@@ -274,20 +274,30 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_normalizers_impossible(self):
-        df = pd.DataFrame(np.random.randn(100, 5)+20, index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
-        formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
-        formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
-        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
-        formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b')
+        x_private = pd.DataFrame(np.random.randn(500, 15),
+                                 index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'),
+                                 columns=pd.MultiIndex.from_product([['b1', 'b2', 'b3'], ['a', 'b', 'c', 'd', 'e']]))
+        x_shared = pd.DataFrame(np.random.randn(500, 5),
+                                index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'),
+                                columns=pd.MultiIndex.from_product([['shared'], [0, 1, 2, 3, 4]]))
 
-        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        df_mi = pd.concat([x_private, x_shared], axis=1)
 
-        formatter.add_normalization_expr('(target+a)**2 + b')
-        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='sqrt(target - b) - a')
+        formatter = pyf.Formatter().add_transform([0, 1, 2, 3, 4], lags=np.arange(10), agg_freq='20min',
+                                                  relative_lags=True)
+        formatter.add_transform(['a', 'b', 'c', 'd'], lags=np.arange(10),
+                                agg_freq='20min',
+                                relative_lags=True)
+        formatter.add_target_transform(['target'], ['mean'], agg_bins=[-10, -15, -20])
 
-        # check if back-transform works
-        assert (y_unnorm-y).sum().sum() < 1e-6
+        formatter.add_target_normalizer(['target'], 'mean', agg_freq='10H', name='mean')
+        formatter.add_target_normalizer(['target'], 'std', agg_freq='5H', name='std')
+
+        x, y = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+        formatter.add_normalization_expr('(target-mean)/(std+1)')
+        x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+
+        xs = formatter.global_form_preprocess(df_mi)
 
 if __name__ == '__main__':
     unittest.main()
