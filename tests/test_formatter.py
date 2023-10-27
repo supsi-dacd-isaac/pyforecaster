@@ -247,10 +247,10 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='b')
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalization_expr('(target-a)/b')
+        formatter.add_normalizing_fun(lambda df, t: (df[t] - df['a'])/(df['b']+1))
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='target*b+a')
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun=lambda df, t: df[t]*(df['b']+1) + df['a'])
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -265,9 +265,9 @@ class TestFormatDataset(unittest.TestCase):
 
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalization_expr('exp(target+a) + b')
+        formatter.add_normalizing_fun(lambda df, t: np.exp(df[t]+df['a']) + df['b'])
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_expr='log(target - b) - a')
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun= lambda df, t: np.log(df[t]-df["b"]) -df["a"])
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -294,7 +294,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['target'], 'std', agg_freq='5H', name='std')
 
         x, y = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
-        formatter.add_normalization_expr('(target-mean)/(std+1)')
+        formatter.add_normalizing_fun(lambda df, t: (df[t] - df['mean'])/(df['std']+1))
         x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
 
         xs = formatter.global_form_preprocess(df_mi)

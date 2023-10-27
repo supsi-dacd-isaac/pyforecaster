@@ -35,7 +35,7 @@ class Formatter:
         self.timezone = None
         self.dt = dt
         self.n_parallel = n_parallel if n_parallel is not None else cpu_count()
-        self.normalization_expr = None
+        self.normalizing_fun = None
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -97,11 +97,8 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def add_normalization_expr(self, expr:str):
-        if not 'target' in expr:
-            self.logger.warning('the normalization expression must contain the word "target" which refer to the target variable')
-            self.logger.warning('e.g. (target - normalization_col_name_1) / normalization_col_name_2')
-        self.normalization_expr = expr
+    def add_normalizing_fun(self, expr):
+        self.normalizing_fun = expr
 
     def add_target_normalizer(self, target, function:str=None, agg_freq:str=None, lags:list=None, relative_lags=False, agg_bins=None, name='mean'):
         if isinstance(target, str):
@@ -232,12 +229,12 @@ class Formatter:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
-    def normalize(self, x, y, normalizing_expr=None):
+    def normalize(self, x, y, normalizing_fun=None):
 
-        normalizing_expr = self.normalization_expr if normalizing_expr is None else normalizing_expr
-        if self.normalization_expr is None:
+        normalizing_fun = self.normalizing_fun if normalizing_fun is None else normalizing_fun
+        if self.normalizing_fun is None:
             self.logger.warning('You did not pass any normalization expression, ** no normalization will be applied **. '
-                                '\bYou can set a normalization expression by calling Formatter.add_normalization_expr '
+                                '\bYou can set a normalization expression by calling Formatter.add_normalizing_fun '
                                 '\bor by passing the noralizing_expr argument to this function')
             return y
         # compute normalizers if any
@@ -259,8 +256,7 @@ class Formatter:
                 # find df_n columns to normalize
                 nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
                 for c in nr_columns:
-                    expr = normalizing_expr.replace("target", '`{}`'.format(c))
-                    df_n[c] = df_n.eval(expr)
+                    df_n[c] = normalizing_fun(df_n, c)
 
         df_n = df_n[[c for c in y.columns]]
         return df_n
