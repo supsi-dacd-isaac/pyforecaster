@@ -524,9 +524,14 @@ class Formatter:
                 # reorder columns by correlation with first target
                 transformed_cols_names = tr.metadata.loc[tr.metadata['name']==v].index
                 if corr_reorder:
-                    corr = x[transformed_cols_names].corrwith(y.iloc[:, 0])
-                    transformed_cols_names_reordered = corr.sort_values(ascending=False).index
-                    x.loc[:, transformed_cols_names] = x.loc[:, transformed_cols_names_reordered].values
+                    if y.empty:
+                        transformed_cols_names_reordered = tr.reordered_cols_names_dict[v]
+                        x.loc[:, transformed_cols_names] = x.loc[:, transformed_cols_names_reordered].values
+                    else:
+                        corr = x[transformed_cols_names].corrwith(y.iloc[:, 0])
+                        transformed_cols_names_reordered = corr.sort_values(ascending=False).index
+                        tr.reordered_cols_names_dict[v] = transformed_cols_names_reordered
+                        x.loc[:, transformed_cols_names] = x.loc[:, transformed_cols_names_reordered].values
         xs.append(x)
         ys.append(y)
         return xs, ys
@@ -561,6 +566,7 @@ class Transformer:
         self.transform_time = None  # time at which (lagged) transformations refer w.r.t. present time
         self.generated_features = None
         self.metadata = None
+        self.reordered_cols_names_dict = {}
         self.nested = nested
         if agg_bins is not None:
             self.original_agg_bins = np.copy(np.sort(agg_bins)[::-1])
