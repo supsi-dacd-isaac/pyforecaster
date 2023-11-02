@@ -125,7 +125,7 @@ class Formatter:
         self.target_normalizers.append(transformer)
 
     def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=False,
-                  reduce_memory=True, **holidays_kwargs):
+                  reduce_memory=True, corr_reorder=False, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -139,6 +139,14 @@ class Formatter:
                             forecasted with a global model. In this case, all target transform must refer to a "target"
                             column, which is the stacking of the independent signals. An additional column "name" is
                             added to the transformed dataset, which contains the name of the signal to be forecasted.
+                            This is useful for stacking models.
+        :param parallel: if True, parallelize the transformation of the dataset. This is useful if you have a lot of
+                            signals to transform and you have a lot of cores. If you have a lot of signals but not a lot
+                            of cores, you can set parallel=False and the transformation will be done in a single core
+                            but with a single pass on the dataset. This is useful if you have a lot of signals but not
+                            a lot of cores.
+        :param reduce_memory: if True, reduce memory usage by casting float64 to float32 and int64 to int32
+        :param corr_reorder: if True, reorder columns of the transformed dataset by correlation with the target
 
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
@@ -155,20 +163,13 @@ class Formatter:
                     x, y = fdf_parallel(f=partial(self._transform, time_features=time_features, holidays=holidays,
                                                   return_target=return_target, **holidays_kwargs),
                                         df=dfs[n_cpu * i:n_cpu * (i + 1)])
-                    if reduce_memory:
-                        x = reduce_mem_usage(x, use_ray=True)
-                        y = reduce_mem_usage(y, use_ray=True)
-                    xs.append(x)
-                    ys.append(y)
+                    xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
             else:
                 for df_i in dfs:
                     x, y = self._transform(df_i, time_features=time_features, holidays=holidays,
                                            return_target=return_target, **holidays_kwargs)
-                    if reduce_memory:
-                        x = reduce_mem_usage(x, use_ray=False, parallel=False)
-                        y = reduce_mem_usage(y, use_ray=False, parallel=False)
-                    xs.append(x)
-                    ys.append(y)
+                    xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
+
             x = pd.concat(xs)
             target = pd.concat(ys)
         else:
@@ -509,6 +510,26 @@ class Formatter:
                      pd.DataFrame(c, columns=['name'], index=x.index)],
                     axis=1))
         return dfs
+
+    def global_form_postprocess(self, x, y, xs, ys, reduce_memory=False, corr_reorder=False):
+
+        if reduce_memory:
+            x = reduce_mem_usage(x, use_ray=True)
+            y = reduce_mem_usage(y, use_ray=True)
+
+        # for all transformations
+        for tr in self.transformers:
+            # for all the features of the transformation
+            for v in np.unique(tr.metadata.name):
+                # reorder columns by correlation with first target
+                transformed_cols_names = tr.metadata.loc[tr.metadata['name']==v].index
+                if corr_reorder:
+                    corr = x[transformed_cols_names].corrwith(y.iloc[:, 0])
+                    transformed_cols_names_reordered = corr.sort_values(ascending=False).index
+                    x.loc[:, transformed_cols_names] = x.loc[:, transformed_cols_names_reordered].values
+        xs.append(x)
+        ys.append(y)
+        return xs, ys
 class Transformer:
     """
     Defines and applies transformations through rolling time windows and lags
