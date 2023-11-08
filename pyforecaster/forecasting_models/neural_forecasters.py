@@ -11,7 +11,7 @@ from functools import partial
 from os.path import join
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-
+from typing import Union
 
 def positive_lecun(key, shape, dtype=jnp.float32, init_type='normal'):
     # Start with standard lecun_normal initialization
@@ -36,7 +36,25 @@ class LinRegModule(nn.Module):
         x = nn.Dense(features=self.n_out, name='dense')(x)
         return x
 
-class FastLinReg(ScenarioGenerator):
+class FeedForwardModule(nn.Module):
+    n_layers: Union[int, np.array, list]
+    n_out: int=None
+    n_neurons: int=None
+    @nn.compact
+    def __call__(self, x):
+        if isinstance(self.n_layers, int):
+            layers = np.ones(self.n_layers) * self.n_neurons
+            layers[-1] = self.n_out
+        else:
+            layers = self.n_layers
+        for i, n in enumerate(layers):
+            x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
+            if i < len(layers):
+                x = nn.relu(x)
+        return x
+
+
+class NN(ScenarioGenerator):
     scaler: StandardScaler = None
     learning_rate: float = 0.01
     batch_size: int = None
@@ -48,9 +66,11 @@ class FastLinReg(ScenarioGenerator):
     rel_tol: float = 1e-4
 
 
-    def __init__(self, n_out=1, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3, **scengen_kwgs):
-        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
-        model = LinRegModule(n_out)
+    def __init__(self, n_out=1, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
+                 nn_module=None, scengen_dict={}, batch_size=None,  **model_kwargs):
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_dict)
+        model = nn_module(n_out=n_out, **model_kwargs)
+        self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.model = model
         self.optimizer = optax.adam(learning_rate=self.learning_rate)
@@ -167,6 +187,20 @@ class FastLinReg(ScenarioGenerator):
         x = self.get_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x)
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
+
+
+class FastLinReg(NN):
+    def __init__(self, n_out=1, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
+                 scengen_dict={}, **model_kwargs):
+        super().__init__(n_out=n_out, q_vect=q_vect, n_epochs=n_epochs, val_ratio=val_ratio, nodes_at_step=nodes_at_step, learning_rate=learning_rate,
+                 nn_module=LinRegModule, scengen_dict=scengen_dict, **model_kwargs)
+
+class FFNN(NN):
+    def __init__(self, n_out=None, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
+                       scengen_dict={}, batch_size=None, **model_kwargs):
+        super().__init__(n_out=n_out, q_vect=q_vect, n_epochs=n_epochs, val_ratio=val_ratio, nodes_at_step=nodes_at_step, learning_rate=learning_rate,
+                 nn_module=FeedForwardModule, scengen_dict=scengen_dict, batch_size=batch_size,  **model_kwargs)
+
 
 class PICNNLayer(nn.Module):
 
@@ -425,30 +459,43 @@ class PICNN(ScenarioGenerator):
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
 
-    def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, **objective_kwargs):
+    def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, recompile_obj=True, **objective_kwargs):
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         inputs = inputs.copy()
         x, y = self.get_inputs(inputs)
-        def _objective(y, x):
+
+        def _objective(y, x, **objective_kwargs):
             return objective(self.model.apply(self.pars, x, y), y, **objective_kwargs)
 
-        if self.iterate is None:
+        # if the objective changes from one call to another, you need to recompile it. Slower but necessary
+        if recompile_obj:
             @jit
-            def iterate(x, y, opt_state):
+            def iterate(x, y, opt_state, **objective_kwargs):
                 for i in range(10):
-                    values, grads = value_and_grad(_objective)(y, x)
+                    values, grads = value_and_grad(partial(_objective, **objective_kwargs))(y, x)
                     updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
                     y = optax.apply_updates(y, updates)
                 return y, values
             self.iterate = iterate
+        else:
+            if self.iterate is None:
+                @jit
+                def iterate(x, y, opt_state, **objective_kwargs):
+                    for i in range(10):
+                        values, grads = value_and_grad(partial(_objective, **objective_kwargs))(y, x)
+                        updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
+                        y = optax.apply_updates(y, updates)
+                    return y, values
+
+                self.iterate = iterate
 
         opt_state = self.inverter_optimizer.init(y)
-        y, values_old = self.iterate(x, y, opt_state)
+        y, values_old = self.iterate(x, y, opt_state, **objective_kwargs)
         values_init = np.copy(values_old)
 
         # do 10 iterations at a time to speed up, check for convergence
         for i in range(n_iter//10):
-            y, values = self.iterate(x, y, opt_state)
+            y, values = self.iterate(x, y, opt_state, **objective_kwargs)
             rel_improvement = (values_old - values) / (np.abs(values_old)+ 1e-6)
             values_old = values
             if rel_improvement < rel_tol:

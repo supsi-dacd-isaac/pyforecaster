@@ -9,7 +9,7 @@ from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
-from pyforecaster.forecasting_models.neural_forecasters import FastLinReg
+from pyforecaster.forecasting_models.neural_forecasters import FastLinReg, FFNN
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -73,7 +73,8 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m_lin = LinearForecaster(val_ratio=0.2, fit_intercept=False, normalize=False).fit(x_tr, y_tr)
-        m_fast_lin = FastLinReg(val_ratio=0.2, fit_intercept=False, normalize=False, n_out=y_tr.shape[1], learning_rate=10).fit(x_fast_tr, y_fast_tr, n_epochs=100)
+        m_fast_lin = FastLinReg(val_ratio=0.2,  n_out=y_tr.shape[1], learning_rate=10).fit(x_fast_tr, y_fast_tr, n_epochs=100)
+        m_fast_lin = FFNN(val_ratio=0.2, learning_rate=0.01, n_layers=[200, 200, 200, y_tr.shape[1]], batch_size=400).fit(x_fast_tr, y_fast_tr, n_epochs=100)
 
         y_hat = m_lin.predict(x_te)
         y_hat_fast = m_fast_lin.predict(x_fast_te)
