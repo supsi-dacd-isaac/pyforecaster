@@ -220,9 +220,10 @@ class PICNNLayer(nn.Module):
 
         # Input-Convex component without bias for the element-wise multiplicative interactions
         wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
+        wzu = nn.relu(wzu)
         wyu = self.activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
 
-        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz',kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
+        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz', kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
         y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
         z_next = z_next + y_next + nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
         if not self.prediction_layer:
@@ -254,9 +255,9 @@ def reproject_weights(params, rec_stable=False):
     # Loop through each layer and reproject the input-convex weights
     for layer_name in params['params']:
         if 'PICNNLayer' in layer_name:
-            params['params'][layer_name]['wzu']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wzu']['kernel'])
+            params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
             if rec_stable:
-                params['params'][layer_name]['wyu']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wyu']['kernel'])
+                params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
 
     return params
 
@@ -459,7 +460,7 @@ class PICNN(ScenarioGenerator):
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
 
-    def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, recompile_obj=True, **objective_kwargs):
+    def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, recompile_obj=True, vanilla_gd=False, **objective_kwargs):
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         inputs = inputs.copy()
         x, y = self.get_inputs(inputs)
@@ -473,8 +474,11 @@ class PICNN(ScenarioGenerator):
             def iterate(x, y, opt_state, **objective_kwargs):
                 for i in range(10):
                     values, grads = value_and_grad(partial(_objective, **objective_kwargs))(y, x)
-                    updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
-                    y = optax.apply_updates(y, updates)
+                    if vanilla_gd:
+                        y -= grads * 1e-1
+                    else:
+                        updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
+                        y = optax.apply_updates(y, updates)
                 return y, values
             self.iterate = iterate
         else:
@@ -483,8 +487,11 @@ class PICNN(ScenarioGenerator):
                 def iterate(x, y, opt_state, **objective_kwargs):
                     for i in range(10):
                         values, grads = value_and_grad(partial(_objective, **objective_kwargs))(y, x)
-                        updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
-                        y = optax.apply_updates(y, updates)
+                        if vanilla_gd:
+                            y -= grads * 1e-1
+                        else:
+                            updates, opt_state = self.inverter_optimizer.update(grads, opt_state, y)
+                            y = optax.apply_updates(y, updates)
                     return y, values
 
                 self.iterate = iterate
