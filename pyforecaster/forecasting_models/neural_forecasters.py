@@ -545,6 +545,7 @@ class PICNN(ScenarioGenerator):
 
 
     def get_normalized_inputs(self, inputs):
+        inputs = inputs.copy()
         normalized_inputs = self.scaler.transform(inputs[self.to_be_normalized])
         inputs.loc[:, self.to_be_normalized] = normalized_inputs.copy().values
 
