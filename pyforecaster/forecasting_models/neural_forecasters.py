@@ -211,9 +211,13 @@ class PICNNLayer(nn.Module):
     prediction_layer: bool = False
     activation: callable = identity
     init_type: str = 'normal'
-
+    augment_ctrl_inputs: bool = False
+    layer_normalization: bool = False
     @nn.compact
     def __call__(self, y, u, z):
+        if self.augment_ctrl_inputs:
+            y = jnp.hstack([y, -y])
+
         # Input-Convex component without bias for the element-wise multiplicative interactions
         wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
         wzu = nn.relu(wzu)
@@ -221,7 +225,14 @@ class PICNNLayer(nn.Module):
 
         z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz', kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
         y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
-        z_next = z_next + y_next + nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
+        u_add = nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
+
+        if self.layer_normalization:
+            y_next = nn.LayerNorm()(y_next)
+            z_next = nn.LayerNorm()(z_next)
+            u_add = nn.LayerNorm()(u_add)
+
+        z_next = z_next + y_next + u_add
         if not self.prediction_layer:
             z_next = nn.relu(z_next)
             # Traditional NN component only if it's not the prediction layer
@@ -239,6 +250,8 @@ class PartiallyICNN(nn.Module):
     features_out: int
     activation: callable = identity
     init_type: str = 'normal'
+    augment_ctrl_inputs: bool = False
+    layer_normalization:bool = False
     @nn.compact
     def __call__(self, x, y):
         u = x
@@ -247,7 +260,8 @@ class PartiallyICNN(nn.Module):
             prediction_layer = i == self.num_layers -1
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
                               n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
-                              init_type=self.init_type)(y, u, z)
+                              init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
+                              layer_normalization=self.layer_normalization)(y, u, z)
         return z
 
 
@@ -285,11 +299,14 @@ class PICNN(ScenarioGenerator):
     init_type: str = 'normal'
     unnormalized_inputs: list = None
     to_be_normalized:list = None
+    augment_ctrl_inputs: bool = False
+    layer_normalization: bool = False
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
                  q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None,
-                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', unnormalized_inputs=None, **scengen_kwgs):
+                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', unnormalized_inputs=None,
+                 augment_ctrl_inputs=False, layer_normalization=False, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
                        "inverter_learning_rate": inverter_learning_rate,
@@ -306,12 +323,14 @@ class PICNN(ScenarioGenerator):
                        "stats_step": stats_step,
                        "rel_tol":rel_tol,
                        "init_type":init_type,
-                       "unnormalized_inputs":unnormalized_inputs
+                       "unnormalized_inputs":unnormalized_inputs,
+                       "augment_ctrl_inputs":augment_ctrl_inputs,
+                       "layer_normalization":layer_normalization
                        })
         if self.load_path is not None:
             self.load(self.load_path)
 
-        self.n_hidden_y = len(self.optimization_vars)
+        self.n_hidden_y = 2*len(self.optimization_vars) if augment_ctrl_inputs else len(self.optimization_vars)
         model = self.set_arch()
         self.model = model
 
@@ -371,7 +390,7 @@ class PICNN(ScenarioGenerator):
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type)
+                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs)
         return model
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
@@ -511,12 +530,10 @@ class PICNN(ScenarioGenerator):
             values_old = values
             if rel_improvement < rel_tol:
                 break
-        self.logger.info('optimization terminated at iter {}, final objective rel improvement: {:0.2e} '.format(
-            (i+1)*10,(values_init - values) / (np.abs(values_init)+ 1e-12)))
 
-        self.logger.info('optimization terminated at iter {}, final objective value: {:0.2e} '
+        print('optimization terminated at iter {}, final objective value: {:0.2e} '
                          'rel improvement: {:0.2e}'.format((i+1)*10, values,
-                                                          (values_init-values)/(np.abs(values_init)+1e-6)))
+                                                          (values_init-values)/(np.abs(values_init)+1e-12)))
 
         inputs.loc[:, self.optimization_vars] = y.ravel()
         inputs.loc[:, [c for c in inputs.columns if c not in  self.optimization_vars]] = x.ravel()
@@ -529,7 +546,7 @@ class PICNN(ScenarioGenerator):
 
     def get_normalized_inputs(self, inputs):
         normalized_inputs = self.scaler.transform(inputs[self.to_be_normalized])
-        inputs.loc[:, self.to_be_normalized] = normalized_inputs
+        inputs.loc[:, self.to_be_normalized] = normalized_inputs.copy().values
 
         x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
         y = inputs[self.optimization_vars].values

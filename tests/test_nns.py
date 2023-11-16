@@ -83,20 +83,18 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-
         optimization_vars = x_tr.columns[:100]
 
-
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3).fit(x_tr,
-                                                                                           y_tr,
-                                                                                           n_epochs=3,
-                                                                                           savepath_tr_plots=savepath_tr_plots,
-                                                                                           stats_step=40)
+               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3,
+                  augment_ctrl_inputs=True, layer_normalization=True, unnormalized_inputs=optimization_vars).fit(x_tr, y_tr,
+                                                                          n_epochs=3,
+                                                                          savepath_tr_plots=savepath_tr_plots,
+                                                                          stats_step=40)
 
-        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + jnp.sum(ctrl**2)
+        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + 0.01*jnp.sum(ctrl**2)
         ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=50)
-        y_hat = m.predict(x_te.iloc[[100], :])
+        y_hat = m.predict(x_te.iloc[[100], :].copy())
 
         x_freeze = x_te.iloc[[100], :].copy()
         x_freeze[optimization_vars] = ctrl_opt.ravel()
