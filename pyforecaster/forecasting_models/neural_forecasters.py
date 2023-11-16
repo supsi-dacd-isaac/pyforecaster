@@ -116,8 +116,8 @@ class NN(ScenarioGenerator):
         batch_size = self.batch_size if self.batch_size is not None else x.shape[0] // 10
         num_batches = y.shape[0] // batch_size
         y = y.values
-        x = self.get_inputs(x)
-        x_val = self.get_inputs(x_val_0)
+        x = self.get_normalized_inputs(x)
+        x_val = self.get_normalized_inputs(x_val_0)
 
         pars = self.init_arch(self.model, x.shape[1])
         opt_state = self.optimizer.init(pars)
@@ -161,7 +161,7 @@ class NN(ScenarioGenerator):
             self.pars = pars
         super().fit(x_val_0, y_val)
         return self
-    def get_inputs(self, inputs):
+    def get_normalized_inputs(self, inputs):
         inputs = self.scaler.transform(inputs)
         return inputs.values
 
@@ -184,7 +184,7 @@ class NN(ScenarioGenerator):
         plt.savefig(join(savepath, 'losses_iter_{:05d}.png'.format(k)))
 
     def predict(self, inputs, **kwargs):
-        x = self.get_inputs(inputs)
+        x = self.get_normalized_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x)
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
@@ -283,11 +283,13 @@ class PICNN(ScenarioGenerator):
     rel_tol: float = 1e-4
     rec_stable: bool = False
     init_type: str = 'normal'
+    unnormalized_inputs: list = None
+    to_be_normalized:list = None
     def __init__(self, learning_rate: float = 0.01, inverter_learning_rate: float = 0.1, batch_size: int = None,
                  load_path: str = None, n_hidden_x: int = 100, n_out: int = None,
                  n_layers: int = 3, optimization_vars: list = (), pars: dict = None, target_columns: list = None,
                  q_vect=None, val_ratio=None, nodes_at_step=None, n_epochs:int=10, savepath_tr_plots:str = None,
-                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', **scengen_kwgs):
+                 stats_step:int=50, rel_tol:float=1e-4, init_type='normal', unnormalized_inputs=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
                        "inverter_learning_rate": inverter_learning_rate,
@@ -303,7 +305,8 @@ class PICNN(ScenarioGenerator):
                        "savepath_tr_plots":savepath_tr_plots,
                        "stats_step": stats_step,
                        "rel_tol":rel_tol,
-                       "init_type":init_type
+                       "init_type":init_type,
+                       "unnormalized_inputs":unnormalized_inputs
                        })
         if self.load_path is not None:
             self.load(self.load_path)
@@ -372,18 +375,19 @@ class PICNN(ScenarioGenerator):
         return model
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
+        self.to_be_normalized = [c for c in inputs.columns if c not in self.unnormalized_inputs] if self.unnormalized_inputs is not None else inputs.columns
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
-        self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs)
+        self.scaler = StandardScaler().set_output(transform='pandas').fit(inputs[self.to_be_normalized])
 
         inputs, targets, inputs_val, targets_val = self.train_val_split(inputs, targets)
         self.target_columns = targets.columns
         batch_size = self.batch_size if self.batch_size is not None else inputs.shape[0] // 10
         num_batches = inputs.shape[0] // batch_size
 
-        x, y = self.get_inputs(inputs)
-        x_val, y_val = self.get_inputs(inputs_val)
+        x, y = self.get_normalized_inputs(inputs)
+        x_val, y_val = self.get_normalized_inputs(inputs_val)
 
         targets = targets.values
 
@@ -455,7 +459,7 @@ class PICNN(ScenarioGenerator):
 
 
     def predict(self, inputs, **kwargs):
-        x, y = self.get_inputs(inputs)
+        x, y = self.get_normalized_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x, y)
         return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
@@ -463,7 +467,7 @@ class PICNN(ScenarioGenerator):
     def optimize(self, inputs, objective, n_iter=200, rel_tol=1e-4, recompile_obj=True, vanilla_gd=False, **objective_kwargs):
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         inputs = inputs.copy()
-        x, y = self.get_inputs(inputs)
+        x, y = self.get_normalized_inputs(inputs)
 
         def _objective(y, x, **objective_kwargs):
             return objective(self.model.apply(self.pars, x, y), y, **objective_kwargs)
@@ -503,10 +507,12 @@ class PICNN(ScenarioGenerator):
         # do 10 iterations at a time to speed up, check for convergence
         for i in range(n_iter//10):
             y, values = self.iterate(x, y, opt_state, **objective_kwargs)
-            rel_improvement = (values_old - values) / (np.abs(values_old)+ 1e-6)
+            rel_improvement = (values_old - values) / (np.abs(values_old)+ 1e-12)
             values_old = values
             if rel_improvement < rel_tol:
                 break
+        self.logger.info('optimization terminated at iter {}, final objective rel improvement: {:0.2e} '.format(
+            (i+1)*10,(values_init - values) / (np.abs(values_init)+ 1e-12)))
 
         self.logger.info('optimization terminated at iter {}, final objective value: {:0.2e} '
                          'rel improvement: {:0.2e}'.format((i+1)*10, values,
@@ -514,19 +520,23 @@ class PICNN(ScenarioGenerator):
 
         inputs.loc[:, self.optimization_vars] = y.ravel()
         inputs.loc[:, [c for c in inputs.columns if c not in  self.optimization_vars]] = x.ravel()
-        inputs.loc[:, :] = self.scaler.inverse_transform(inputs.values)
+        inputs.loc[:, self.to_be_normalized] = self.scaler.inverse_transform(inputs[self.to_be_normalized].values)
         target_opt = self.predict(inputs)
 
         y_opt = inputs.loc[:, self.optimization_vars].values.ravel()
         return y_opt, inputs, target_opt, values
 
 
-    def get_inputs(self, inputs):
-        inputs = self.scaler.transform(inputs)
+    def get_normalized_inputs(self, inputs):
+        normalized_inputs = self.scaler.transform(inputs[self.to_be_normalized])
+        inputs.loc[:, self.to_be_normalized] = normalized_inputs
+
         x = inputs[[c for c in inputs.columns if not c in self.optimization_vars]].values
         y = inputs[self.optimization_vars].values
         return x, y
 
+    def get_denormalized_output(self, output):
+        self.scaler.inverse_transform(output.values)
 
 class RecStablePICNN(PICNN):
     rec_stable = True
