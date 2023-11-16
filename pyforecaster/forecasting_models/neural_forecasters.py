@@ -214,10 +214,6 @@ class PICNNLayer(nn.Module):
 
     @nn.compact
     def __call__(self, y, u, z):
-        # Traditional NN component
-        u_next = nn.Dense(features=self.features_x, name='u_dense')(u)
-        u_next = nn.relu(u_next)
-
         # Input-Convex component without bias for the element-wise multiplicative interactions
         wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
         wzu = nn.relu(wzu)
@@ -228,8 +224,12 @@ class PICNNLayer(nn.Module):
         z_next = z_next + y_next + nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
         if not self.prediction_layer:
             z_next = nn.relu(z_next)
-
-        return u_next, z_next
+            # Traditional NN component only if it's not the prediction layer
+            u_next = nn.Dense(features=self.features_x, name='u_dense')(u)
+            u_next = nn.relu(u_next)
+            return u_next, z_next
+        else:
+            return None, z_next
 
 
 class PartiallyICNN(nn.Module):
