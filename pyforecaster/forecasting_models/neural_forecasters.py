@@ -546,6 +546,7 @@ class PICNN(ScenarioGenerator):
 
     def get_normalized_inputs(self, inputs):
         inputs = inputs.copy()
+        self.to_be_normalized = [c for c in inputs.columns if c not in self.unnormalized_inputs] if self.unnormalized_inputs is not None else inputs.columns
         normalized_inputs = self.scaler.transform(inputs[self.to_be_normalized])
         inputs.loc[:, self.to_be_normalized] = normalized_inputs.copy().values
 
