@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN
+from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -41,21 +41,44 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
+        m = NN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
+               n_out=y_tr.shape[1], n_layers=3).fit(x_tr,y_tr, n_epochs=1, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+
+        y_hat_1 = m.predict(x_te.iloc[:100, :])
+
+
+    def test_picnn(self):
+        # normalize inputs
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        n_tr = int(len(x) * 0.8)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        savepath_tr_plots = 'tests/results/ffnn_tr_plots'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
 
         optimization_vars = x_tr.columns[:100]
 
 
-        m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
-                                                                                           y_tr,
-                                                                                           n_epochs=1,
-                                                                                           savepath_tr_plots=savepath_tr_plots,
-                                                                                           stats_step=40)
+        m_1 = PICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
+                                                                                            y_tr,
+                                                                                            n_epochs=1,
+                                                                                            savepath_tr_plots=savepath_tr_plots,
+                                                                                            stats_step=40)
 
-        y_hat_1 = m.predict(x_te.iloc[:100, :])
-        m.save('tests/results/ffnn_model.pk')
+        y_hat_1 = m_1.predict(x_te)
+        m_1.save('tests/results/ffnn_model.pk')
+
         n = PICNN(load_path='tests/results/ffnn_model.pk')
         y_hat_2 = n.predict(x_te.iloc[:100, :])
+
 
         m = RecStablePICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                   n_out=1, n_layers=3, optimization_vars=optimization_vars).fit(x_tr,y_tr.iloc[:, [0]],

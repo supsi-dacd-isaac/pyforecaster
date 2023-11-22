@@ -273,7 +273,8 @@ class Formatter:
         for tr in self.target_transformers:
             _ = tr.transform(x, simulate=True)
 
-    def plot_transformed_feature(self, x, feature, frames=100):
+    def plot_transformed_feature(self, x, feature, frames=100, ax_labels=None, legend_kwargs={},
+                   remove_spines=True, **kwargs):
         x_tr, target = self.transform(x)
         all_feats = pd.concat([x_tr, target], axis=1)
         fs = []
@@ -289,7 +290,8 @@ class Formatter:
                     end_times.append(
                         t.metadata.loc[derived_features.index[derived_features['function'] == function], 'end_time'])
 
-        ani = ts_animation_bars(fs, start_times, end_times, names, frames=frames)
+        ani = ts_animation_bars(fs, start_times, end_times, frames=frames, ax_labels=ax_labels,
+                                legend_kwargs=legend_kwargs, remove_spines=remove_spines, **kwargs)
         return ani
 
     def cat_encoding(self, df_train, df_test, target, encoder=None, cat_features=None):

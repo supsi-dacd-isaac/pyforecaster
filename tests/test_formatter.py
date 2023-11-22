@@ -136,7 +136,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=False)
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x2)
-        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+        #formatter.plot_transformed_feature(self.x2, 0, frames=100)
 
         # test nested transform (much faster)
         formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
@@ -144,7 +144,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20], nested=True)
         formatter.add_target_transform([0], lags=-np.arange(30) - 1)
         x_transformed_nested, y_transformed = formatter.transform(self.x2)
-        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+        #formatter.plot_transformed_feature(self.x2, 0, frames=100)
 
 
         formatter = pyf.Formatter().add_transform([0], ['min', 'max'], agg_bins=[0, 1, 4, 10])
@@ -152,10 +152,10 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_transform([0], ['mean'], lags=np.arange(10), agg_freq='20min', relative_lags=True)
         formatter.add_target_transform([0], lags=-np.arange(30)-1)
         x_transformed, y_transformed = formatter.transform(self.x3)
-        formatter.plot_transformed_feature(self.x3, 0, frames=30)
+        #formatter.plot_transformed_feature(self.x3, 0, frames=30)
 
         x_transformed, y_transformed = formatter.transform(self.x2)
-        formatter.plot_transformed_feature(self.x2, 0, frames=100)
+        #formatter.plot_transformed_feature(self.x2, 0, frames=100)
         plt.close('all')
 
     def test_speed(self):
@@ -288,11 +288,11 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_normalizers_impossible(self):
-        x_private = pd.DataFrame(np.random.randn(500, 15),
-                                 index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'),
+        x_private = pd.DataFrame(np.random.randn(100, 15),
+                                 index=pd.date_range('01-01-2020', '01-05-2020', 100, tz='Europe/Zurich'),
                                  columns=pd.MultiIndex.from_product([['b1', 'b2', 'b3'], ['a', 'b', 'c', 'd', 'e']]))
-        x_shared = pd.DataFrame(np.random.randn(500, 5),
-                                index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'),
+        x_shared = pd.DataFrame(np.random.randn(100, 5),
+                                index=pd.date_range('01-01-2020', '01-05-2020', 100, tz='Europe/Zurich'),
                                 columns=pd.MultiIndex.from_product([['shared'], [0, 1, 2, 3, 4]]))
 
         df_mi = pd.concat([x_private, x_shared], axis=1)

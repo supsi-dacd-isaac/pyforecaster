@@ -8,7 +8,7 @@ from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
 import networkx as nx
-
+from pyforecaster.scenred import plot_from_graph
 
 def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
     plt.style.use(style)
@@ -190,14 +190,25 @@ def ts_animation(ys:list, ts=None, names=None, frames=150, interval=1, step=1, r
     return ani
 
 
-"""
-def tree_animation(ys:list, y_gt=None, times=None, frames=150):
+
+def plot_trees(ys:list, y_gt=None, times=None, frames=150, ax_labels=None, legend_kwargs={},
+                   remove_spines=True, savepath=None, **kwargs):
     "plot the first n_rows of the two y_te and y_hat matrices"
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, **kwargs)
     f_min = np.min([np.min(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
     f_max = np.max([np.max(np.array(list(nx.get_node_attributes(y, 'v').values()))) for y in ys])
     lines = None
-    lines = scrd.plot_from_graph(ys[0], alpha=0.2, linewidth=1)
+    lines = plot_from_graph(ys[0], alpha=0.2, linewidth=1, ax=ax, color='r')
+    if ax_labels is not None:
+        for k, v in ax_labels.items():
+            if k == 'x':
+                ax.set_xlabel(v)
+            elif k == 'y':
+                ax.set_ylabel(v)
+    if remove_spines:
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
     if y_gt is not None:
         t = np.arange(len(y_gt[0][0])) if times is None else times
         lines_ground_truth = []
@@ -207,25 +218,37 @@ def tree_animation(ys:list, y_gt=None, times=None, frames=150):
     ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
 
     def animate(i):
-        _ = scrd.plot_from_graph(ys[i], lines, alpha=0.2)
+        _ = plot_from_graph(ys[i], lines, alpha=0.2, ax=ax, color='r')
         if y_gt is not None:
             for y, l in zip(y_gt, lines_ground_truth):
                 l.set_data(t, y[i, :])
         return
+    if savepath is not None:
+        writervideo = animation.FFMpegWriter(fps=60)
+        animation.FuncAnimation(fig, animate, blit=False, frames=np.minimum(len(ys) - 1, frames), interval=100,
+                                repeat=False).save(savepath, writer=writervideo)
+    else:
+        return animation.FuncAnimation(fig, animate,  blit=False, frames=np.minimum(len(ys)-1, frames), interval=100,
+                                       repeat=False)
 
-    plt.pause(1e-5)
-    ani = animation.FuncAnimation(fig, animate,  blit=False, frames=np.minimum(len(ys)-1, frames), interval=100, repeat=False)
 
-    return ani
-"""
-
-def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150):
+def ts_animation_bars(ys:list, start_t:list, end_t:list, frames=150, ax_labels=None, legend_kwargs={},
+                   remove_spines=True, savepath=None, **kwargs):
     "plot the first n_rows of the two y_te and y_hat matrices"
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, **kwargs)
     lines = []
     f_min = np.min([np.min(y) for y in ys])
     f_max = np.max([np.max(y) for y in ys])
     cm = plt.get_cmap('Set1')
+    if ax_labels is not None:
+        for k, v in  ax_labels.items():
+            if k == 'x':
+                ax.set_xlabel(v)
+            elif k == 'y':
+                ax.set_ylabel(v)
+    if remove_spines:
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
     def init():
         for y, s_t, e_t, idx in zip(ys, start_t, end_t, range(len(ys))):
             l = [ax.stairs(y_j.ravel(), np.array([s_t.iloc[j]/np.timedelta64(3600*24,'s'), e_t.iloc[j]/np.timedelta64(3600*24,'s')]), color=cm(idx)) for j, y_j in enumerate(y[0, :])]
@@ -238,18 +261,23 @@ def ts_animation_bars(ys:list, start_t:list, end_t:list, names:list, frames=150)
         for y, l, s_t, e_t in zip(ys, lines, start_t, end_t):
             for j, l_j in enumerate(l):
                 l_j.set_data(y[i, j].ravel(), np.array([s_t.iloc[j]/np.timedelta64(3600*24,'s'), e_t.iloc[j]/np.timedelta64(3600*24,'s')]))
+        ax.legend(**legend_kwargs)
         return [item for sublist in lines for item in sublist]
 
-    plt.pause(1e-5)
-    ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=100, repeat=False)
+    if savepath is not None:
+        writervideo = animation.FFMpegWriter(fps=60)
+        animation.FuncAnimation(fig, animate, init_func=init, blit=False, frames=np.minimum(ys[0].shape[0] - 1, frames),
+                                interval=100, repeat=False).save(savepath, writer=writervideo)
+    else:
+        return animation.FuncAnimation(fig, animate, init_func=init, blit=False,
+                                       frames=np.minimum(ys[0].shape[0] - 1, frames), interval=100, repeat=False)
 
-    return ani
-
-def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=False):
+def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=False, ax_labels=None, legend_kwargs={},
+                   remove_spines=True, savepath=None, **kwargs):
     n_max = np.minimum(signals[0].shape[0], int(n_rows*step))
     n_rows = np.minimum(int(np.floor(signals[0].shape[0]/step)), n_rows)
     qs = qs.values if isinstance(qs, pd.DataFrame) else qs
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, **kwargs)
     signals = signals if isinstance(signals, list) else [signals]
     t = np.arange(signals[0].shape[1])
     lines= []
@@ -260,11 +288,23 @@ def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=Fa
     lineq = ax.plot(np.squeeze(qs[0, :, :]), 'r', lw=2, alpha=0.3)
     ax.set_ylim(np.min(qs[:n_max]), np.max(qs[:n_max])*1.05)
 
+    if ax_labels is not None:
+        for k, v in  ax_labels.items():
+            if k == 'x':
+                ax.set_xlabel(v)
+            elif k == 'y':
+                ax.set_ylabel(v)
+    if remove_spines:
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+
+
     def animate(i):
         i = i * step
         for l, s in zip(lines, signals):
             l.set_data(t, s[i, :])
         [lineq[j].set_data(t, qsi) for j, qsi in enumerate(qs[i, :, :].T)]
+        ax.legend(**legend_kwargs)
         return (*lines, *lineq, )
 
     def init():
@@ -272,9 +312,14 @@ def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=Fa
         plt.legend()
         return (lines[0],)
 
-    ani = animation.FuncAnimation(fig, animate, init_func=init, frames=n_rows, interval=interval, blit=True,
+
+    if savepath is not None:
+        writervideo = animation.FFMpegWriter(fps=60)
+        animation.FuncAnimation(fig, animate, init_func=init, frames=n_rows, interval=interval, blit=True,
+                                repeat=repeat).save(savepath, writer=writervideo)
+    else:
+        return animation.FuncAnimation(fig, animate, init_func=init, frames=n_rows, interval=interval, blit=True,
                                   repeat=repeat)
-    return ani
 
 
 def plot_scenarios_from_multilevel(scens, i=0, ax=None):
