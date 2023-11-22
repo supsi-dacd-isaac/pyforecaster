@@ -212,7 +212,7 @@ class NN(ScenarioGenerator):
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
 
                             rand_idx_plt = np.random.choice(validation_len, 9)
-                            self.training_plots([i[rand_idx_plt, :] for i in inputs] if isinstance(inputs, tuple) else inputs_val[rand_idx_plt, :],
+                            self.training_plots([i[rand_idx_plt, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_plt, :],
                                                 targets_val.values[rand_idx_plt, :], tr_loss, val_loss, savepath_tr_plots, k)
 
                         rel_te_err = (val_loss[-2] - val_loss[-1]) / np.abs(val_loss[-2] + 1e-6)
