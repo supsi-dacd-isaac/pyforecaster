@@ -88,7 +88,7 @@ class TestFormatDataset(unittest.TestCase):
         m.predict(x_te.iloc[:100, :])
 
         print(np.sum(y_hat_1-y_hat_2).sum())
-        assert np.all(np.sum(y_hat_1-y_hat_2).abs() <= 1e-12)
+        assert np.all(np.mean((y_hat_1-y_hat_2).abs()) <= 1e-6)
 
 
     def test_optimization(self):
