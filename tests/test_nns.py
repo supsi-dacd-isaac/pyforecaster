@@ -135,7 +135,7 @@ class TestFormatDataset(unittest.TestCase):
 
     def test_hyperpar_optimization(self):
 
-        model = PICNN(optimization_vars=self.x.columns[:10], n_out=self.y.shape[1])
+        model = PICNN(optimization_vars=self.x.columns[:10], n_out=self.y.shape[1], n_epochs=6)
 
         n_folds = 2
         cv_idxs = []

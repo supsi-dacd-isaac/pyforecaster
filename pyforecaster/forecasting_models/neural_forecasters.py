@@ -93,10 +93,13 @@ class NN(ScenarioGenerator):
     target_columns: list = None
     iterate = None
     normalize_target: bool = True
+    stopping_rounds: int = 5
+    subtract_mean_when_normalizing: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
-                 stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True, **scengen_kwgs):
+                 stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, **scengen_kwgs):
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
@@ -111,7 +114,9 @@ class NN(ScenarioGenerator):
                        "stats_step": stats_step,
                        "rel_tol": rel_tol,
                        "unnormalized_inputs": unnormalized_inputs,
-                       "normalize_target":normalize_target
+                       "normalize_target":normalize_target,
+                       "stopping_rounds":stopping_rounds,
+                       "subtract_mean_when_normalizing":subtract_mean_when_normalizing
                        })
 
         if self.load_path is not None:
@@ -172,7 +177,7 @@ class NN(ScenarioGenerator):
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
-        self.input_scaler = StandardScaler().set_output(transform='pandas').fit(inputs[self.to_be_normalized])
+        self.input_scaler = StandardScaler(with_mean=self.subtract_mean_when_normalizing).set_output(transform='pandas').fit(inputs[self.to_be_normalized])
         if self.normalize_target:
             self.target_scaler = StandardScaler().set_output(transform='pandas').fit(targets)
 
@@ -191,12 +196,13 @@ class NN(ScenarioGenerator):
         pars = self.init_arch(self.model, *np.atleast_1d(inputs_len))
         opt_state = self.optimizer.init(pars)
 
-        tr_loss, val_loss = [], []
+        tr_loss, val_loss = [np.inf], [np.inf]
         k = 0
         finished = False
         for epoch in range(n_epochs):
             rand_idx_all = np.random.choice(training_len, training_len, replace=False)
-            for i in tqdm(range(num_batches), desc='epoch {}/{}'.format(epoch, n_epochs)):
+            for i in tqdm(range(num_batches),
+                          desc='epoch {}/{}, val loss={:0.3e}'.format(epoch, n_epochs, val_loss[-1] if val_loss[-1] is not np.inf else np.nan)):
                 rand_idx = rand_idx_all[i * batch_size:(i + 1) * batch_size]
                 inputs_batch = [i[rand_idx, :] for i in inputs] if isinstance(inputs, tuple) else inputs[rand_idx, :]
                 targets_batch = targets[rand_idx, :]
@@ -206,22 +212,26 @@ class NN(ScenarioGenerator):
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
 
-                    te_loss_i = self.loss_fn(pars, inputs_val, targets_val)
-                    tr_loss_i = self.loss_fn(pars, inputs, targets)
+                    rand_idx_val = np.random.choice(len(inputs_val), np.minimum(batch_size, len(inputs_val)), replace=False)
+                    inputs_val_sampled = [i[rand_idx_val, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_val, :]
+                    te_loss_i = self.loss_fn(pars, inputs_val_sampled, targets_val[rand_idx_val, :])
+                    tr_loss_i = self.loss_fn(pars, inputs_batch, targets_batch)
+
                     val_loss.append(np.array(jnp.mean(te_loss_i)))
                     tr_loss.append(np.array(jnp.mean(tr_loss_i)))
 
                     self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], val_loss[-1]))
-                    if len(tr_loss) > 1:
+                    if len(tr_loss) > 2:
                         if savepath_tr_plots is not None or self.savepath_tr_plots is not None:
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
 
                             rand_idx_plt = np.random.choice(validation_len, 9)
                             self.training_plots([i[rand_idx_plt, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_plt, :],
-                                                targets_val[rand_idx_plt, :], tr_loss, val_loss, savepath_tr_plots, k)
+                                                targets_val[rand_idx_plt, :], tr_loss[1:], val_loss[1:], savepath_tr_plots, k)
 
                         rel_te_err = (val_loss[-2] - val_loss[-1]) / np.abs(val_loss[-2] + 1e-6)
-                        if rel_te_err < rel_tol:
+                        last_improvement = k // stats_step - np.argwhere(np.array(val_loss) == np.min(val_loss)).ravel()[-1]
+                        if rel_te_err < rel_tol or (k>self.stopping_rounds and last_improvement > self.stopping_rounds):
                             finished = True
                             break
                 k += 1
@@ -371,12 +381,13 @@ class PICNN(NN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 inverter_learning_rate: float = 0.1, optimization_vars: list = (), target_columns: list = None,
-                 init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,**scengen_kwgs):
+                 stopping_rounds=5, inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
+                 **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, **scengen_kwgs)
+                         normalize_target, stopping_rounds, **scengen_kwgs)
 
         self.set_attr({"inverter_learning_rate":inverter_learning_rate,
                        "optimization_vars":optimization_vars,
@@ -770,12 +781,13 @@ class RecStablePICNN(PICNN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 inverter_learning_rate: float = 0.1, optimization_vars: list = (), target_columns: list = None,
-                 init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,**scengen_kwgs):
+                 stopping_rounds=5, inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 target_columns: list = None, init_type='normal', augment_ctrl_inputs=False,
+                 layer_normalization=False,**scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
+                         normalize_target, stopping_rounds, inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
                          layer_normalization, **scengen_kwgs)
 
     def set_arch(self):
