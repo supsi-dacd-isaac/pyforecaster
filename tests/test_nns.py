@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN
+from pyforecaster.forecasting_models.neural_forecasters import PQICNN, PICNN, RecStablePICNN, NN
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -90,6 +90,52 @@ class TestFormatDataset(unittest.TestCase):
         print(np.sum(y_hat_1-y_hat_2).sum())
         assert np.all(np.mean((y_hat_1-y_hat_2).abs()) <= 1e-6)
 
+
+    def no_test_pqicnn(self):
+        # normalize inputs
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        n_tr = int(len(x) * 0.8)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        savepath_tr_plots = 'tests/results/ffnn_tr_plots'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
+
+        optimization_vars = x_tr.columns[:-1]
+
+
+        m_1 = PQICNN(learning_rate=1e-2, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=y_tr.shape[1], n_layers=4, optimization_vars=optimization_vars,stopping_rounds=100).fit(x_tr,
+                                                                                            y_tr,
+                                                                                            n_epochs=30,
+                                                                                            savepath_tr_plots=savepath_tr_plots,
+                                                                                            stats_step=100,rel_tol=-1)
+        y_hat_1 = m_1.predict(x_te)
+
+         # check convexity of the PICNN
+        rnd_idxs = np.random.choice(x_tr.shape[0], 1)
+        rand_opt_vars = np.random.choice(optimization_vars, 10)
+        for cc in rand_opt_vars:
+            x = x_tr.iloc[rnd_idxs, :]
+            x = pd.concat([x] * 100, axis=0)
+            x[cc] = np.linspace(-1, 1, 100)
+            y_hat = m_1.predict(x)
+            d = np.diff(np.sign(np.diff(y_hat.values[:, :96], axis=0)), axis=0)
+            approx_second_der = np.round(np.diff(y_hat.values[:, :96], 2, axis=0), 5)
+            approx_second_der[approx_second_der == 0] = 0  # to fix the sign
+            is_convex = not np.any(np.abs(np.diff(np.sign(approx_second_der), axis=0)) > 1)
+            print('output is convex w.r.t. input {}: {}'.format(cc, is_convex))
+            plt.figure(layout='tight')
+            plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
+            plt.xlabel(cc)
+            plt.show()
+            plt.savefig('wp3/results/figs/convexity/{}.png'.format(cc), dpi=300)
 
     def test_optimization(self):
 
