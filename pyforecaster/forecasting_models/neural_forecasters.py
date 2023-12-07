@@ -4,7 +4,7 @@ import pandas as pd
 from flax import linen as nn
 import pickle as pk
 from pyforecaster.forecaster import ScenarioGenerator
-from jax import random, grad, jit, value_and_grad, vmap
+from jax import random, grad, jit, value_and_grad, vmap, custom_jvp
 import optax
 from tqdm import tqdm
 import numpy as np
@@ -40,6 +40,35 @@ class LinRegModule(nn.Module):
         x = nn.Dense(features=self.n_out, name='dense')(x)
         return x
 
+def reproject_weights(params, rec_stable=False):
+    # Loop through each layer and reproject the input-convex weights
+    for layer_name in params['params']:
+        if 'PICNNLayer' in layer_name:
+            params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
+            if rec_stable:
+                params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
+
+    return params
+
+
+def jitting_wrapper(fun, model, **kwargs):
+    return jit(partial(fun, model=model, **kwargs))
+
+def loss_fn(params, inputs, targets, model=None):
+    predictions = model(params, inputs)
+    return jnp.mean((predictions - targets) ** 2)
+
+def train_step(params, optimizer_state, inputs_batch, targets_batch, model=None, loss_fn=None, **kwargs):
+    values, grads = value_and_grad(loss_fn)(params, inputs_batch, targets_batch, **kwargs)
+    updates, opt_state = model.update(grads, optimizer_state, params)
+    return optax.apply_updates(params, updates), opt_state, values
+
+def predict_batch(pars, inputs, model=None):
+    return model.apply(pars, inputs)
+
+def predict_batch_picnn(pars, inputs, model=None):
+    return model.apply(pars, *inputs)
+
 class FeedForwardModule(nn.Module):
     n_layers: Union[int, np.array, list]
     n_out: int=None
@@ -54,27 +83,49 @@ class FeedForwardModule(nn.Module):
             layers = self.n_layers
         for i, n in enumerate(layers):
             x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
-            if i < len(layers):
+            if i < len(layers)-1:
                 x = nn.relu(x)
         return x
 
-def jitting_wrapper(fun, model):
-    return jit(partial(fun, model=model))
+class PICNNLayer(nn.Module):
+    features_x: int
+    features_y: int
+    features_out: int
+    n_layer: int = 0
+    prediction_layer: bool = False
+    activation: callable = nn.relu
+    rec_activation: callable = identity
+    init_type: str = 'normal'
+    augment_ctrl_inputs: bool = False
+    layer_normalization: bool = False
+    @nn.compact
+    def __call__(self, y, u, z):
+        if self.augment_ctrl_inputs:
+            y = jnp.hstack([y, -y])
 
-def loss_fn(params, inputs, targets, model=None):
-    predictions = model(params, inputs)
-    return jnp.mean((predictions - targets) ** 2)
+        # Input-Convex component without bias for the element-wise multiplicative interactions
+        wzu = self.rec_activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
+        wzu = self.activation(wzu)
+        wyu = self.rec_activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
 
-def train_step(params, optimizer_state, inputs_batch, targets_batch, model=None, loss_fn=None):
-    values, grads = value_and_grad(loss_fn)(params, inputs_batch, targets_batch)
-    updates, opt_state = model.update(grads, optimizer_state, params)
-    return optax.apply_updates(params, updates), opt_state, values
+        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz', kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
+        y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
+        u_add = nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
 
-def predict_batch(pars, inputs, model=None):
-    return model.apply(pars, inputs)
+        if self.layer_normalization:
+            y_next = nn.LayerNorm()(y_next)
+            z_next = nn.LayerNorm()(z_next)
+            u_add = nn.LayerNorm()(u_add)
 
-def predict_batch_picnn(pars, inputs, model=None):
-    return model.apply(pars, *inputs)
+        z_next = z_next + y_next + u_add
+        if not self.prediction_layer:
+            z_next = self.activation(z_next)
+            # Traditional NN component only if it's not the prediction layer
+            u_next = nn.Dense(features=self.features_x, name='u_dense')(u)
+            u_next = self.activation(u_next)
+            return u_next, z_next
+        else:
+            return None, z_next
 
 class NN(ScenarioGenerator):
     input_scaler: StandardScaler = None
@@ -97,11 +148,15 @@ class NN(ScenarioGenerator):
     normalize_target: bool = True
     stopping_rounds: int = 5
     subtract_mean_when_normalizing: bool = False
+    causal_df: pd.DataFrame = None
+    reproject: bool = False
+    rec_stable: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, **scengen_kwgs):
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 **scengen_kwgs):
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.set_attr({"learning_rate": learning_rate,
@@ -118,7 +173,8 @@ class NN(ScenarioGenerator):
                        "unnormalized_inputs": unnormalized_inputs,
                        "normalize_target":normalize_target,
                        "stopping_rounds":stopping_rounds,
-                       "subtract_mean_when_normalizing":subtract_mean_when_normalizing
+                       "subtract_mean_when_normalizing":subtract_mean_when_normalizing,
+                       "causal_df":causal_df
                        })
 
         if self.load_path is not None:
@@ -210,15 +266,15 @@ class NN(ScenarioGenerator):
                 targets_batch = targets[rand_idx, :]
 
                 pars, opt_state, values = self.train_step(pars, opt_state, inputs_batch, targets_batch)
+                if self.reproject:
+                    pars = reproject_weights(pars, rec_stable=self.rec_stable)
 
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
-
-                    rand_idx_val = np.random.choice(len(inputs_val), np.minimum(batch_size, len(inputs_val)), replace=False)
+                    rand_idx_val = np.random.choice(validation_len, np.minimum(batch_size, validation_len), replace=False)
                     inputs_val_sampled = [i[rand_idx_val, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_val, :]
                     te_loss_i = self.loss_fn(pars, inputs_val_sampled, targets_val[rand_idx_val, :])
                     tr_loss_i = self.loss_fn(pars, inputs_batch, targets_batch)
-
                     val_loss.append(np.array(jnp.mean(te_loss_i)))
                     tr_loss.append(np.array(jnp.mean(tr_loss_i)))
 
@@ -284,13 +340,6 @@ class NN(ScenarioGenerator):
         return inputs.values, target
 
 
-
-class FastLinReg(NN):
-    def __init__(self, n_out=1, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
-                 scengen_dict={}, **model_kwargs):
-        super().__init__(n_out=n_out, q_vect=q_vect, n_epochs=n_epochs, val_ratio=val_ratio, nodes_at_step=nodes_at_step, learning_rate=learning_rate,
-                 nn_module=LinRegModule, scengen_dict=scengen_dict, **model_kwargs)
-
 class FFNN(NN):
     def __init__(self, n_out=None, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
                        scengen_dict={}, batch_size=None, **model_kwargs):
@@ -298,53 +347,14 @@ class FFNN(NN):
                  nn_module=FeedForwardModule, scengen_dict=scengen_dict, batch_size=batch_size,  **model_kwargs)
 
 
-class PICNNLayer(nn.Module):
-
-    features_x: int
-    features_y: int
-    features_out: int
-    n_layer: int = 0
-    prediction_layer: bool = False
-    activation: callable = identity
-    init_type: str = 'normal'
-    augment_ctrl_inputs: bool = False
-    layer_normalization: bool = False
-    @nn.compact
-    def __call__(self, y, u, z):
-        if self.augment_ctrl_inputs:
-            y = jnp.hstack([y, -y])
-
-        # Input-Convex component without bias for the element-wise multiplicative interactions
-        wzu = self.activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
-        wzu = nn.relu(wzu)
-        wyu = self.activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
-
-        z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz', kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
-        y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
-        u_add = nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
-
-        if self.layer_normalization:
-            y_next = nn.LayerNorm()(y_next)
-            z_next = nn.LayerNorm()(z_next)
-            u_add = nn.LayerNorm()(u_add)
-
-        z_next = z_next + y_next + u_add
-        if not self.prediction_layer:
-            z_next = nn.relu(z_next)
-            # Traditional NN component only if it's not the prediction layer
-            u_next = nn.Dense(features=self.features_x, name='u_dense')(u)
-            u_next = nn.relu(u_next)
-            return u_next, z_next
-        else:
-            return None, z_next
-
 
 class PartiallyICNN(nn.Module):
     num_layers: int
     features_x: int
     features_y: int
     features_out: int
-    activation: callable = identity
+    activation: callable = nn.relu
+    rec_activation: callable = identity
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization:bool = False
@@ -356,65 +366,87 @@ class PartiallyICNN(nn.Module):
             prediction_layer = i == self.num_layers -1
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
                               n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
-                              init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
+                              rec_activation=self.rec_activation, init_type=self.init_type,
+                              augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization)(y, u, z)
         return z
+
 
 class PartiallyQICNN(nn.Module):
     num_layers: int
     features_x: int
     features_y: int
     features_out: int
-    activation: callable = identity
+    activation: callable = nn.softplus
+    rec_activation: callable = identity
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization:bool = False
 
-    def __call_wrapper__(self, y, x):
-        u = x
-        z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
-        for i in range(self.num_layers):
-            prediction_layer = i == self.num_layers -1
-            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
-                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
-                              init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
-                              layer_normalization=self.layer_normalization)(y, u, z)
-        return z
-
     @nn.compact
     def __call__(self, x, y):
-        #z = jnp.sum(jnp.abs(jacfwd(partial(self.__call_wrapper__, x=x))(y)), axis=1)
-        z = jvp(partial(self.__call_wrapper__, x=x),(y, ), (y,))[1]
-        return z
-def reproject_weights(params, rec_stable=False):
-    # Loop through each layer and reproject the input-convex weights
-    for layer_name in params['params']:
-        if 'PICNNLayer' in layer_name:
-            params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
-            if rec_stable:
-                params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
+        _, qcvx_preds = jvp(lambda y: PartiallyICNN(num_layers=self.num_layers, features_x=self.features_x,
+                                                    features_y=self.features_y, features_out=self.features_out,
+                                                    activation=self.activation, rec_activation=self.rec_activation,
+                                                    init_type=self.init_type,
+                                                    augment_ctrl_inputs=self.augment_ctrl_inputs,
+                                                    layer_normalization=self.layer_normalization)(x, y),
+                            (y,),
+                            (jnp.ones_like(y)/y.shape[0],))
 
-    return params
+        qcvx_preds = jnp.abs(qcvx_preds)
+
+        ex_preds = FeedForwardModule(n_layers=self.num_layers, n_neurons=self.features_x,
+                              n_out=self.features_out)(x)
+
+        return qcvx_preds + ex_preds
+
+
+
+def _my_jmp(model, params, ex_inputs, ctrl_inputs, M):
+    """
+    Compute the mean of the absolute value of the Jacobian (of the targets with respect to the control inputs)
+    matrix multiplication with M. This is done for one instance, the function is then vectorized in cauasal_loss_fn
+    :param model:
+    :param params:
+    :param ex_inputs:
+    :param ctrl_inputs:
+    :param M:
+    :return:
+    """
+    return jnp.mean(jnp.abs(jax.jacfwd(lambda y: model.apply(params, ex_inputs, y))(ctrl_inputs) * M))
+
+
+def causal_loss_fn(params, inputs, targets, model=None, causal_matrix=None):
+    ex_inputs, ctrl_inputs = inputs[0], inputs[1]
+    predictions = vmap(model.apply, in_axes=(None, 0, 0))(params, ex_inputs, ctrl_inputs)
+    causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
+    mse = jnp.mean((predictions - targets) ** 2)
+    return mse + jnp.mean(causal_loss)
+
 
 class PICNN(NN):
+    reproject: bool = True
+    rec_stable: bool = False
     inverter_learning_rate: float = 0.1
     n_hidden_y: int = 100
     optimization_vars: list = ()
-    rec_stable: bool = False
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization: bool = False
+
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
-                 **scengen_kwgs):
+                 optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, **scengen_kwgs)
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,**scengen_kwgs)
 
         self.set_attr({"inverter_learning_rate":inverter_learning_rate,
                        "optimization_vars":optimization_vars,
@@ -428,11 +460,17 @@ class PICNN(NN):
             self.load(load_path)
         self.n_hidden_y = 2 * len(self.optimization_vars) if augment_ctrl_inputs else len(self.optimization_vars)
         self.model = self.set_arch()
-        self.optimizer = optax.adamw(learning_rate=self.learning_rate)
+        self.optimizer = optax.adamw(learning_rate=self.learning_rate) if optimizer is None else optimizer
         self.inverter_optimizer = optax.adabelief(learning_rate=self.inverter_learning_rate)
 
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
-        self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch)
+        if causal_df is not None:
+            causal_df = (~causal_df.astype(bool)).astype(float)
+            causal_matrix = causal_df.values
+            self.loss_fn = jitting_wrapper(causal_loss_fn, self.model, causal_matrix=causal_matrix)
+        else:
+            self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch)
+
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
     def set_arch(self):
@@ -525,18 +563,23 @@ class PICNN(NN):
         return y_opt, inputs, target_opt, values
 
 class PQICNN(PICNN):
+    reproject: bool = True
+    rec_stable: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
-                 **scengen_kwgs):
+                 optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
-                         layer_normalization, **scengen_kwgs)
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
+                         layer_normalization, optimizer, **scengen_kwgs)
+
 
     def set_arch(self):
         model = PartiallyQICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
@@ -544,19 +587,22 @@ class PQICNN(PICNN):
         return model
 
 class RecStablePICNN(PICNN):
+    reproject: bool = True
     rec_stable = True
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False,
-                 layer_normalization=False,**scengen_kwgs):
+                 layer_normalization=False, optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
-                         layer_normalization, **scengen_kwgs)
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
+                         layer_normalization, optimizer, **scengen_kwgs)
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
