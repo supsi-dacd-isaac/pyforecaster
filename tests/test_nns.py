@@ -142,7 +142,7 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
-        savepath_tr_plots = 'tests/results/figs/convexity'
+        savepath_tr_plots = 'wp3/tests/results/figs/convexity'
 
         # if not there, create directory savepath_tr_plots
         if not exists(savepath_tr_plots):
@@ -175,7 +175,7 @@ class TestFormatDataset(unittest.TestCase):
             plt.figure(layout='tight')
             plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
             plt.xlabel(cc)
-            plt.savefig('wp3/results/figs/convexity/{}.png'.format(cc), dpi=300)
+            plt.savefig(join(savepath_tr_plots, '{}.png'.format(cc)), dpi=300)
 
     def test_optimization(self):
 
