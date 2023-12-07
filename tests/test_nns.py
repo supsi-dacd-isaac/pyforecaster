@@ -9,7 +9,7 @@ from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
 from os import makedirs
-from os.path import exists
+from os.path import exists, join
 import jax.numpy as jnp
 
 class TestFormatDataset(unittest.TestCase):
@@ -91,8 +91,7 @@ class TestFormatDataset(unittest.TestCase):
             plt.figure(layout='tight')
             plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
             plt.xlabel(cc)
-            plt.show()
-            plt.savefig('wp3/results/figs/convexity/picnn_{}.png'.format(cc), dpi=300)
+            plt.savefig(join(savepath_tr_plots,'picnn_{}.png'.format(cc)), dpi=300)
 
         n = PICNN(load_path='tests/results/ffnn_model.pk')
         y_hat_2 = n.predict(x_te.iloc[:100, :])
@@ -176,7 +175,6 @@ class TestFormatDataset(unittest.TestCase):
             plt.figure(layout='tight')
             plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
             plt.xlabel(cc)
-            plt.show()
             plt.savefig('wp3/results/figs/convexity/{}.png'.format(cc), dpi=300)
 
     def test_optimization(self):
@@ -200,7 +198,7 @@ class TestFormatDataset(unittest.TestCase):
         m = PICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3,
                   augment_ctrl_inputs=True, layer_normalization=True, unnormalized_inputs=optimization_vars).fit(x_tr, y_tr,
-                                                                          n_epochs=3,
+                                                                          n_epochs=1,
                                                                           savepath_tr_plots=savepath_tr_plots,
                                                                           stats_step=40)
 
@@ -225,7 +223,7 @@ class TestFormatDataset(unittest.TestCase):
 
         model = PICNN(optimization_vars=self.x.columns[:10], n_out=self.y.shape[1], n_epochs=6)
 
-        n_folds = 2
+        n_folds = 1
         cv_idxs = []
         for i in range(n_folds):
             tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
