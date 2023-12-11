@@ -4,7 +4,7 @@ import optax
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PQICNN, PICNN, RecStablePICNN, NN
+from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -142,7 +142,7 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
-        savepath_tr_plots = 'wp3/tests/results/figs/convexity'
+        savepath_tr_plots = 'tests/results/figs/convexity'
 
         # if not there, create directory savepath_tr_plots
         if not exists(savepath_tr_plots):
@@ -152,7 +152,7 @@ class TestFormatDataset(unittest.TestCase):
         optimization_vars = x_tr.columns[:10]
         optimizer = optax.adamw(learning_rate=1e-3)
 
-        m_1 = PQICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+        m_1 = PIQCNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
                   n_out=y_tr.shape[1], n_layers=4, optimization_vars=optimization_vars,stopping_rounds=100, optimizer=optimizer).fit(x_tr,
                                                                                             y_tr,
                                                                                             n_epochs=1,
@@ -174,6 +174,54 @@ class TestFormatDataset(unittest.TestCase):
             print('output is convex w.r.t. input {}: {}'.format(cc, is_convex))
             plt.figure(layout='tight')
             plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
+            plt.xlabel(cc)
+            plt.savefig(join(savepath_tr_plots, '{}.png'.format(cc)), dpi=300)
+
+    def test_piqcnn_sigmoid(self):
+
+        # normalize inputs
+        x_cols = ['all_lag_101', 'all_lag_062', 'ghi_6', 'all_lag_138',
+         'all_lag_090']
+        #x_cols = np.random.choice(self.x.columns, 5)
+        x = (self.x[x_cols] - self.x[x_cols].mean(axis=0)) / (self.x[x_cols].std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        n_tr = int(len(x) * 0.8)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        savepath_tr_plots = 'tests/results/figs/convexity'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
+
+        optimization_vars = x_tr.columns[:-2]
+        optimizer = optax.adamw(learning_rate=1e-3)
+
+        m_1 = PIQCNNSigmoid(learning_rate=1e-2, batch_size=200, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=y_tr.shape[1], n_layers=4, optimization_vars=optimization_vars,stopping_rounds=100, optimizer=optimizer, layer_normalization=True).fit(x_tr,
+                                                                                            y_tr,
+                                                                                            n_epochs=1,
+                                                                                            savepath_tr_plots=savepath_tr_plots,
+                                                                                            stats_step=200,rel_tol=-1)
+
+        # check convexity of the PICNN
+        rnd_idxs = np.random.choice(x_tr.shape[0], 1)
+        rand_opt_vars = np.random.choice(optimization_vars, 5)
+        for cc in rand_opt_vars:
+            x = x_tr.iloc[rnd_idxs, :]
+            x = pd.concat([x] * 100, axis=0)
+            x[cc] = np.linspace(-1, 1, 100)
+            y_hat = m_1.predict(x)
+            d = np.diff(np.sign(np.diff(y_hat.values, axis=0)), axis=0)
+            approx_second_der = np.round(np.diff(y_hat.values, 2, axis=0), 5)
+            approx_second_der[approx_second_der == 0] = 0  # to fix the sign
+            is_convex = not np.any(np.abs(np.diff(np.sign(approx_second_der), axis=0)) > 1)
+            print('output is convex w.r.t. input {}: {}'.format(cc, is_convex))
+            plt.figure(layout='tight')
+            plt.plot(np.tile(x[cc].values.reshape(-1, 1), y_hat.shape[1]), y_hat.values, alpha=0.3)
             plt.xlabel(cc)
             plt.savefig(join(savepath_tr_plots, '{}.png'.format(cc)), dpi=300)
 

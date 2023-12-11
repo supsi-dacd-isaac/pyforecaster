@@ -40,14 +40,20 @@ class LinRegModule(nn.Module):
         x = nn.Dense(features=self.n_out, name='dense')(x)
         return x
 
-def reproject_weights(params, rec_stable=False):
+def reproject_weights(params, rec_stable=False, monotone=False):
     # Loop through each layer and reproject the input-convex weights
     for layer_name in params['params']:
         if 'PICNNLayer' in layer_name:
-            params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
-            if rec_stable:
-                params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
-
+            if monotone:
+                for name in {'wz', 'wy'} & set(params['params'][layer_name].keys()):
+                    params['params'][layer_name][name]['kernel'] = jnp.maximum(0, params['params'][layer_name][name]['kernel'])
+                #for name in {'wzu', 'wyu', 'wuz', 'u_dense'} & set(params['params'][layer_name].keys()):
+                    #    params['params'][layer_name][name]['bias'] = jnp.maximum(0, params['params'][layer_name][name][
+                #    'bias'])
+            else:
+                params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
+                if rec_stable:
+                    params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
     return params
 
 
@@ -104,13 +110,12 @@ class PICNNLayer(nn.Module):
             y = jnp.hstack([y, -y])
 
         # Input-Convex component without bias for the element-wise multiplicative interactions
-        wzu = self.rec_activation(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
-        wzu = self.activation(wzu)
+        wzu = nn.relu(nn.Dense(features=self.features_out, use_bias=True, name='wzu')(u))
         wyu = self.rec_activation(nn.Dense(features=self.features_y, use_bias=True, name='wyu')(u))
-
         z_next = nn.Dense(features=self.features_out, use_bias=False, name='wz', kernel_init=partial(positive_lecun, init_type=self.init_type))(z * wzu)
         y_next = nn.Dense(features=self.features_out, use_bias=False, name='wy')(y * wyu)
         u_add = nn.Dense(features=self.features_out, use_bias=True, name='wuz')(u)
+
 
         if self.layer_normalization:
             y_next = nn.LayerNorm()(y_next)
@@ -151,6 +156,7 @@ class NN(ScenarioGenerator):
     causal_df: pd.DataFrame = None
     reproject: bool = False
     rec_stable: bool = False
+    monotone: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
@@ -267,7 +273,7 @@ class NN(ScenarioGenerator):
 
                 pars, opt_state, values = self.train_step(pars, opt_state, inputs_batch, targets_batch)
                 if self.reproject:
-                    pars = reproject_weights(pars, rec_stable=self.rec_stable)
+                    pars = reproject_weights(pars, rec_stable=self.rec_stable, monotone=self.monotone)
 
                 if k % stats_step == 0 and k > 0:
                     self.pars = pars
@@ -372,7 +378,7 @@ class PartiallyICNN(nn.Module):
         return z
 
 
-class PartiallyQICNN(nn.Module):
+class PartiallyIQCNN(nn.Module):
     num_layers: int
     features_x: int
     features_y: int
@@ -383,22 +389,22 @@ class PartiallyQICNN(nn.Module):
     augment_ctrl_inputs: bool = False
     layer_normalization:bool = False
 
+    def __call_wrapper__(self, y, x):
+        u = x
+        z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
+        for i in range(self.num_layers):
+            prediction_layer = i == self.num_layers -1
+            u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
+                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
+                              init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
+                              layer_normalization=self.layer_normalization)(y, u, z)
+        return z
+
     @nn.compact
     def __call__(self, x, y):
-        _, qcvx_preds = jvp(lambda y: PartiallyICNN(num_layers=self.num_layers, features_x=self.features_x,
-                                                    features_y=self.features_y, features_out=self.features_out,
-                                                    activation=self.activation, rec_activation=self.rec_activation,
-                                                    init_type=self.init_type,
-                                                    augment_ctrl_inputs=self.augment_ctrl_inputs,
-                                                    layer_normalization=self.layer_normalization)(x, y),
-                            (y,),
-                            (jnp.ones_like(y)/y.shape[0],))
-
-        qcvx_preds = jnp.abs(qcvx_preds)
-
+        qcvx_preds = jnp.abs(jvp(partial(self.__call_wrapper__, x=x),(y, ), (y,))[1])
         ex_preds = FeedForwardModule(n_layers=self.num_layers, n_neurons=self.features_x,
                               n_out=self.features_out)(x)
-
         return qcvx_preds + ex_preds
 
 
@@ -562,7 +568,7 @@ class PICNN(NN):
         y_opt = inputs.loc[:, self.optimization_vars].values.ravel()
         return y_opt, inputs, target_opt, values
 
-class PQICNN(PICNN):
+class PIQCNN(PICNN):
     reproject: bool = True
     rec_stable: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
@@ -582,10 +588,38 @@ class PQICNN(PICNN):
 
 
     def set_arch(self):
-        model = PartiallyQICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
+        model = PartiallyIQCNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs)
         return model
 
+
+class PIQCNNSigmoid(PICNN):
+    reproject: bool = True
+    rec_stable: bool = False
+    monotone: bool = True
+
+    def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
+                 n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
+                 val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
+                 stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
+                 optimizer=None, **scengen_kwgs):
+
+        super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
+                         nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
+                         layer_normalization, optimizer, **scengen_kwgs)
+
+
+    def set_arch(self):
+        model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
+                              features_out=self.n_out, init_type=self.init_type,
+                               augment_ctrl_inputs=self.augment_ctrl_inputs, activation=nn.sigmoid,
+                               rec_activation=nn.sigmoid)
+        return model
 class RecStablePICNN(PICNN):
     reproject: bool = True
     rec_stable = True
