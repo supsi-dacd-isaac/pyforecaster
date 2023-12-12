@@ -197,7 +197,6 @@ class NN(ScenarioGenerator):
         if self.load_path is not None:
             self.load(self.load_path)
 
-        self.n_out = self.n_out*2 if self.probabilistic else self.n_out
         self.model = self.set_arch()
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
 
@@ -246,7 +245,7 @@ class NN(ScenarioGenerator):
 
     def set_arch(self):
         model = FeedForwardModule(n_layers=self.n_layers, n_neurons=self.n_hidden_x,
-                              n_out=self.n_out)
+                              n_out=self.n_out*2 if self.probabilistic else self.n_out)
         return model
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
