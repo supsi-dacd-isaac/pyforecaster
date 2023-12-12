@@ -506,14 +506,15 @@ class PICNN(NN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
                  optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,**scengen_kwgs)
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         probabilistic, **scengen_kwgs)
 
         self.set_attr({"inverter_learning_rate":inverter_learning_rate,
                        "optimization_vars":optimization_vars,
@@ -636,14 +637,14 @@ class PIQCNN(PICNN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
                  optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
                          inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
                          layer_normalization, optimizer, **scengen_kwgs)
 
@@ -664,14 +665,14 @@ class PIQCNNSigmoid(PICNN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
                  optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
                          inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
                          layer_normalization, optimizer, **scengen_kwgs)
 
@@ -689,14 +690,14 @@ class RecStablePICNN(PICNN):
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False,
                  layer_normalization=False, optimizer=None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
-                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df,
+                         normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
                          inverter_learning_rate, optimization_vars, target_columns, init_type, augment_ctrl_inputs,
                          layer_normalization, optimizer, **scengen_kwgs)
 
