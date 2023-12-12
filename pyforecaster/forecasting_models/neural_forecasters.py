@@ -16,6 +16,7 @@ from typing import Union
 from jax import jit
 from inspect import getmro
 from jax import jvp
+from scipy.special import erfinv
 
 def positive_lecun(key, shape, dtype=jnp.float32, init_type='normal'):
     # Start with standard lecun_normal initialization
@@ -63,6 +64,13 @@ def jitting_wrapper(fun, model, **kwargs):
 def loss_fn(params, inputs, targets, model=None):
     predictions = model(params, inputs)
     return jnp.mean((predictions - targets) ** 2)
+
+def probabilistic_loss_fn(params, inputs, targets, model=None):
+    out = model(params, inputs)
+    predictions = out[:, :out.shape[1]//2]
+    sigma_square = out[:, out.shape[1]//2:]
+    ll = jnp.mean((predictions - targets)**2 / sigma_square + jnp.log(sigma_square))
+    return ll
 
 def train_step(params, optimizer_state, inputs_batch, targets_batch, model=None, loss_fn=None, **kwargs):
     values, grads = value_and_grad(loss_fn)(params, inputs_batch, targets_batch, **kwargs)
@@ -157,14 +165,16 @@ class NN(ScenarioGenerator):
     reproject: bool = False
     rec_stable: bool = False
     monotone: bool = False
+    probabilistic: bool = False
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
-                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None,
+                 stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  **scengen_kwgs):
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+
         self.set_attr({"learning_rate": learning_rate,
                        "batch_size": batch_size,
                        "load_path": load_path,
@@ -180,17 +190,21 @@ class NN(ScenarioGenerator):
                        "normalize_target":normalize_target,
                        "stopping_rounds":stopping_rounds,
                        "subtract_mean_when_normalizing":subtract_mean_when_normalizing,
-                       "causal_df":causal_df
+                       "causal_df":causal_df,
+                       "probabilistic":probabilistic
                        })
 
         if self.load_path is not None:
             self.load(self.load_path)
+
+        self.n_out = self.n_out*2 if self.probabilistic else self.n_out
         self.model = self.set_arch()
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
 
 
         self.predict_batch = vmap(jitting_wrapper(predict_batch, self.model), in_axes=(None, 0))
-        self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch)
+        self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
+            jitting_wrapper(loss_fn, self.predict_batch))
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
     def get_class_properties_names(cls):
@@ -313,7 +327,7 @@ class NN(ScenarioGenerator):
         # make the appropriate numbers of subplots disposed as a square
         fig, ax = plt.subplots(int(np.ceil(np.sqrt(n_instances))), int(np.ceil(np.sqrt(n_instances))))
         for i, a in enumerate(ax.ravel()):
-            a.plot(y_hat[i, :])
+            a.plot(y_hat[i, :target.shape[1]])
             a.plot(target[i, :])
             a.set_title('instance {}, iter {}'.format(i, k))
         plt.savefig(join(savepath, 'examples_iter_{:05d}.png'.format(k)))
@@ -324,13 +338,41 @@ class NN(ScenarioGenerator):
         ax.legend()
         plt.savefig(join(savepath, 'losses_iter_{:05d}.png'.format(k)))
 
-    def predict(self, inputs, **kwargs):
+    def predict(self, inputs, return_sigma=False, **kwargs):
         x, _ = self.get_normalized_inputs(inputs)
         y_hat = self.predict_batch(self.pars, x)
+        y_hat = np.array(y_hat)
         if self.normalize_target:
-            y_hat = self.target_scaler.inverse_transform(y_hat)
+            if self.probabilistic:
+                y_hat[:, :y_hat.shape[1]//2] = self.target_scaler.inverse_transform(y_hat[:, :y_hat.shape[1]//2])
+                y_hat[:, y_hat.shape[1] // 2:] = self.target_scaler.inverse_transform((y_hat[:, y_hat.shape[1] // 2:])**0.5)
+            else:
+                y_hat = self.target_scaler.inverse_transform(y_hat)
+        if self.probabilistic:
+            preds = pd.DataFrame(y_hat[:, :y_hat.shape[1] // 2], index=inputs.index, columns=self.target_columns)
+            sigmas = pd.DataFrame(y_hat[:, y_hat.shape[1] // 2:], index=inputs.index, columns=self.target_columns)
+            if return_sigma:
+                return preds, sigmas
+            else:
+                return preds
+        else:
+            return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
-        return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
+    def predict_quantiles(self, inputs, **kwargs):
+        x, _ = self.get_normalized_inputs(inputs)
+        y_hat = self.predict_batch(self.pars, x)
+        y_hat = np.array(y_hat)
+        if self.normalize_target:
+            y_hat[:, :y_hat.shape[1] // 2] = self.target_scaler.inverse_transform(y_hat[:, :y_hat.shape[1] // 2])
+            y_hat[:, y_hat.shape[1] // 2:] = self.target_scaler.inverse_transform(
+                (y_hat[:, y_hat.shape[1] // 2:]) ** 0.5)
+        mu_hat = y_hat[:, :y_hat.shape[1]//2]
+        sigma_hat = y_hat[:, y_hat.shape[1]//2:]
+
+        preds = np.expand_dims(mu_hat, -1) * np.ones((1, 1, len(self.q_vect)))
+        for q in self.q_vect:
+            preds[:, :, int(q*len(self.q_vect))] += sigma_hat * np.sqrt(2) * erfinv(2*q-1)
+        return preds
 
     def get_normalized_inputs(self, inputs, target=None):
         inputs = inputs.copy()
@@ -364,6 +406,7 @@ class PartiallyICNN(nn.Module):
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization:bool = False
+    probabilistic: bool = False
     @nn.compact
     def __call__(self, x, y):
         u = x
@@ -375,6 +418,8 @@ class PartiallyICNN(nn.Module):
                               rec_activation=self.rec_activation, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization)(y, u, z)
+        if self.probabilistic:
+            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:])])
         return z
 
 
@@ -388,6 +433,7 @@ class PartiallyIQCNN(nn.Module):
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization:bool = False
+    probabilistic: bool = False
 
     def __call_wrapper__(self, y, x):
         u = x
@@ -405,7 +451,10 @@ class PartiallyIQCNN(nn.Module):
         qcvx_preds = jnp.abs(jvp(partial(self.__call_wrapper__, x=x),(y, ), (y,))[1])
         ex_preds = FeedForwardModule(n_layers=self.num_layers, n_neurons=self.features_x,
                               n_out=self.features_out)(x)
-        return qcvx_preds + ex_preds
+        z = qcvx_preds + ex_preds
+        if self.probabilistic:
+            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:])])
+        return z
 
 
 
@@ -429,6 +478,18 @@ def causal_loss_fn(params, inputs, targets, model=None, causal_matrix=None):
     causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
     mse = jnp.mean((predictions - targets) ** 2)
     return mse + jnp.mean(causal_loss)
+
+
+def probabilistic_causal_loss_fn(params, inputs, targets, model=None, causal_matrix=None):
+    ex_inputs, ctrl_inputs = inputs[0], inputs[1]
+    out = vmap(model.apply, in_axes=(None, 0, 0))(params, ex_inputs, ctrl_inputs)
+    predictions = out[:, :out.shape[1]//2]
+    sigma_square = out[:, out.shape[1]//2:]
+    causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
+    ll = jnp.mean((predictions - targets) ** 2 / sigma_square + jnp.log(sigma_square))
+    return ll + jnp.mean(causal_loss)
+
+
 
 
 class PICNN(NN):
@@ -472,16 +533,16 @@ class PICNN(NN):
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
         if causal_df is not None:
             causal_df = (~causal_df.astype(bool)).astype(float)
-            causal_matrix = causal_df.values
-            self.loss_fn = jitting_wrapper(causal_loss_fn, self.model, causal_matrix=causal_matrix)
+            causal_matrix = np.tile(causal_df.values, 2) if self.probabilistic else causal_df.values
+            self.loss_fn = jitting_wrapper(causal_loss_fn, self.model, causal_matrix=causal_matrix) if not self.probabilistic else jitting_wrapper(probabilistic_causal_loss_fn, self.model, causal_matrix=causal_matrix)
         else:
-            self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch)
+            self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch) if not self.probabilistic else jitting_wrapper(probabilistic_loss_fn, self.predict_batch)
 
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs)
+                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
         return model
 
     @staticmethod
@@ -589,7 +650,8 @@ class PIQCNN(PICNN):
 
     def set_arch(self):
         model = PartiallyIQCNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs)
+                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
+                               probabilistic=self.probabilistic)
         return model
 
 
@@ -618,7 +680,7 @@ class PIQCNNSigmoid(PICNN):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type,
                                augment_ctrl_inputs=self.augment_ctrl_inputs, activation=nn.sigmoid,
-                               rec_activation=nn.sigmoid)
+                               rec_activation=nn.sigmoid, probabilistic=self.probabilistic)
         return model
 class RecStablePICNN(PICNN):
     reproject: bool = True
@@ -640,5 +702,6 @@ class RecStablePICNN(PICNN):
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, activation=nn.relu, init_type=self.init_type)
+                              features_out=self.n_out, activation=nn.relu, init_type=self.init_type,
+                              probabilistic=self.probabilistic)
         return model

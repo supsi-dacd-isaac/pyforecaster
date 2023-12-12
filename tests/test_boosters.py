@@ -40,9 +40,8 @@ class TestFormatDataset(unittest.TestCase):
         m_lgb = LGBForecaster(lgb_pars={'num_leaves': 10, 'n_estimators': 100, 'learning_rate':0.05}).fit(x_tr, y_tr)
         y_hat_lgb = m_lgb.predict(x_te)
 
-        plt.close('all')
-        plot_quantiles([y_te.iloc[:10, :], y_hat_lin.iloc[:10, :], y_hat_lgbh.iloc[:10, :], y_hat_lgb.iloc[:10, :]], q[:10, :, :], ['y_te', 'y_lin', 'y_lgbhybrid_1', 'y_hat_lgb'])
-        plt.close('all')
+        # plot_quantiles([y_te.iloc[:10, :], y_hat_lin.iloc[:10, :], y_hat_lgbh.iloc[:10, :], y_hat_lgb.iloc[:10, :]], q[:10, :, :], ['y_te', 'y_lin', 'y_lgbhybrid_1', 'y_hat_lgb'])
+
 
     def do_not_test_linear_val_split(self):
 

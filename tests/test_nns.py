@@ -67,31 +67,24 @@ class TestFormatDataset(unittest.TestCase):
         optimization_vars = x_tr.columns[:100]
 
 
-        m_1 = PICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars).fit(x_tr,
+        m_1 = PICNN(learning_rate=1e-3, batch_size=5000, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True).fit(x_tr,
                                                                                             y_tr,
                                                                                             n_epochs=1,
-                                                                                            stats_step=40)
+                                                                                            stats_step=10)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')
 
         rnd_idxs = np.random.choice(x_tr.shape[0], 1)
-        rand_opt_vars = np.random.choice(optimization_vars, 10)
-        for cc in rand_opt_vars:
-            x = x_tr.iloc[rnd_idxs, :]
-            x = pd.concat([x] * 100, axis=0)
-            x[cc] = np.linspace(-1, 1, 100)
-            y_hat = m_1.predict(x)
-            d = np.diff(np.sign(np.diff(y_hat.values[:, :96], axis=0)), axis=0)
-            approx_second_der = np.round(np.diff(y_hat.values[:, :96], 2, axis=0), 5)
-            approx_second_der[approx_second_der == 0] = 0  # to fix the sign
-            is_convex = not np.any(np.abs(np.diff(np.sign(approx_second_der), axis=0)) > 1)
-            print('output is convex w.r.t. input {}: {}'.format(cc, is_convex))
-            plt.figure(layout='tight')
-            plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
-            plt.xlabel(cc)
-            plt.savefig(join(savepath_tr_plots,'picnn_{}.png'.format(cc)), dpi=300)
+        for r in rnd_idxs:
+            y_hat = m_1.predict(x_tr.iloc[[r], :])
+            q_hat = m_1.predict_quantiles(x_tr.iloc[[r], :])
+            plt.figure()
+            plt.plot(y_hat.values.ravel(), label='y_hat')
+            plt.plot(y_tr.iloc[r, :].values.ravel(), label='y_true')
+            plt.plot(np.squeeze(q_hat), label='q_hat', color='red', alpha=0.2)
+            plt.legend()
 
         n = PICNN(load_path='tests/results/ffnn_model.pk')
         y_hat_2 = n.predict(x_te.iloc[:100, :])
@@ -127,7 +120,7 @@ class TestFormatDataset(unittest.TestCase):
         causal_df = pd.DataFrame(np.tril(np.ones((len(optimization_vars), y_tr.shape[1]))), index=optimization_vars, columns=y_tr.columns)
 
         m_1 = PICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-                    n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, causal_df = causal_df).fit(x_tr,
+                    n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, causal_df = causal_df, probabilistic=True).fit(x_tr,
                                                                                               y_tr,
                                                                                               n_epochs=1,
                                                                                               savepath_tr_plots=savepath_tr_plots,
