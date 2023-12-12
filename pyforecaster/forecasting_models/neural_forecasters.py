@@ -542,7 +542,8 @@ class PICNN(NN):
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
+                              features_out=self.n_out*2 if self.probabilistic else self.n_out, init_type=self.init_type,
+                              augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
         return model
 
     @staticmethod
@@ -650,8 +651,8 @@ class PIQCNN(PICNN):
 
     def set_arch(self):
         model = PartiallyIQCNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
-                               probabilistic=self.probabilistic)
+                              features_out=self.n_out*2 if self.probabilistic else self.n_out, init_type=self.init_type,
+                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
         return model
 
 
@@ -678,7 +679,7 @@ class PIQCNNSigmoid(PICNN):
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, init_type=self.init_type,
+                              features_out=self.n_out*2 if self.probabilistic else self.n_out, init_type=self.init_type,
                                augment_ctrl_inputs=self.augment_ctrl_inputs, activation=nn.sigmoid,
                                rec_activation=nn.sigmoid, probabilistic=self.probabilistic)
         return model
@@ -702,6 +703,6 @@ class RecStablePICNN(PICNN):
 
     def set_arch(self):
         model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
-                              features_out=self.n_out, activation=nn.relu, init_type=self.init_type,
-                              probabilistic=self.probabilistic)
+                              features_out=self.n_out*2 if self.probabilistic else self.n_out, activation=nn.relu,
+                              init_type=self.init_type, probabilistic=self.probabilistic)
         return model
