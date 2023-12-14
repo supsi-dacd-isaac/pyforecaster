@@ -418,7 +418,7 @@ class PartiallyICNN(nn.Module):
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization)(y, u, z)
         if self.probabilistic:
-            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:])])
+            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:]) + 1e-10])
         return z
 
 
