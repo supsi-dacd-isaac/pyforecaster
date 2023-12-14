@@ -488,7 +488,7 @@ def probabilistic_causal_loss_fn(params, inputs, targets, model=None, causal_mat
     predictions = out[:, :out.shape[1]//2]
     sigma_square = out[:, out.shape[1]//2:]
     causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
-    ll = (jnp.mean((predictions - targets) ** 2) / sigma_square + jnp.log(sigma_square))
+    ll = jnp.mean(((predictions - targets) ** 2) / sigma_square + jnp.log(sigma_square))
     return ll + jnp.mean(causal_loss)
 
 
