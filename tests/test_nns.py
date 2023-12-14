@@ -67,22 +67,24 @@ class TestFormatDataset(unittest.TestCase):
         optimization_vars = x_tr.columns[:100]
 
 
-        m_1 = PICNN(learning_rate=1e-3, batch_size=5000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True).fit(x_tr,
+        m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=200, n_hidden_y=200,
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, rel_tol=-1,
+                    val_ratio=0.2).fit(x_tr,
                                                                                             y_tr,
                                                                                             n_epochs=1,
-                                                                                            stats_step=10)
+                                                                                            stats_step=200,
+                                                                                   savepath_tr_plots=savepath_tr_plots)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')
 
-        rnd_idxs = np.random.choice(x_tr.shape[0], 1)
+        rnd_idxs = np.random.choice(x_te.shape[0], 1)
         for r in rnd_idxs:
-            y_hat = m_1.predict(x_tr.iloc[[r], :])
-            q_hat = m_1.predict_quantiles(x_tr.iloc[[r], :])
+            y_hat = m_1.predict(x_te.iloc[[r], :])
+            q_hat = m_1.predict_quantiles(x_te.iloc[[r], :])
             plt.figure()
             plt.plot(y_hat.values.ravel(), label='y_hat')
-            plt.plot(y_tr.iloc[r, :].values.ravel(), label='y_true')
+            plt.plot(y_te.iloc[r, :].values.ravel(), label='y_true')
             plt.plot(np.squeeze(q_hat), label='q_hat', color='red', alpha=0.2)
             plt.legend()
 

@@ -69,7 +69,7 @@ def probabilistic_loss_fn(params, inputs, targets, model=None):
     out = model(params, inputs)
     predictions = out[:, :out.shape[1]//2]
     sigma_square = out[:, out.shape[1]//2:]
-    ll = jnp.mean((predictions - targets)**2 / sigma_square + jnp.log(sigma_square))
+    ll = jnp.mean(((predictions - targets)**2) / sigma_square + jnp.log(sigma_square))
     return ll
 
 def train_step(params, optimizer_state, inputs_batch, targets_batch, model=None, loss_fn=None, **kwargs):
@@ -289,6 +289,7 @@ class NN(ScenarioGenerator):
                     pars = reproject_weights(pars, rec_stable=self.rec_stable, monotone=self.monotone)
 
                 if k % stats_step == 0 and k > 0:
+                    old_pars = self.pars
                     self.pars = pars
                     rand_idx_val = np.random.choice(validation_len, np.minimum(batch_size, validation_len), replace=False)
                     inputs_val_sampled = [i[rand_idx_val, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_val, :]
@@ -314,7 +315,9 @@ class NN(ScenarioGenerator):
                 k += 1
             if finished:
                 break
-
+            if len(val_loss)>1:
+                if val_loss[-1] > val_loss[-2]:
+                    pars = old_pars
             self.pars = pars
         super().fit(inputs_val_0, targets_val_0)
         return self
@@ -418,7 +421,7 @@ class PartiallyICNN(nn.Module):
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization)(y, u, z)
         if self.probabilistic:
-            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:]) + 1e-10])
+            return jnp.hstack([z[:self.features_out//2], nn.softplus(z[self.features_out//2:]) + 1e-8])
         return z
 
 
@@ -485,7 +488,7 @@ def probabilistic_causal_loss_fn(params, inputs, targets, model=None, causal_mat
     predictions = out[:, :out.shape[1]//2]
     sigma_square = out[:, out.shape[1]//2:]
     causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
-    ll = jnp.mean((predictions - targets) ** 2 / sigma_square + jnp.log(sigma_square))
+    ll = (jnp.mean((predictions - targets) ** 2) / sigma_square + jnp.log(sigma_square))
     return ll + jnp.mean(causal_loss)
 
 
