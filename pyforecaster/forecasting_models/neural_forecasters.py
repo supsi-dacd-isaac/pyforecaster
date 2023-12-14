@@ -315,10 +315,10 @@ class NN(ScenarioGenerator):
                 k += 1
             if finished:
                 break
-            if len(val_loss)>1:
-                if val_loss[-1] > val_loss[-2]:
-                    pars = old_pars
-            self.pars = pars
+        if len(val_loss)>2:
+            if val_loss[-1] > val_loss[-2]:
+                pars = old_pars
+        self.pars = pars
         super().fit(inputs_val_0, targets_val_0)
         return self
 
