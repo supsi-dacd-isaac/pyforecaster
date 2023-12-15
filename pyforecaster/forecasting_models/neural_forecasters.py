@@ -579,7 +579,7 @@ class PICNN(NN):
         normalized_inputs, _ = self.get_normalized_inputs(inputs)
         x, y = normalized_inputs
         def _objective(y, x, **objective_kwargs):
-            return objective(self.model.apply(self.pars, x, y), y, **objective_kwargs)
+            return objective(self.predict_batch(self.pars, [x, y]), y, **objective_kwargs)
 
         # if the objective changes from one call to another, you need to recompile it. Slower but necessary
         if recompile_obj:
