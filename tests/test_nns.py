@@ -68,12 +68,8 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=200, n_hidden_y=200,
-                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, rel_tol=-1,
-                    val_ratio=0.2).fit(x_tr,
-                                                                                            y_tr,
-                                                                                            n_epochs=1,
-                                                                                            stats_step=200,
-                                                                                   savepath_tr_plots=savepath_tr_plots)
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, probabilistic_loss_kind='crps', rel_tol=-1,
+                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=1,stats_step=100,savepath_tr_plots=savepath_tr_plots)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')
@@ -83,9 +79,9 @@ class TestFormatDataset(unittest.TestCase):
             y_hat = m_1.predict(x_te.iloc[[r], :])
             q_hat = m_1.predict_quantiles(x_te.iloc[[r], :])
             plt.figure()
-            plt.plot(y_hat.values.ravel(), label='y_hat')
             plt.plot(y_te.iloc[r, :].values.ravel(), label='y_true')
-            plt.plot(np.squeeze(q_hat), label='q_hat', color='red', alpha=0.2)
+            plt.plot(y_hat.values.ravel(), label='y_hat')
+            plt.plot(np.squeeze(q_hat), label='q_hat', color='orange', alpha=0.3)
             plt.legend()
 
         n = PICNN(load_path='tests/results/ffnn_model.pk')
