@@ -381,16 +381,17 @@ class NN(ScenarioGenerator):
             x = inputs
         y_hat = self.predict_batch(self.pars, x)
         y_hat = np.array(y_hat)
-        if self.normalize_target:
+        if self.normalize_target and normalize:
             y_hat[:, :y_hat.shape[1] // 2] = self.target_scaler.inverse_transform(y_hat[:, :y_hat.shape[1] // 2])
             y_hat[:, y_hat.shape[1] // 2:] = self.target_scaler.inverse_transform(
-                (y_hat[:, y_hat.shape[1] // 2:]) ** 0.5)
+                (y_hat[:, y_hat.shape[1] // 2:]))
+        y_hat[:, y_hat.shape[1] // 2:] = (y_hat[:, y_hat.shape[1] // 2:])** 0.5
         mu_hat = y_hat[:, :y_hat.shape[1]//2]
         sigma_hat = y_hat[:, y_hat.shape[1]//2:]
 
         preds = np.expand_dims(mu_hat, -1) * np.ones((1, 1, len(self.q_vect)))
-        for q in self.q_vect:
-            preds[:, :, int(q*len(self.q_vect))] += sigma_hat * np.sqrt(2) * erfinv(2*q-1)
+        for i, q in enumerate(self.q_vect):
+            preds[:, :, i] += sigma_hat * np.sqrt(2) * erfinv(2*q-1)
         return preds
 
     def get_normalized_inputs(self, inputs, target=None):
@@ -428,7 +429,7 @@ class PartiallyICNN(nn.Module):
     probabilistic: bool = False
     @nn.compact
     def __call__(self, x, y):
-        u = x
+        u = x.copy()
         z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
         for i in range(self.num_layers):
             prediction_layer = i == self.num_layers -1
@@ -438,7 +439,7 @@ class PartiallyICNN(nn.Module):
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization)(y, u, z)
         if self.probabilistic:
-            u = x
+            u = x.copy()
             sigma = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
             for i in range(self.num_layers):
                 prediction_layer = i == self.num_layers - 1
@@ -448,7 +449,7 @@ class PartiallyICNN(nn.Module):
                                   rec_activation=self.rec_activation, init_type=self.init_type,
                                   augment_ctrl_inputs=self.augment_ctrl_inputs,
                                   layer_normalization=self.layer_normalization)(y, u, sigma)
-            return jnp.hstack([z, nn.softplus(sigma) + 1e-8])
+            return jnp.hstack([z, nn.softplus(sigma) + 1e-4])
         return z
 
 
@@ -575,7 +576,7 @@ class PICNN(NN):
             self.loss_fn = jitting_wrapper(causal_loss_fn, self.model, causal_matrix=causal_matrix, kind=probabilistic_loss_kind) \
                 if not self.probabilistic else jitting_wrapper(probabilistic_causal_loss_fn, self.model, causal_matrix=causal_matrix, kind=probabilistic_loss_kind)
         else:
-            self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch) if not self.probabilistic else jitting_wrapper(probabilistic_loss_fn, self.predict_batch)
+            self.loss_fn = jitting_wrapper(loss_fn, self.predict_batch) if not self.probabilistic else jitting_wrapper(probabilistic_loss_fn, self.predict_batch, kind=probabilistic_loss_kind)
 
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 

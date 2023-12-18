@@ -67,9 +67,9 @@ class TestFormatDataset(unittest.TestCase):
         optimization_vars = x_tr.columns[:100]
 
 
-        m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=200, n_hidden_y=200,
+        m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=20, n_hidden_y=20,
                   n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, probabilistic_loss_kind='crps', rel_tol=-1,
-                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=1,stats_step=100,savepath_tr_plots=savepath_tr_plots)
+                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=10,stats_step=50,savepath_tr_plots=savepath_tr_plots)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')

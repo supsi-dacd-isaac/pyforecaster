@@ -89,11 +89,14 @@ def reliability(q_hat, t, alphas=None, agg_index=None, get_score=False, **kwargs
 
 def make_scorer(metric):
     def scorer(estimator, X, y):
-        y_hat = estimator.predict(X)
-        if not isinstance(y_hat, pd.DataFrame):
-            y_hat = pd.DataFrame(y_hat, index=y.index, columns=y.columns)
+        if metric in [crps, reliability]:
+            y_hat = estimator.predict_quantiles(X)
         else:
-            y_hat.columns = y.columns
+            y_hat = estimator.predict(X)
+            if not isinstance(y_hat, pd.DataFrame):
+                y_hat = pd.DataFrame(y_hat, index=y.index, columns=y.columns)
+            else:
+                y_hat.columns = y.columns
         # default behaviour is to reduce metric over forecasting horizon.
         # If just one step ahead is forecasted, metric is reduced on samples
         agg_index = np.zeros(len(y)) if len(y.shape)<2 else np.zeros(y.shape[1])
