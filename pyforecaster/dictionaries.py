@@ -31,5 +31,6 @@ TREE_MAP = {'DiffTree': tree_builders.DiffTree,
 HYPERPAR_MAP = {'LinearForecaster': linear_param_space,
                 'LGBForecaster': lgb_param_space,
                 'LGBMHybrid': lgb_param_space,
-                "PICNN": picnn_param_space}
+                "PICNN": picnn_param_space,
+                "StructuredPICNN": picnn_param_space}
 

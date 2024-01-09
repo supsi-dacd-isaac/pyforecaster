@@ -4,7 +4,7 @@ import optax
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid
+from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid, StructuredPICNN
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -69,7 +69,7 @@ class TestFormatDataset(unittest.TestCase):
 
         m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=20, n_hidden_y=20,
                   n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, probabilistic_loss_kind='crps', rel_tol=-1,
-                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=10,stats_step=50,savepath_tr_plots=savepath_tr_plots)
+                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=2,stats_step=50,savepath_tr_plots=savepath_tr_plots)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')
@@ -265,14 +265,76 @@ class TestFormatDataset(unittest.TestCase):
         n_folds = 1
         cv_idxs = []
         for i in range(n_folds):
-            tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
+            tr_idx = np.random.randint(0, 2, len(self.x.index[:1000]), dtype=bool)
             te_idx = ~tr_idx
             cv_idxs.append((tr_idx, te_idx))
 
-        study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=1, metric=nmae,
+        objective = lambda y, ctrl: (y ** 2).mean()
+        def custom_metric(x, t, agg_index=None, inter_normalization=True, **kwargs):
+            obj = x.apply(lambda x: objective(x, None), axis=1)
+            obj_hat = t.apply(lambda x: objective(x, None), axis=1)
+            rank = np.argsort(obj)
+            rank_hat = np.argsort(obj_hat)
+            corr = np.corrcoef(rank, rank_hat)[0, 1]
+            return np.array(corr)
+
+        study, replies = hyperpar_optimizer(self.x.iloc[:1000, :], self.y.iloc[:1000, :], model, n_trials=1, metric=custom_metric,
                                             cv=(f for f in cv_idxs),
                                             param_space_fun=None,
                                             hpo_type='full')
+
+    def test_structured_picnn_sigmoid(self):
+
+        #x_cols = np.random.choice(self.x.columns, 5)
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        n_tr = int(len(x) * 0.8)
+
+        objective = lambda y, ctrl: jnp.mean(y**2)
+
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        savepath_tr_plots = 'tests/results/figs/convexity'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
+
+        optimization_vars = x_tr.columns[:20]
+
+        m_1 = StructuredPICNN(learning_rate=1e-4, batch_size=100, load_path=None, n_hidden_x=250, n_hidden_y=250,
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,stopping_rounds=100
+                              , layer_normalization=True, objective_fun=objective, probabilistic=True, probabilistic_loss_kind='crps', normalize_target=False).fit(x_tr,
+                                                                                            y_tr,
+                                                                                            n_epochs=2,
+                                                                                            savepath_tr_plots=savepath_tr_plots,
+                                                                                            stats_step=500, rel_tol=-1)
+        from jax import vmap
+        objs = vmap(objective,in_axes=(0, 0))(y_te.values, x_te.values)
+        rnd_idxs = np.random.choice(x_te.shape[0], 5000, replace=False)
+        rnd_idxs =  rnd_idxs[np.argsort(objs[rnd_idxs])]
+
+        fig, ax = plt.subplots(2, 1, figsize=(5, 10))
+        ax[0].plot(objs[rnd_idxs], label='y_true')
+        ax[0].plot(m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), label='y_hat')
+        ax[1].scatter(objs[rnd_idxs], m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), s=1)
+        ax[0].plot(np.squeeze(m_1.predict_quantiles(x_te.iloc[rnd_idxs, :], return_obj=True)), color='orange', alpha=0.3)
+
+
+        ordered_idx = np.argsort(np.abs(objs[rnd_idxs] - m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel()))
+
+
+        for r in rnd_idxs[ordered_idx[-10:]]:
+            y_hat = m_1.predict(x_te.iloc[[r], :])
+            #q_hat = m_1.predict_quantiles(x_te.iloc[[r], :])
+            plt.figure()
+            plt.plot(y_te.iloc[r, :].values.ravel(), label='y_true')
+            plt.plot(y_hat.values.ravel(), label='y_hat')
+            #plt.plot(np.squeeze(q_hat), label='q_hat', color='orange', alpha=0.3)
+            plt.legend()
 
 
 if __name__ == '__main__':
