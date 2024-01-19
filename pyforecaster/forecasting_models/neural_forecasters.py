@@ -65,16 +65,50 @@ def loss_fn(params, inputs, targets, model=None):
     predictions = model(params, inputs)
     return jnp.mean((predictions - targets) ** 2)
 
-def probabilistic_loss_fn(params, inputs, targets, model=None, kind='maximum_likelihood'):
+def probabilistic_loss(y_hat, y, sigma_square, kind='maximum_likelihood', distribution='normal'):
+
+    if kind == 'maximum_likelihood':
+        if distribution == 'normal':
+            ll = ((y_hat - y) ** 2) / sigma_square + jnp.log(sigma_square)
+        elif distribution == 'log-normal':
+            s = jnp.sign(sigma_square)
+            sigma = jnp.sqrt(jnp.abs(sigma_square))
+            ll = ((jnp.log(y_hat) - jnp.log(y)) ** 2) / (sigma**2) + jnp.log(sigma**2)
+        loss = ll
+    elif kind == 'crps':
+        if distribution == 'normal':
+            sigma = jnp.sqrt(sigma_square)
+            mu = y_hat
+            u = (y - mu) / sigma
+            crps = sigma * ( u * (2 * jax.scipy.stats.norm.cdf(u) - 1) +
+                             2 * jax.scipy.stats.norm.pdf(u) - 1 / jnp.sqrt(jnp.pi))
+        elif distribution == 'log-normal':
+            s = jnp.sign(sigma_square)
+            sigma = jnp.sqrt(jnp.abs(sigma_square)) + 1e-10
+
+            # we have predicted the mean of the log-normal distribution, we need to recover the parameter mu
+            mu = jnp.log(y_hat**2 / jnp.sqrt(jnp.abs(sigma_square) + y_hat**2))
+            sigma_square = jnp.log(1 + sigma**2 / y_hat**2)
+            sigma = jnp.sqrt(sigma_square)
+
+            # Standardize the observed value
+            z = (jnp.log(jnp.maximum(1e-10, s*y + 2*jnp.exp(mu)*(s==-1))) - mu) / sigma
+
+            # Compute the CRPS using the closed-form expression
+            cdf_2 = jax.scipy.stats.norm.cdf(sigma / jnp.sqrt(2))
+            cdf_1 = (s==-1) + s * jax.scipy.stats.norm.cdf(z - sigma)
+            cdf = (s==-1) + s * jax.scipy.stats.norm.cdf(z)
+
+            crps = y * (2 * cdf - 1) - 2 * jnp.exp(mu + jnp.abs(sigma_square) / 2) * (
+                        cdf_1 + cdf_2 - 1)
+        loss = crps
+    return jnp.mean(loss)
+
+def probabilistic_loss_fn(params, inputs, targets, model=None, kind='maximum_likelihood', distribution='normal'):
     out = model(params, inputs)
     predictions = out[:, :out.shape[1]//2]
     sigma_square = out[:, out.shape[1]//2:]
-    if kind == 'maximum_likelihood':
-        ll = jnp.mean(((predictions - targets)**2) / sigma_square + jnp.log(sigma_square))
-    elif kind == 'crps':
-        sigma = jnp.sqrt(sigma_square)
-        u = (targets - predictions) / sigma
-        ll = jnp.mean(sigma * (u * (2 * jax.scipy.stats.norm.cdf(u) - 1) + 2 * jax.scipy.stats.norm.pdf(u) - 1 / jnp.sqrt(jnp.pi)))
+    ll = probabilistic_loss(predictions, targets, sigma_square, kind=kind, distribution=distribution)
     return ll
 
 
@@ -118,6 +152,8 @@ class PICNNLayer(nn.Module):
     init_type: str = 'normal'
     augment_ctrl_inputs: bool = False
     layer_normalization: bool = False
+    z_min: jnp.array = None
+    z_max: jnp.array = None
     @nn.compact
     def __call__(self, y, u, z):
         if self.augment_ctrl_inputs:
@@ -144,6 +180,8 @@ class PICNNLayer(nn.Module):
             u_next = self.activation(u_next)
             return u_next, z_next
         else:
+            if self.z_min is not None:
+                z_next = nn.sigmoid(z_next) * (self.z_max - self.z_min) + self.z_min
             return None, z_next
 
 class NN(ScenarioGenerator):
@@ -321,7 +359,7 @@ class NN(ScenarioGenerator):
                             rand_idx_plt = np.random.choice(validation_len, 9)
                             self.training_plots([i[rand_idx_plt, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_plt, :],
                                                 targets_val[rand_idx_plt, :], tr_loss[1:], val_loss[1:], savepath_tr_plots, k)
-
+                            plt.close("all")
                         rel_te_err = (val_loss[-2] - val_loss[-1]) / np.abs(val_loss[-2] + 1e-6)
                         last_improvement = k // stats_step - np.argwhere(np.array(val_loss) == np.min(val_loss)).ravel()[-1]
                         if rel_te_err < rel_tol or (k>self.stopping_rounds and last_improvement > self.stopping_rounds):
@@ -432,6 +470,9 @@ class PartiallyICNN(nn.Module):
     layer_normalization:bool = False
     probabilistic: bool = False
     structured: bool = False
+    distribution: bool = 'normal'
+    z_max: jnp.array = None
+    z_min: jnp.array = None
     @nn.compact
     def __call__(self, x, y):
         u = x.copy()
@@ -442,7 +483,8 @@ class PartiallyICNN(nn.Module):
                               n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
                               rec_activation=self.rec_activation, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
-                              layer_normalization=self.layer_normalization)(y, u, z)
+                              layer_normalization=self.layer_normalization, z_min=self.z_min,
+                              z_max=self.z_max)(y, u, z)
         if self.probabilistic:
             u = x.copy()
             sigma_len = 1 if self.structured else self.features_out
@@ -454,8 +496,11 @@ class PartiallyICNN(nn.Module):
                                   n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
                                   rec_activation=self.rec_activation, init_type=self.init_type,
                                   augment_ctrl_inputs=self.augment_ctrl_inputs,
-                                  layer_normalization=self.layer_normalization)(y, u, sigma)
-            return jnp.hstack([z, nn.softplus(sigma) + 1e-4])
+                                  layer_normalization=self.layer_normalization, z_min=self.z_min,
+                              z_max=self.z_max)(y, u, sigma)
+            sigma = nn.softplus(sigma) + 1e-10
+
+            return jnp.hstack([z, sigma])
         return z
 
 
@@ -515,21 +560,13 @@ def causal_loss_fn(params, inputs, targets, model=None, causal_matrix=None):
     mse = jnp.mean((predictions - targets) ** 2)
     return mse + jnp.mean(causal_loss)
 
-
 def probabilistic_causal_loss_fn(params, inputs, targets, model=None, causal_matrix=None, kind='maximum_likelihood'):
     ex_inputs, ctrl_inputs = inputs[0], inputs[1]
     out = vmap(model.apply, in_axes=(None, 0, 0))(params, ex_inputs, ctrl_inputs)
     predictions = out[:, :out.shape[1]//2]
     sigma_square = out[:, out.shape[1]//2:]
     causal_loss =  vmap(_my_jmp, in_axes=(None, None, 0, 0, None))(model, params, ex_inputs, ctrl_inputs, causal_matrix.T)
-
-    if kind == 'maximum_likelihood':
-        ll = jnp.mean(((predictions - targets) ** 2) / sigma_square + jnp.log(sigma_square))
-    elif kind == 'crps':
-        sigma = jnp.sqrt(sigma_square)
-        u = (targets - predictions) / sigma
-        ll = jnp.mean(sigma * (
-                    u * (2 * jax.scipy.stats.norm.cdf(u) - 1) + 2 * jax.scipy.stats.norm.pdf(u) - 1 / jnp.sqrt(jnp.pi)))
+    ll = probabilistic_loss(predictions, targets, sigma_square, kind=kind)
 
     return ll + jnp.mean(causal_loss)
 
@@ -546,13 +583,17 @@ class PICNN(NN):
     augment_ctrl_inputs: bool = False
     layer_normalization: bool = False
     probabilistic_loss_kind: str = 'maximum_likelihood'
+    distribution = 'normal'
+    z_min: jnp.array = None
+    z_max: jnp.array = None
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
-                 probabilistic_loss_kind='maximum_likelihood', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 probabilistic_loss_kind='maximum_likelihood', distribution = 'normal', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
+                 z_min: jnp.array = None, z_max: jnp.array = None,
                  **scengen_kwgs):
 
         self.set_attr({"inverter_learning_rate":inverter_learning_rate,
@@ -561,7 +602,10 @@ class PICNN(NN):
                        "init_type":init_type,
                        "augment_ctrl_inputs":augment_ctrl_inputs,
                        "layer_normalization":layer_normalization,
-                       "probabilistic_loss_kind":probabilistic_loss_kind
+                       "probabilistic_loss_kind":probabilistic_loss_kind,
+                       "distribution": distribution,
+                       "z_min": z_min,
+                       "z_max": z_max
                        })
         self.n_hidden_y = 2 * len(self.optimization_vars) if augment_ctrl_inputs else len(self.optimization_vars)
         self.inverter_optimizer = optax.adabelief(learning_rate=self.inverter_learning_rate)
@@ -576,7 +620,9 @@ class PICNN(NN):
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
         self.model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type,
-                              augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
+                              augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
+                                   distribution=self.distribution, z_min=self.z_min,
+                              z_max=self.z_max)
 
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
         if self.causal_df is not None:
@@ -683,23 +729,25 @@ class PIQCNN(PICNN):
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
-                 probabilistic_loss_kind='maximum_likelihood',
+                 probabilistic_loss_kind='maximum_likelihood', distribution='normal',
                  inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
+                 z_min: jnp.array = None, z_max: jnp.array = None,
                  **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
                          normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
-                         probabilistic_loss_kind, inverter_learning_rate, optimization_vars, target_columns, init_type,
-                         augment_ctrl_inputs, layer_normalization, **scengen_kwgs)
+                         probabilistic_loss_kind, distribution, inverter_learning_rate, optimization_vars, target_columns, init_type,
+                         augment_ctrl_inputs, layer_normalization, z_min, z_max, **scengen_kwgs)
 
 
     def set_arch(self):
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
         self.model = PartiallyIQCNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type,
-                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic)
+                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
+                                    distribution=self.distribution)
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
         self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
             jitting_wrapper(loss_fn, self.predict_batch))
@@ -716,15 +764,16 @@ class PIQCNNSigmoid(PICNN):
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
-                 probabilistic_loss_kind='maximum_likelihood', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 probabilistic_loss_kind='maximum_likelihood', distribution='normal', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
+                 z_min: jnp.array = None, z_max: jnp.array = None,
                  **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
                          normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
-                         probabilistic_loss_kind, inverter_learning_rate, optimization_vars, target_columns, init_type,
-                         augment_ctrl_inputs, layer_normalization, **scengen_kwgs)
+                         probabilistic_loss_kind, distribution, inverter_learning_rate, optimization_vars, target_columns, init_type,
+                         augment_ctrl_inputs, layer_normalization, z_min, z_max, **scengen_kwgs)
 
 
     def set_arch(self):
@@ -732,7 +781,8 @@ class PIQCNNSigmoid(PICNN):
         self.model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type,
                                augment_ctrl_inputs=self.augment_ctrl_inputs, activation=nn.sigmoid,
-                               rec_activation=nn.sigmoid, probabilistic=self.probabilistic)
+                               rec_activation=nn.sigmoid, probabilistic=self.probabilistic,
+                                   distribution=self.distribution)
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
         self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
             jitting_wrapper(loss_fn, self.predict_batch))
@@ -746,21 +796,21 @@ class RecStablePICNN(PICNN):
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
-                 probabilistic_loss_kind='maximum_likelihood',inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 probabilistic_loss_kind='maximum_likelihood', distribution='normal', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False,
-                 layer_normalization=False, **scengen_kwgs):
+                 layer_normalization=False, z_min: jnp.array = None, z_max: jnp.array = None, **scengen_kwgs):
 
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
                          normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
-                         probabilistic_loss_kind, inverter_learning_rate, optimization_vars, target_columns, init_type,
-                         augment_ctrl_inputs, layer_normalization, **scengen_kwgs)
+                         probabilistic_loss_kind, distribution, inverter_learning_rate, optimization_vars, target_columns, init_type,
+                         augment_ctrl_inputs, layer_normalization, z_min, z_max, **scengen_kwgs)
 
     def set_arch(self):
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
         self.model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, activation=nn.relu,
-                              init_type=self.init_type, probabilistic=self.probabilistic)
+                              init_type=self.init_type, probabilistic=self.probabilistic, distribution=self.distribution)
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
         self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
             jitting_wrapper(loss_fn, self.predict_batch))
@@ -773,28 +823,23 @@ def structured_loss_fn(params, inputs, targets, model=None, objective=None):
     objs_hat = objective(predictions, inputs[1])
     objs = objective(targets, inputs[1])
     objective_loss = jnp.mean((objs-objs_hat)**2)
-    monotonic_objective_loss = monotonic_objective_relax(objs_hat, objs)
+    monotonic_objective_loss = monotonic_objective_right(objs_hat, objs)
     #fourier_loss = jnp.mean((unnormalized_fourier_transform(predictions, 20) - unnormalized_fourier_transform(targets, 20))**2)
-    return structured_loss +  monotonic_objective_loss #+ objective_loss
+    return structured_loss +  monotonic_objective_loss + objective_loss
 
-def structured_probabilistic_loss_fn(params, inputs, targets, model=None, kind='maximum_likelihood', objective=None):
+def structured_probabilistic_loss_fn(params, inputs, targets, model=None, kind='maximum_likelihood', objective=None, distribution='normal'):
     out = model(params, inputs)
     predictions = out[:, :-1]
     sigma_square = out[:, -1]
     objs_hat = objective(predictions, inputs[1])
     objs = objective(targets, inputs[1])
 
-    if kind == 'maximum_likelihood':
-        objective_loss = jnp.mean(((objs_hat - objs)**2) / sigma_square + jnp.log(sigma_square))
-    elif kind == 'crps':
-        sigma = jnp.sqrt(sigma_square)
-        u = (objs_hat - objs) / sigma
-        objective_loss = jnp.mean(sigma * (u * (2 * jax.scipy.stats.norm.cdf(u) - 1) + 2 * jax.scipy.stats.norm.pdf(u) - 1 / jnp.sqrt(jnp.pi)))
+    obj_loss = probabilistic_loss(objs_hat, objs, sigma_square, kind=kind, distribution=distribution)
 
     structured_loss = jnp.mean((predictions-targets) ** 2)
-    monotonic_objective_loss = monotonic_objective_relax(objs_hat, objs)
+    monotonic_objective_loss = monotonic_objective_right(objs_hat, objs)
     #fourier_loss = jnp.mean((unnormalized_fourier_transform(predictions, 20) - unnormalized_fourier_transform(targets, 20))**2)
-    return structured_loss + monotonic_objective_loss #+ objective_loss
+    return structured_loss + monotonic_objective_loss + obj_loss
 
 @partial(vmap, in_axes=(0, None))
 def unnormalized_fourier_transform(predictions, n_freq):
@@ -816,7 +861,7 @@ def unnormalized_fourier_transform(predictions, n_freq):
 def monotonic_objective_right(objs_hat, objs):
     rank = jnp.argsort(objs)
     rank_hat = jnp.argsort(objs_hat)
-    return -jnp.mean(jnp.abs(jnp.corrcoef(rank, rank_hat)[0, 1]))
+    return -jnp.mean(jnp.corrcoef(rank, rank_hat)[0, 1])
 
 def monotonic_objective_relax(objs_hat, objs):
     key = random.key(0)
@@ -824,7 +869,7 @@ def monotonic_objective_relax(objs_hat, objs):
     d = objs[random_pairs[:, 0]] - objs[random_pairs[:, 1]]
     d_hat = objs_hat[random_pairs[:, 0]] - objs_hat[random_pairs[:, 1]]
     discordant = (d * d_hat) < 0
-    return -jnp.mean(d*discordant)
+    return jnp.mean(d*discordant)
 
 
 class StructuredPICNN(PICNN):
@@ -837,9 +882,9 @@ class StructuredPICNN(PICNN):
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
-                 probabilistic_loss_kind='maximum_likelihood', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
+                 probabilistic_loss_kind='maximum_likelihood', distribution='normal', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
-                 objective_fun=None, **scengen_kwgs):
+                 objective_fun=None, z_min: jnp.array = None, z_max: jnp.array = None, **scengen_kwgs):
 
         self.objective_fun = objective_fun
         self.objective = vmap(objective_fun, in_axes=(0, 0))
@@ -847,17 +892,18 @@ class StructuredPICNN(PICNN):
         super().__init__(learning_rate, batch_size, load_path, n_hidden_x, n_out, n_layers, pars, q_vect, val_ratio,
                          nodes_at_step, n_epochs, savepath_tr_plots, stats_step, rel_tol, unnormalized_inputs,
                          normalize_target, stopping_rounds, subtract_mean_when_normalizing, causal_df, probabilistic,
-                         probabilistic_loss_kind, inverter_learning_rate, optimization_vars, target_columns, init_type,
-                         augment_ctrl_inputs, layer_normalization, **scengen_kwgs)
+                         probabilistic_loss_kind, distribution, inverter_learning_rate, optimization_vars, target_columns, init_type,
+                         augment_ctrl_inputs, layer_normalization, z_min, z_max, **scengen_kwgs)
 
     def set_arch(self):
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
         self.model = PartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, init_type=self.init_type,
                                augment_ctrl_inputs=self.augment_ctrl_inputs, activation=nn.sigmoid,
-                               rec_activation=nn.sigmoid, probabilistic=self.probabilistic, structured=True)
+                               rec_activation=nn.sigmoid, probabilistic=self.probabilistic, structured=True,
+                                   distribution=self.distribution)
         self.predict_batch = vmap(jitting_wrapper(predict_batch_picnn, self.model), in_axes=(None, 0))
-        self.loss_fn = jitting_wrapper(structured_loss_fn, self.predict_batch, objective=self.objective) if not self.probabilistic else jitting_wrapper(structured_probabilistic_loss_fn, self.predict_batch, kind=self.probabilistic_loss_kind, objective=self.objective)
+        self.loss_fn = jitting_wrapper(structured_loss_fn, self.predict_batch, objective=self.objective) if not self.probabilistic else jitting_wrapper(structured_probabilistic_loss_fn, self.predict_batch, kind=self.probabilistic_loss_kind, objective=self.objective, distribution=self.distribution)
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
 
@@ -876,7 +922,7 @@ class StructuredPICNN(PICNN):
 
         if self.probabilistic:
             preds = pd.DataFrame(y_hat[:, :-1], index=inputs.index, columns=self.target_columns)
-            sigma = pd.DataFrame(y_hat[:, -1]**0.5, index=inputs.index, columns=['sigma'])
+            sigma = pd.DataFrame(np.sign(y_hat[:, -1]) * np.abs(y_hat[:, -1])**0.5, index=inputs.index, columns=['sigma'])
             objs = pd.DataFrame(self.objective(y_hat[:, :-1], x[1]), index=inputs.index, columns=['objective'])
             if return_obj and return_sigma:
                 return preds, objs, sigma
@@ -900,17 +946,31 @@ class StructuredPICNN(PICNN):
     def predict_quantiles(self, inputs, normalize=True, **kwargs):
         if normalize:
             y_hat, objs_hat, sigma_hat = self.predict(inputs, return_sigma=True, return_obj=True)
-            mu_hat = objs_hat.values
-            sigma_hat = sigma_hat.values
+            objs_hat = objs_hat.values
+            s = np.sign(sigma_hat.values.reshape(-1, 1))
+            sigma_hat = np.abs(sigma_hat.values.reshape(-1, 1))
         else:
             y_hat = self.predict_batch(self.pars, inputs)
             y_hat = np.array(y_hat)
-            sigma_hat = (y_hat[:, -1])** 0.5
-            mu_hat = self.objective(y_hat[:, :-1], inputs[1]).reshape(-1, 1)
+            sigma_hat = (np.abs(y_hat[:, [-1]]))** 0.5
+            s = np.sign(y_hat[:, [-1]])
+            objs_hat = self.objective(y_hat[:, :-1], inputs[1]).reshape(-1, 1)
 
 
-        preds = np.expand_dims(mu_hat, -1) * np.ones((1, 1, len(self.q_vect)))
+        preds = np.expand_dims(objs_hat, -1) * np.ones((1, 1, len(self.q_vect)))
         for i, q in enumerate(self.q_vect):
-            qs = sigma_hat * np.sqrt(2) * erfinv(2*q-1)
-            preds[:, :, i] += qs.reshape(-1, 1)
+            if self.distribution == 'normal':
+                qs = sigma_hat * np.sqrt(2) * erfinv(2 * q - 1)
+                preds[:, :, i] += qs
+            elif self.distribution == 'log-normal':
+                sg_hat_square = jnp.log(1 + sigma_hat ** 2 / objs_hat ** 2)
+                sg_hat = jnp.sqrt(sg_hat_square)
+
+                mu_hat = jnp.log(objs_hat ** 2 / jnp.sqrt(sigma_hat ** 2 + objs_hat ** 2))
+                qp = mu_hat + sg_hat * np.sqrt(2) * erfinv(2 * q - 1)
+                pos_qs = np.exp(qp)
+                qn = mu_hat + sg_hat * np.sqrt(2) * erfinv(2 * (1-q) - 1)
+                neg_qs = 2 * jnp.exp(mu_hat) - np.exp(qn)
+                preds[:, :, i] = (s==-1)*neg_qs + (s==1)*pos_qs
+
         return preds

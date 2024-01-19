@@ -11,6 +11,7 @@ from pyforecaster.metrics import nmae
 from os import makedirs
 from os.path import exists, join
 import jax.numpy as jnp
+from jax import vmap
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -69,7 +70,7 @@ class TestFormatDataset(unittest.TestCase):
 
         m_1 = PICNN(learning_rate=1e-3, batch_size=500, load_path=None, n_hidden_x=20, n_hidden_y=20,
                   n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,probabilistic=True, probabilistic_loss_kind='crps', rel_tol=-1,
-                    val_ratio=0.2).fit(x_tr, y_tr,n_epochs=2,stats_step=50,savepath_tr_plots=savepath_tr_plots)
+                    val_ratio=0.2,z_min=-1*jnp.ones(y_tr.shape[1]),z_max=jnp.ones(y_tr.shape[1])).fit(x_tr, y_tr,n_epochs=2,stats_step=50,savepath_tr_plots=savepath_tr_plots)
 
         y_hat_1 = m_1.predict(x_te)
         m_1.save('tests/results/ffnn_model.pk')
@@ -305,24 +306,37 @@ class TestFormatDataset(unittest.TestCase):
 
         optimization_vars = x_tr.columns[:20]
 
-        m_1 = StructuredPICNN(learning_rate=1e-4, batch_size=100, load_path=None, n_hidden_x=250, n_hidden_y=250,
-                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,stopping_rounds=100
-                              , layer_normalization=True, objective_fun=objective, probabilistic=True, probabilistic_loss_kind='crps', normalize_target=False).fit(x_tr,
+        m_1 = StructuredPICNN(learning_rate=1e-4, batch_size=100, load_path=None, n_hidden_x=512, n_hidden_y=250,
+                  n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars,stopping_rounds=2
+                              , layer_normalization=True, objective_fun=objective, probabilistic=True, probabilistic_loss_kind='crps', distribution='log-normal', normalize_target=False).fit(x_tr,
                                                                                             y_tr,
-                                                                                            n_epochs=2,
+                                                                                            n_epochs=6,
                                                                                             savepath_tr_plots=savepath_tr_plots,
-                                                                                            stats_step=500, rel_tol=-1)
-        from jax import vmap
+                                                                                            stats_step=200, rel_tol=-1)
+
         objs = vmap(objective,in_axes=(0, 0))(y_te.values, x_te.values)
         rnd_idxs = np.random.choice(x_te.shape[0], 5000, replace=False)
         rnd_idxs =  rnd_idxs[np.argsort(objs[rnd_idxs])]
 
         fig, ax = plt.subplots(2, 1, figsize=(5, 10))
-        ax[0].plot(objs[rnd_idxs], label='y_true')
-        ax[0].plot(m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), label='y_hat')
+        ax[0].plot(m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), label='y_hat', linewidth=1, color='orange')
+        ax[0].plot(objs[rnd_idxs], label='y_true', linewidth=1, color='darkblue')
         ax[1].scatter(objs[rnd_idxs], m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), s=1)
-        ax[0].plot(np.squeeze(m_1.predict_quantiles(x_te.iloc[rnd_idxs, :], return_obj=True)), color='orange', alpha=0.3)
+        ax[0].plot(np.squeeze(m_1.predict_quantiles(x_te.iloc[rnd_idxs, :], return_obj=True)), color='orange', alpha=0.3, linewidth=1)
 
+
+        rnd_idxs = np.random.choice(x_te.shape[0], 5000, replace=False)
+        _, obj, sigma = m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True, return_sigma=True)
+        qs = np.squeeze(m_1.predict_quantiles(x_te.iloc[rnd_idxs, :], return_obj=True))
+        rnd_idxs =  np.argsort(sigma.values.ravel())
+
+        fig, ax = plt.subplots(2, 1, figsize=(5, 10))
+        ax[0].plot(obj.values[rnd_idxs], label='y_hat', linewidth=1,
+                   color='orange')
+        ax[0].plot(objs[rnd_idxs], label='y_true', linewidth=1, color='darkblue')
+        ax[1].scatter(objs[rnd_idxs], m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel(), s=1)
+        ax[0].plot(qs[rnd_idxs], color='orange',
+                   alpha=0.3, linewidth=1)
 
         ordered_idx = np.argsort(np.abs(objs[rnd_idxs] - m_1.predict(x_te.iloc[rnd_idxs, :], return_obj=True)[1].values.ravel()))
 
