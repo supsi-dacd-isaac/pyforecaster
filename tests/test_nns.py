@@ -372,15 +372,15 @@ class TestFormatDataset(unittest.TestCase):
         m = LatentStructuredPICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3,
                   augment_ctrl_inputs=True, layer_normalization=True, unnormalized_inputs=optimization_vars,
-                                  n_first_encoder=20, n_last_encoder=100, n_first_decoder=100).fit(x_tr, y_tr,
-                                                                          n_epochs=1,
+                                  n_first_encoder=20, n_last_encoder=200, n_first_decoder=100).fit(x_tr, y_tr,
+                                                                          n_epochs=2,
                                                                           savepath_tr_plots=savepath_tr_plots,
-                                                                          stats_step=40 )
+                                                                          stats_step=40)
 
-        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + 0.0001*jnp.sum(ctrl**2)
-        ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=5000)
+        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2)
+        m.inverter_optimizer = optax.adabelief(learning_rate=1e-3)
+        ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=500)
 
-        plt.plot(y_hat_opt.values.ravel())
         rnd_idxs = np.random.choice(x_te.shape[0], 1)
         rnd_idxs = [100]
         for r in rnd_idxs:
@@ -389,6 +389,7 @@ class TestFormatDataset(unittest.TestCase):
             plt.plot(y_te.iloc[r, :].values.ravel(), label='y_true')
             plt.plot(y_hat.values.ravel(), label='y_hat')
             plt.legend()
+        plt.plot(y_hat_opt.values.ravel())
 
 if __name__ == '__main__':
     unittest.main()
