@@ -4,7 +4,7 @@ import optax
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid, StructuredPICNN
+from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid, StructuredPICNN, LatentStructuredPICNN
 from pyforecaster.trainer import hyperpar_optimizer
 from pyforecaster.formatter import Formatter
 from pyforecaster.metrics import nmae
@@ -350,6 +350,45 @@ class TestFormatDataset(unittest.TestCase):
             #plt.plot(np.squeeze(q_hat), label='q_hat', color='orange', alpha=0.3)
             plt.legend()
 
+
+    def test_latent_picnn(self):
+
+        # normalize inputs
+        x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
+        y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        n_tr = int(len(x) * 0.8)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+
+        savepath_tr_plots = 'tests/results/ffnn_tr_plots'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
+        optimization_vars = x_tr.columns[:100]
+
+        m = LatentStructuredPICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
+               n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3,
+                  augment_ctrl_inputs=True, layer_normalization=True, unnormalized_inputs=optimization_vars,
+                                  n_first_encoder=20, n_last_encoder=100, n_first_decoder=100).fit(x_tr, y_tr,
+                                                                          n_epochs=1,
+                                                                          savepath_tr_plots=savepath_tr_plots,
+                                                                          stats_step=40 )
+
+        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + 0.0001*jnp.sum(ctrl**2)
+        ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[100], :], objective=objective,n_iter=5000)
+
+        plt.plot(y_hat_opt.values.ravel())
+        rnd_idxs = np.random.choice(x_te.shape[0], 1)
+        rnd_idxs = [100]
+        for r in rnd_idxs:
+            y_hat = m.predict(x_te.iloc[[r], :])
+            plt.figure()
+            plt.plot(y_te.iloc[r, :].values.ravel(), label='y_true')
+            plt.plot(y_hat.values.ravel(), label='y_hat')
+            plt.legend()
 
 if __name__ == '__main__':
     unittest.main()
