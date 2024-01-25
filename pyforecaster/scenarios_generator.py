@@ -2,6 +2,7 @@ from typing import Union
 from scipy.interpolate import interp1d
 from .scenred import superimpose_signal_to_tree
 from pyforecaster.utilities import get_logger
+from logging import WARNING
 import pandas as pd
 import pyforecaster.dictionaries
 import numpy as np
@@ -17,7 +18,7 @@ class ScenGen:
     def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
                  online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,
                  parallel_preds=False, additional_node=False, prefit_trees=False, **kwargs):
-        self.logger = get_logger()
+        self.logger = get_logger(level=WARNING)
         self.copula_type = copula_type
         self.tree_type = tree_type
         self.copula_class = pyforecaster.dictionaries.COPULA_MAP[copula_type]

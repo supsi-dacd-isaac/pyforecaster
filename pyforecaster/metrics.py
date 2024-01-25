@@ -17,18 +17,36 @@ def squerr(x, t):
 
 def rmse(x, t, agg_index=None, **kwargs):
     agg_index = np.ones_like(x.index) if agg_index is None else agg_index
-    return squerr(x, t).groupby(agg_index, axis=chose_axis(x, agg_index)).mean() ** 0.5
+    res = squerr(x, t)
+    axis = chose_axis(x, agg_index)
+    if axis == 0:
+        res = res.groupby(agg_index).mean() ** 0.5
+    else:
+        res = res.T.groupby(agg_index).mean() ** 0.5
+    return res
 
 
 def mape(x, t, agg_index=None, **kwargs):
     agg_index = np.ones_like(x.index) if agg_index is None else agg_index
-    return (err(x, t)/(t + 1e-5)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
+    res = (err(x, t)/(np.abs(t) + 1e-5)).abs()
+    axis = chose_axis(x, agg_index)
+    if axis == 0:
+        res = res.groupby(agg_index).mean()
+    else:
+        res = res.T.groupby(agg_index).mean()
+    return res
 
 
 def nmae(x, t, agg_index=None, inter_normalization=True, **kwargs):
     agg_index = np.ones_like(x.index) if agg_index is None else agg_index
     offset = t.abs().mean(axis=1).quantile(0.5) * 0.01 + 1e-12 if inter_normalization else 1e-12
-    return (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs().groupby(agg_index, axis=chose_axis(x, agg_index)).mean()
+    axis = chose_axis(x, agg_index)
+    res = (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs()
+    if axis == 0:
+        res = res.groupby(agg_index).mean()
+    else:
+        res = res.T.groupby(agg_index).mean()
+    return res
 
 
 def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):

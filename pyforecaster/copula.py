@@ -11,7 +11,7 @@ class GaussianCopula:
     def __init__(self, cov_est_method='vanilla', logger=None):
         self.pars = None
         self.cov_est_method = cov_est_method
-        self.logger = logger if logger is not None else get_logger(name='Copula')
+        self.logger = logger if logger is not None else get_logger(name='Copula', level=logging.WARNING)
         self.dim = None
 
     def fit(self, y, x=None, do_plot=True):
