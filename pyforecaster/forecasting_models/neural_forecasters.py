@@ -589,9 +589,9 @@ def decode(params, model, x, ctrl_embedding):
 
     return nn.apply(decoder, model)(params)
 
-def latent_pred(params, model, ctrl_embedding, x):
+def latent_pred(params, model, x, ctrl_embedding):
     def _latent_pred(lpicnn ):
-        return lpicnn.latent_pred(ctrl_embedding, x)
+        return lpicnn.latent_pred(x, ctrl_embedding)
 
     return nn.apply(_latent_pred, model)(params)
 
@@ -1133,8 +1133,8 @@ class LatentStructuredPICNN(PICNN):
             ctrl_reconstruct = decode(self.pars, self.model, x, ctrl_embedding)
             preds_reconstruct, _ , _ = self.predict_batch_training(self.pars, [x, ctrl_reconstruct])
             implicit_regularization_loss = jnp.mean((preds_reconstruct - preds)**2)
-            return objective(preds, ctrl_embedding, **objective_kwargs) + implicit_regularization_loss
-
+            return objective(preds, ctrl_reconstruct, **objective_kwargs) + implicit_regularization_loss
+        self._objective = _objective
         # if the objective changes from one call to another, you need to recompile it. Slower but necessary
         if recompile_obj or self.iterate is None:
             @jit
