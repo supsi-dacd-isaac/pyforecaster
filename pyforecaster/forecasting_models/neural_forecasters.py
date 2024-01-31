@@ -45,18 +45,22 @@ def reproject_weights(params, rec_stable=False, monotone=False):
     # Loop through each layer and reproject the input-convex weights
     for layer_name in params['params']:
         if 'PICNNLayer' in layer_name:
-            if monotone:
-                for name in {'wz', 'wy'} & set(params['params'][layer_name].keys()):
-                    params['params'][layer_name][name]['kernel'] = jnp.maximum(0, params['params'][layer_name][name]['kernel'])
-                #for name in {'wzu', 'wyu', 'wuz', 'u_dense'} & set(params['params'][layer_name].keys()):
-                    #    params['params'][layer_name][name]['bias'] = jnp.maximum(0, params['params'][layer_name][name][
-                #    'bias'])
+            if 'wz' in params['params'][layer_name].keys():
+                _reproject(params['params'], layer_name, rec_stable=rec_stable, monotone=monotone)
             else:
-                params['params'][layer_name]['wz']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wz']['kernel'])
-                if rec_stable:
-                    params['params'][layer_name]['wy']['kernel'] = jnp.maximum(0, params['params'][layer_name]['wy']['kernel'])
+                for name in params['params'][layer_name].keys():
+                    _reproject(params['params'][layer_name], name, rec_stable=rec_stable, monotone=monotone or ('monotone' in layer_name))
+
     return params
 
+def _reproject(params, layer_name, rec_stable=False, monotone=False):
+    if ('monotone' in layer_name) or monotone:
+        for name in {'wz', 'wy'} & set(params[layer_name].keys()):
+            params[layer_name][name]['kernel'] = jnp.maximum(0, params[layer_name][name]['kernel'])
+    else:
+        params[layer_name]['wz']['kernel'] = jnp.maximum(0, params[layer_name]['wz']['kernel'])
+        if rec_stable:
+            params[layer_name]['wy']['kernel'] = jnp.maximum(0, params[layer_name]['wy']['kernel'])
 
 def jitting_wrapper(fun, model, **kwargs):
     return jit(partial(fun, model=model, **kwargs))
@@ -65,13 +69,21 @@ def loss_fn(params, inputs, targets, model=None):
     predictions = model(params, inputs)
     return jnp.mean((predictions - targets) ** 2)
 
-def embedded_loss_fn(params, inputs, targets, model=None):
+def embedded_loss_fn(params, inputs, targets, model=None, full_model=None):
     predictions, ctrl_embedding, ctrl_reconstruction = model(params, inputs)
     predictions_from_ctrl_reconstr, _, _ = model(params, [inputs[0], ctrl_reconstruction])
     target_loss = jnp.mean((predictions - targets) ** 2)
     ctrl_reconstruction_loss = jnp.mean((ctrl_reconstruction - inputs[1]) ** 2)
     obj_reconstruction_loss = jnp.mean((predictions - predictions_from_ctrl_reconstr) ** 2)
-    return target_loss + ctrl_reconstruction_loss + obj_reconstruction_loss
+
+    output_grads_wrt_embedding = vmap(lambda ctrl_emb, exog: jax.jacfwd(lambda ctrl_emb: latent_pred(params, full_model, exog, ctrl_emb).ravel())(ctrl_emb), in_axes=(0, 0))(ctrl_embedding, inputs[0]).squeeze()
+    conic_loss = jnp.mean((output_grads_wrt_embedding-2*ctrl_embedding) ** 2)
+    kl_gaussian_loss = jnp.mean(jnp.mean(ctrl_embedding**2, axis=0) + jnp.mean(ctrl_embedding, axis=0)**2
+                                - jnp.log(jnp.mean(ctrl_embedding**2, axis=0)) - 1) # (sigma^2 + mu^2 - log(sigma^2) - 1)/2
+
+    return target_loss + ctrl_reconstruction_loss + obj_reconstruction_loss + kl_gaussian_loss
+
+
 
 def probabilistic_loss(y_hat, y, sigma_square, kind='maximum_likelihood', distribution='normal'):
 
@@ -498,7 +510,7 @@ class PartiallyICNN(nn.Module):
     @nn.compact
     def __call__(self, x, y):
         u = x.copy()
-        z = jnp.zeros(self.features_latent)  # Initialize z_0 to be the same shape as y
+        z = jnp.ones(self.features_latent)  # Initialize z_0 to be the same shape as y
         for i in range(self.num_layers):
             prediction_layer = i == self.num_layers -1
             features_out = self.features_out if prediction_layer else self.features_latent
@@ -535,8 +547,10 @@ class LatentPartiallyICNN(nn.Module):
     features_y: int
     features_out: int
     features_latent: int
-    encoder_neurons: np.array = None
-    decoder_neurons: np.array = None
+    n_encoder_layers: int
+    n_decoder_layers:int
+    n_embeddings: int
+    n_control: int
     activation: callable = nn.relu
     rec_activation: callable = identity
     init_type: str = 'normal'
@@ -549,24 +563,28 @@ class LatentPartiallyICNN(nn.Module):
 
 
     def setup(self):
-        ctrl_embedding_len = self.encoder_neurons[-1]
-        features_y = 2*ctrl_embedding_len if self.augment_ctrl_inputs else ctrl_embedding_len
+        features_latent_encoder = np.minimum(self.n_embeddings, self.features_latent)
+        features_latent_decoder = np.minimum(self.n_control, self.features_latent)
 
-        self.encoder = PartiallyICNN(num_layers=self.num_layers, features_x=self.features_x, features_y=self.features_y,
-                              features_out=self.encoder_neurons[-1], features_latent=self.features_latent, init_type=self.init_type,
-                              augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
-                                   z_min=self.z_min, z_max=self.z_max, name='encoder')
+        features_latent_encoder = self.features_latent
+        features_latent_decoder = self.features_latent
 
-        self.decoder = PartiallyICNN(num_layers=self.num_layers, features_x=self.features_x, features_y=features_y,
-                              features_out=self.decoder_neurons[-1], features_latent=self.features_latent, init_type=self.init_type,
+        features_y = self.n_embeddings*2 if self.augment_ctrl_inputs else self.n_embeddings
+        self.encoder = PartiallyICNN(num_layers=self.n_encoder_layers, features_x=self.features_x, features_y=self.features_y,
+                              features_out=self.n_embeddings, features_latent=features_latent_encoder, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
-                                   z_min=self.z_min, z_max=self.z_max, name='decoder')
+                                   z_min=self.z_min, z_max=self.z_max, name='PICNNLayer_encoder')
+
+        self.decoder = PartiallyICNN(num_layers=self.n_decoder_layers, features_x=self.features_x, features_y=features_y,
+                              features_out=self.n_control, features_latent=features_latent_decoder, init_type=self.init_type,
+                              augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
+                                   z_min=self.z_min, z_max=self.z_max, name='PICNNLayer_decoder')
 
 
         self.picnn = PartiallyICNN(num_layers=self.num_layers, features_x=self.features_x, features_y=features_y,
                               features_out=self.features_out, features_latent=self.features_latent, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
-                                   z_min=self.z_min, z_max=self.z_max, name='picnn')
+                                   z_min=self.z_min, z_max=self.z_max, name='PICNNLayer_picnn')
 
     def __call__(self, x, y):
 
@@ -580,6 +598,9 @@ class LatentPartiallyICNN(nn.Module):
     def decode(self, x, ctrl_embedding):
         return self.decoder(x, ctrl_embedding)
 
+    def encode(self, x, ctrl_embedding):
+        return self.encoder(x, ctrl_embedding)
+
     def latent_pred(self, x, ctrl_embedding):
         return self.picnn(x, ctrl_embedding)
 
@@ -588,6 +609,13 @@ def decode(params, model, x, ctrl_embedding):
         return lpicnn.decode(x, ctrl_embedding)
 
     return nn.apply(decoder, model)(params)
+
+def encode(params, model, x, ctrl_embedding):
+    def encoder(lpicnn ):
+        return lpicnn.encode(x, ctrl_embedding)
+
+    return nn.apply(encoder, model)(params)
+
 
 def latent_pred(params, model, x, ctrl_embedding):
     def _latent_pred(lpicnn ):
@@ -613,7 +641,7 @@ class PartiallyIQCNN(nn.Module):
 
     def __call_wrapper__(self, y, x):
         u = x
-        z = jnp.zeros(self.features_out)  # Initialize z_0 to be the same shape as y
+        z = jnp.ones(self.features_out)  # Initialize z_0 to be the same shape as y
         for i in range(self.num_layers):
             prediction_layer = i == self.num_layers -1
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
@@ -1077,10 +1105,10 @@ class StructuredPICNN(PICNN):
 class LatentStructuredPICNN(PICNN):
     reproject: bool = True
     rec_stable: bool = False
-    monotone: bool = True
     objective_fun=None
     encoder_neurons: np.array = None
     decoder_neurons: np.array = None
+    n_embeddings: int = 10
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = 1, n_latent:int = 1, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
@@ -1089,16 +1117,12 @@ class LatentStructuredPICNN(PICNN):
                  probabilistic_loss_kind='maximum_likelihood', distribution='normal', inverter_learning_rate: float = 0.1, optimization_vars: list = (),
                  target_columns: list = None, init_type='normal', augment_ctrl_inputs=False, layer_normalization=False,
                  objective_fun=None, z_min: jnp.array = None, z_max: jnp.array = None,
-                 n_first_encoder:int=10, n_last_encoder:int=10, n_encoder_layers:int=3,
-                 n_first_decoder:int=10, n_decoder_layers:int=3,
+                 n_encoder_layers:int=3,
+                 n_embeddings:int=10, n_decoder_layers:int=3,
                  **scengen_kwgs):
 
-        self.set_attr({"encoder_neurons":np.linspace(n_first_encoder, n_last_encoder, n_encoder_layers).astype(int),
-                       "decoder_neurons":np.linspace(n_first_decoder, len(optimization_vars), n_decoder_layers).astype(int),
-                       "n_first_encoder":n_first_encoder,
-                       "n_last_encoder":n_last_encoder,
+        self.set_attr({"n_embeddings":n_embeddings,
                        "n_encoder_layers":n_encoder_layers,
-                       "n_first_decoder":n_first_decoder,
                        "n_decoder_layers":n_decoder_layers
                        })
 
@@ -1111,14 +1135,14 @@ class LatentStructuredPICNN(PICNN):
         z_max = jnp.array(self.z_max) if self.z_max is not None else self.z_max
         z_min = jnp.array(self.z_min) if self.z_min is not None else self.z_min
         self.optimizer = optax.adamw(learning_rate=self.learning_rate)
-        self.model = LatentPartiallyICNN(num_layers=self.n_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
+        self.model = LatentPartiallyICNN(num_layers=self.n_layers,n_encoder_layers=self.n_encoder_layers, n_decoder_layers=self.n_decoder_layers, features_x=self.n_hidden_x, features_y=self.n_hidden_y,
                               features_out=self.n_out, features_latent=self.n_latent, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs, probabilistic=self.probabilistic,
-                                   z_min=z_min, z_max=z_max, encoder_neurons=self.encoder_neurons, decoder_neurons=self.decoder_neurons)
+                                   z_min=z_min, z_max=z_max, n_embeddings=self.n_embeddings, n_control=len(self.optimization_vars))
 
         self.predict_batch_training = vmap(jitting_wrapper(predict_batch_latent_picnn, self.model, mode='all'), in_axes=(None, 0))
         self.predict_batch = vmap(jitting_wrapper(predict_batch_latent_picnn, self.model, mode='prediction'), in_axes=(None, 0))
-        self.loss_fn = jitting_wrapper(embedded_loss_fn, self.predict_batch_training) if not self.probabilistic else jitting_wrapper(probabilistic_loss_fn, self.predict_batch, kind=self.probabilistic_loss_kind, distribution=self.distribution)
+        self.loss_fn = jitting_wrapper(embedded_loss_fn, self.predict_batch_training, full_model=self.model) if not self.probabilistic else jitting_wrapper(probabilistic_loss_fn, self.predict_batch, kind=self.probabilistic_loss_kind, distribution=self.distribution)
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
 
@@ -1133,6 +1157,8 @@ class LatentStructuredPICNN(PICNN):
             ctrl_reconstruct = decode(self.pars, self.model, x, ctrl_embedding)
             preds_reconstruct, _ , _ = self.predict_batch_training(self.pars, [x, ctrl_reconstruct])
             implicit_regularization_loss = jnp.mean((preds_reconstruct - preds)**2)
+            ctrl_embedding_reconstruct = encode(self.pars, self.model, x, ctrl_reconstruct)
+            #implicit_regularization_loss = jnp.mean((ctrl_embedding_reconstruct - ctrl_embedding)**2)
             return objective(preds, ctrl_reconstruct, **objective_kwargs) + implicit_regularization_loss
         self._objective = _objective
         # if the objective changes from one call to another, you need to recompile it. Slower but necessary
@@ -1172,8 +1198,6 @@ class LatentStructuredPICNN(PICNN):
         y_hat_from_latent = latent_pred(self.pars, self.model, x, ctrl_embedding)
         y_hat_from_ctrl_reconstructed, _ ,_ = self.predict_batch_training(self.pars, [x, ctrl])
 
-        plt.plot(y_hat_from_latent.ravel())
-        plt.plot(y_hat_from_ctrl_reconstructed.ravel())
 
         inputs.loc[:, self.optimization_vars] = ctrl.ravel()
         inputs.loc[:, [c for c in inputs.columns if c not in  self.optimization_vars]] = x.ravel()

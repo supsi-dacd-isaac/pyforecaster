@@ -12,7 +12,7 @@ from os import makedirs
 from os.path import exists, join
 import jax.numpy as jnp
 from jax import vmap
-
+from pyforecaster.forecasting_models.neural_forecasters import latent_pred
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
@@ -104,7 +104,7 @@ class TestFormatDataset(unittest.TestCase):
         # normalize inputs
         x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0) + 0.01)
         y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0) + 0.01)
-
+        x = x.iloc[:, -10:]
         n_tr = int(len(x) * 0.8)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
@@ -115,15 +115,33 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-        optimization_vars = x_tr.columns[:2]
+
+        optimization_vars = x_tr.columns[:-1]
         causal_df = pd.DataFrame(np.tril(np.ones((len(optimization_vars), y_tr.shape[1]))), index=optimization_vars, columns=y_tr.columns)
 
         m_1 = PICNN(learning_rate=1e-3, batch_size=1000, load_path=None, n_hidden_x=200, n_hidden_y=200,
-                    n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, causal_df = causal_df, probabilistic=True).fit(x_tr,
+                    n_out=y_tr.shape[1], n_latent=20, n_layers=3, optimization_vars=optimization_vars, probabilistic=False, rel_tol=-1).fit(x_tr,
                                                                                               y_tr,
-                                                                                              n_epochs=1,
+                                                                                              n_epochs=10,
                                                                                               savepath_tr_plots=savepath_tr_plots,
-                                                                                              stats_step=10)
+                                                                                              stats_step=5)
+        # check convexity of the PICNN
+        #rnd_idxs = np.random.choice(x_tr.shape[0], 1)
+        #rand_opt_vars = np.random.choice(optimization_vars, 10)
+        #for cc in rand_opt_vars:
+        #    x = x_tr.iloc[rnd_idxs, :]
+        #    x = pd.concat([x] * 100, axis=0)
+        #    x[cc] = np.linspace(-1, 1, 100)
+        #    y_hat = m_1.predict(x)
+        #    d = np.diff(np.sign(np.diff(y_hat.values[:, :96], axis=0)), axis=0)
+        #    approx_second_der = np.round(np.diff(y_hat.values[:, :96], 2, axis=0), 5)
+        #    approx_second_der[approx_second_der == 0] = 0  # to fix the sign
+        #    is_convex = not np.any(np.sign(approx_second_der) < -0)
+        #    print('output is convex w.r.t. input {}: {}'.format(cc, is_convex))
+        #    plt.figure(layout='tight')
+        #    plt.plot(np.tile(x[cc].values.reshape(-1, 1), 96), y_hat.values[:, :96], alpha=0.3)
+        #    plt.xlabel(cc)
+        #    plt.savefig(join(savepath_tr_plots, '{}.png'.format(cc)), dpi=300)
     def test_pqicnn(self):
 
         # normalize inputs
@@ -357,6 +375,7 @@ class TestFormatDataset(unittest.TestCase):
         x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
         y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
 
+        x = x.iloc[:, :10]
         n_tr = int(len(x) * 0.8)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
@@ -367,21 +386,24 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-        optimization_vars = x_tr.columns[:100]
+        optimization_vars = x_tr.columns[:5]
 
-        m = LatentStructuredPICNN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
+        m = LatentStructuredPICNN(n_latent=5, learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
                n_out=y_tr.shape[1], n_layers=3, optimization_vars=optimization_vars, inverter_learning_rate=1e-3,
                   augment_ctrl_inputs=True, layer_normalization=True, unnormalized_inputs=optimization_vars,
-                                  n_first_encoder=20, n_last_encoder=200, n_first_decoder=100).fit(x_tr, y_tr,
-                                                                          n_epochs=2,
+                                  n_embeddings=10, n_first_decoder=100).fit(x_tr, y_tr,
+                                                                          n_epochs=1,
                                                                           savepath_tr_plots=savepath_tr_plots,
-                                                                          stats_step=40)
+                                                                          stats_step=20)
 
-        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2) + boxconstr(ctrl, 100, -100)
+        objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2)# + boxconstr(ctrl, 100, -100)
         m.inverter_optimizer = optax.adabelief(learning_rate=1e-1)
         ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[0], :], objective=objective,n_iter=500)
 
-        #convexity_test(x_te, m, optimization_vars)
+        #e_optobj_convexity_test(x_te, m, optimization_vars)
+        #io_convexity_test(x_te, m, optimization_vars)
+        #eo_convexity_test(x_te, m, optimization_vars)
+
         rnd_idxs = np.random.choice(x_te.shape[0], 1)
         rnd_idxs = [0]
         for r in rnd_idxs:
@@ -396,23 +418,61 @@ class TestFormatDataset(unittest.TestCase):
 def boxconstr(x, ub, lb):
     return jnp.sum(jnp.maximum(0, x - ub)**2 + jnp.maximum(0, lb - x)**2)
 
-def convexity_test(df, forecaster, ctrl_names, **objective_kwargs):
+def e_optobj_convexity_test(df, forecaster, ctrl_names, **objective_kwargs):
     x_names = [c for c in df.columns if not c in ctrl_names]
-    rand_idxs = np.random.choice(len(df), 5)
+    rand_idxs = np.random.choice(len(df), 1)
     for idx in rand_idxs:
         x  = df[x_names].iloc[idx, :]
-        ctrl_embedding = np.tile(np.random.randn(forecaster.n_last_encoder, 1), 100).T
+        ctrl_embedding = np.tile(np.random.randn(forecaster.n_embeddings, 1), 20).T
 
         plt.figure()
-        for ctrl_e in range(forecaster.n_last_encoder):
+        for ctrl_e in range(forecaster.n_embeddings):
             ctrls = ctrl_embedding.copy()
-            ctrls[:, ctrl_e] = np.linspace(-1, 1, 100)
+            ctrls[:, ctrl_e] = np.linspace(-1, 1, 20)
             preds = np.hstack([forecaster._objective(c, np.atleast_2d(x.values.ravel()), **objective_kwargs) for c in ctrls])
             approx_second_der = np.round(np.diff(preds, 2, axis=0), 5)
             approx_second_der[approx_second_der == 0] = 0  # to fix the sign
             is_convex = np.all(np.sign(approx_second_der) >= 0)
             print('output is convex w.r.t. input {}: {}'.format(ctrl_e, is_convex))
             plt.plot(ctrls[:, ctrl_e], preds, alpha=0.3)
+            plt.pause(0.001)
+        plt.show()
+
+def io_convexity_test(df, forecaster, ctrl_names, **objective_kwargs):
+    rand_idxs = np.random.choice(len(df), 1)
+    for idx in rand_idxs:
+        df_i  = df.iloc[[idx]*20, :].copy()
+        plt.figure()
+        for ctrl_e in range(len(ctrl_names)):
+            df_e = df_i.copy()
+            df_e[ctrl_names[ctrl_e]] = np.linspace(-1, 1, 20)
+            preds = np.hstack([forecaster.predict(df_e.loc[[i], :]) for i in df_e.index])
+            approx_second_der = np.round(np.diff(preds, 2, axis=0), 5)
+            approx_second_der[approx_second_der == 0] = 0  # to fix the sign
+            is_convex = np.all(np.sign(approx_second_der) >= 0)
+            print('output is convex w.r.t. input {}: {}'.format(ctrl_e, is_convex))
+            plt.plot(preds, alpha=0.3)
+            plt.pause(0.001)
+        plt.show()
+
+def eo_convexity_test(df, forecaster, ctrl_names, **objective_kwargs):
+    x_names = [c for c in df.columns if not c in ctrl_names]
+    rand_idxs = np.random.choice(len(df), 1)
+    for idx in rand_idxs:
+        x  = df[x_names].iloc[idx, :]
+        ctrl_embedding = np.tile(np.random.randn(forecaster.n_embeddings, 1), 20).T
+
+        plt.figure()
+        for ctrl_e in range(forecaster.n_embeddings):
+            ctrls = ctrl_embedding.copy()
+            ctrls[:, ctrl_e] = np.linspace(-1, 1, 20)
+
+            preds = np.dstack([latent_pred(forecaster.pars, forecaster.model, x, c) for c in ctrls])
+            approx_second_der = np.round(np.diff(preds, 2, axis=0), 5)
+            approx_second_der[approx_second_der == 0] = 0  # to fix the sign
+            is_convex = np.all(np.sign(approx_second_der) >= 0)
+            print('output is convex w.r.t. input {}: {}'.format(ctrl_e, is_convex))
+            plt.plot(preds, alpha=0.3)
             plt.pause(0.001)
         plt.show()
 
