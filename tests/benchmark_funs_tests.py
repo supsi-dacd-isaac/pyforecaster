@@ -215,13 +215,21 @@ def test1d(forecaster_class, **forecaster_kwargs):
 if __name__ == '__main__':
     forecaster_kwargs = dict(
     augment_ctrl_inputs = False, n_hidden_x = 3, n_latent=30, n_out = 1, batch_size = 2500,
-    n_epochs = 500, stats_step = 20, n_layers = 3, n_encoder_layers = 3, n_decoder_layers = 3, learning_rate = 1e-3,
+    n_epochs = 50, stats_step = 20, n_layers = 3, n_encoder_layers = 3, n_decoder_layers = 3, learning_rate = 1e-3,
+    stopping_rounds = 1000, init_type = 'normal', rel_tol = -2, layer_normalization = False, n_embeddings=2, normalize_target=False,
+    unnormalized_inputs=['const'])
+    test1d(forecaster_class=LatentStructuredPICNN, **forecaster_kwargs)
+
+
+    forecaster_kwargs = dict(
+    augment_ctrl_inputs = False, n_hidden_x = 3, n_latent=30, n_out = 1, batch_size = 2500,
+    n_epochs = 50, stats_step = 20, n_layers = 3, n_encoder_layers = 3, n_decoder_layers = 3, learning_rate = 1e-3,
     stopping_rounds = 1000, init_type = 'normal', rel_tol = -2, layer_normalization = False, n_embeddings=2, normalize_target=False,
     unnormalized_inputs=['const'])
 
-    test1d(forecaster_class=LatentStructuredPICNN, **forecaster_kwargs)
-
     train_test(Ackley01, 2, forecaster_class=LatentStructuredPICNN, **forecaster_kwargs)
+
+
 
 
 

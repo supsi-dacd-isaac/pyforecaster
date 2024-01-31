@@ -76,8 +76,8 @@ def embedded_loss_fn(params, inputs, targets, model=None, full_model=None):
     ctrl_reconstruction_loss = jnp.mean((ctrl_reconstruction - inputs[1]) ** 2)
     obj_reconstruction_loss = jnp.mean((predictions - predictions_from_ctrl_reconstr) ** 2)
 
-    output_grads_wrt_embedding = vmap(lambda ctrl_emb, exog: jax.jacfwd(lambda ctrl_emb: latent_pred(params, full_model, exog, ctrl_emb).ravel())(ctrl_emb), in_axes=(0, 0))(ctrl_embedding, inputs[0]).squeeze()
-    conic_loss = jnp.mean((output_grads_wrt_embedding-2*ctrl_embedding) ** 2)
+    #output_grads_wrt_embedding = vmap(lambda ctrl_emb, exog: jax.jacfwd(lambda ctrl_emb: latent_pred(params, full_model, exog, ctrl_emb).ravel())(ctrl_emb), in_axes=(0, 0))(ctrl_embedding, inputs[0]).squeeze()
+    #conic_loss = jnp.mean((output_grads_wrt_embedding-2*ctrl_embedding) ** 2)
     kl_gaussian_loss = jnp.mean(jnp.mean(ctrl_embedding**2, axis=0) + jnp.mean(ctrl_embedding, axis=0)**2
                                 - jnp.log(jnp.mean(ctrl_embedding**2, axis=0)) - 1) # (sigma^2 + mu^2 - log(sigma^2) - 1)/2
 
