@@ -398,7 +398,7 @@ class TestFormatDataset(unittest.TestCase):
 
         objective = lambda y_hat, ctrl: jnp.mean(y_hat ** 2)# + boxconstr(ctrl, 100, -100)
         m.inverter_optimizer = optax.adabelief(learning_rate=1e-1)
-        ctrl_opt, inputs_opt, y_hat_opt, v_opt = m.optimize(x_te.iloc[[0], :], objective=objective,n_iter=500)
+        ctrl_opt, inputs_opt, y_hat_opt, v_opt, _ ,_, _ = m.optimize(x_te.iloc[[0], :], objective=objective,n_iter=500)
 
         #e_optobj_convexity_test(x_te, m, optimization_vars)
         #io_convexity_test(x_te, m, optimization_vars)
