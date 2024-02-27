@@ -53,7 +53,7 @@ class PICNNLayer(nn.Module):
 class CausalInvertibleLayer(nn.Module):
     features: int
     negative_slope:int = 0.01
-    activation: callable = nn.leaky_relu(negative_slope=negative_slope)
+    activation: callable = partial(nn.leaky_relu,negative_slope=negative_slope)
     init_type: str = 'normal'
     layer_normalization: bool = False
     prediction_layer: bool = False
