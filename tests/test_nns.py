@@ -1,18 +1,22 @@
-import unittest
-import matplotlib.pyplot as plt
-import optax
-import pandas as pd
-import numpy as np
 import logging
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, RecStablePICNN, NN, PIQCNN, PIQCNNSigmoid, StructuredPICNN, LatentStructuredPICNN
-from pyforecaster.trainer import hyperpar_optimizer
-from pyforecaster.formatter import Formatter
-from pyforecaster.metrics import nmae
+import unittest
 from os import makedirs
 from os.path import exists, join
+
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import optax
+import pandas as pd
 from jax import vmap
-from pyforecaster.forecasting_models.neural_forecasters import latent_pred
+
+from pyforecaster.forecasting_models.neural_models.ICNN import PICNN, RecStablePICNN, PIQCNN, PIQCNNSigmoid, \
+    StructuredPICNN, LatentStructuredPICNN, latent_pred
+from pyforecaster.forecasting_models.neural_models.base_nn import NN
+from pyforecaster.formatter import Formatter
+from pyforecaster.trainer import hyperpar_optimizer
+
+
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
