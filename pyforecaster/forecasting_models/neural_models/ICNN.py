@@ -139,7 +139,7 @@ class PICNN_module(nn.Module):
             features_latent = self.features_latent if self.features_latent is not None else self.features_out
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=features_out,
                               features_latent=features_latent,
-                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
+                              prediction_layer=prediction_layer, activation=self.activation,
                               rec_activation=self.rec_activation, init_type=self.init_type,
                               augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization, z_min=self.z_min,
@@ -153,7 +153,7 @@ class PICNN_module(nn.Module):
                 u, sigma = PICNNLayer(features_x=self.features_x, features_y=self.features_y,
                                   features_out=sigma_len,
                                   features_latent=self.features_latent,
-                                  n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
+                                      prediction_layer=prediction_layer, activation=self.activation,
                                   rec_activation=self.rec_activation, init_type=self.init_type,
                                   augment_ctrl_inputs=self.augment_ctrl_inputs,
                                   layer_normalization=self.layer_normalization, z_min=self.z_min,
@@ -250,7 +250,7 @@ class PartiallyIQCNN_module(nn.Module):
             prediction_layer = i == self.num_layers -1
             u, z = PICNNLayer(features_x=self.features_x, features_y=self.features_y, features_out=self.features_out,
                               features_latent=self.features_latent,
-                              n_layer=i, prediction_layer=prediction_layer, activation=self.activation,
+                              prediction_layer=prediction_layer, activation=self.activation,
                               init_type=self.init_type, augment_ctrl_inputs=self.augment_ctrl_inputs,
                               layer_normalization=self.layer_normalization, z_min=self.z_min,
                               z_max=self.z_max)(y, u, z)
