@@ -9,7 +9,7 @@ from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
-from pyforecaster.forecasting_models.neural_forecasters import FFNN
+from pyforecaster.forecasting_models.neural_models.base_nn import FFNN
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
