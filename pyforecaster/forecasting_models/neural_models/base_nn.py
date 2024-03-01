@@ -128,6 +128,7 @@ class NN(ScenarioGenerator):
     rec_stable: bool = False
     monotone: bool = False
     probabilistic: bool = False
+    probabilistic_loss_kind: str = 'maximum_likelihood'
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
@@ -222,10 +223,14 @@ class NN(ScenarioGenerator):
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
         self.to_be_normalized = [c for c in inputs.columns if
                                  c not in self.unnormalized_inputs] if self.unnormalized_inputs is not None else inputs.columns
+        if len(self.to_be_normalized) > 0:
+            self.input_scaler = (StandardScaler(with_mean=self.subtract_mean_when_normalizing)
+                                 .set_output(transform='pandas').fit(inputs[self.to_be_normalized]))
+
         rel_tol = rel_tol if rel_tol is not None else self.rel_tol
         n_epochs = n_epochs if n_epochs is not None else self.n_epochs
         stats_step = stats_step if stats_step is not None else self.stats_step
-        self.input_scaler = StandardScaler(with_mean=self.subtract_mean_when_normalizing).set_output(transform='pandas').fit(inputs[self.to_be_normalized])
+
         if self.normalize_target:
             self.target_scaler = StandardScaler().set_output(transform='pandas').fit(targets)
 
@@ -353,11 +358,12 @@ class NN(ScenarioGenerator):
         return preds
 
     def get_normalized_inputs(self, inputs, target=None):
-        inputs = inputs.copy()
-        self.to_be_normalized = [c for c in inputs.columns if
+        if self.input_scaler is not None:
+            inputs = inputs.copy()
+            self.to_be_normalized = [c for c in inputs.columns if
                                  c not in self.unnormalized_inputs] if self.unnormalized_inputs is not None else inputs.columns
-        normalized_inputs = self.input_scaler.transform(inputs[self.to_be_normalized])
-        inputs.loc[:, self.to_be_normalized] = normalized_inputs.copy().values
+            normalized_inputs = self.input_scaler.transform(inputs[self.to_be_normalized])
+            inputs.loc[:, self.to_be_normalized] = normalized_inputs.copy().values
 
         if target is not None and self.normalize_target:
             target = target.copy()

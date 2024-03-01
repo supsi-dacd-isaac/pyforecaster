@@ -12,11 +12,12 @@ from jax import vmap
 
 from pyforecaster.forecasting_models.neural_models.ICNN import PICNN, RecStablePICNN, PIQCNN, PIQCNNSigmoid, \
     StructuredPICNN, LatentStructuredPICNN, latent_pred
+from pyforecaster.forecasting_models.neural_models.INN import CausalInvertibleNN
 from pyforecaster.forecasting_models.neural_models.base_nn import NN
 from pyforecaster.formatter import Formatter
 from pyforecaster.trainer import hyperpar_optimizer
 
-
+from pyforecaster.forecaster import LinearForecaster
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
@@ -31,6 +32,12 @@ class TestFormatDataset(unittest.TestCase):
         self.x, self.y = formatter.transform(self.data.iloc[:40000])
         self.x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0)+0.01)
         self.y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0)+0.01)
+
+        formatter = Formatter(logger=self.logger,augment=False).add_transform(['all'], lags=-np.arange(288),
+                                                                    relative_lags=True)
+        self.e, _ = formatter.transform(self.data.iloc[:40000],time_features=False)
+        self.e = (self.e - self.e.mean(axis=0)) / (self.e.std(axis=0)+0.01)
+
 
     def test_ffnn(self):
         # normalize inputs
@@ -418,6 +425,97 @@ class TestFormatDataset(unittest.TestCase):
             plt.legend()
         plt.plot(y_hat_opt.values.ravel())
         plt.show()
+
+
+    def test_invertible_causal_nn(self):
+
+        n_tr = int(len(self.x) * 0.8)
+        e_tr, e_te = [self.e.iloc[:n_tr, :].copy(), self.e.iloc[n_tr:, :].copy()]
+
+        savepath_tr_plots = 'tests/results/ffnn_tr_plots'
+
+        # if not there, create directory savepath_tr_plots
+        if not exists(savepath_tr_plots):
+            makedirs(savepath_tr_plots)
+
+        m_lin = LinearForecaster().fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
+        y_hat = m_lin.predict(e_te.iloc[:, :144])
+        """
+
+        m = CausalInvertibleNN(learning_rate=1e-2,  batch_size=1000, load_path=None, n_hidden_x=e_tr.shape[1],
+                               n_layers=3, normalize_target=False, n_epochs=20, stopping_rounds=20, rel_tol=-1).fit(e_tr, e_tr)
+
+        n_predict = 1000
+        z = m.predict(e_te.iloc[:n_predict, :])
+
+        # invert transform
+        x_hat = m.invert(z)
+
+        plt.figure()
+        plt.hist(z.values.ravel(), bins=100, alpha=0.5)
+        plt.hist(e_te.iloc[:n_predict, :].values.ravel(), bins=100, alpha=0.5)
+        plt.show()
+
+        fig, ax = plt.subplots(2, 1, layout='tight')
+        ax[0].plot(e_te.iloc[:n_predict, :].values, alpha=0.2)
+        ax[1].plot(z.values, alpha=0.2)
+
+
+        fig, ax = plt.subplots(2, 1)
+        ax[0].plot(np.quantile(e_te.iloc[:n_predict, :].values, np.linspace(0, 1, 10), axis=0).T, alpha=0.5, color='r')
+        ax[1].plot(np.quantile(z.values, np.linspace(0, 1, 10), axis=0).T, alpha=0.5, color='r')
+
+
+        fig, ax = plt.subplots(1, 3, sharey=True, sharex=True)
+        ax[0].plot(x_hat)
+        ax[1].plot(e_te.iloc[:n_predict, :].values)
+        ax[2].plot(x_hat - e_te.iloc[:n_predict, :].values)
+
+        plt.close('all')
+
+        z_tr = m.predict(e_tr)
+        z_te = m.predict(e_te)
+        m_lin = LinearForecaster().fit(z_tr.iloc[:, :144], z_tr.iloc[:, 144:])
+        z_hat_e = pd.DataFrame(np.hstack([z_te.iloc[:, :144], m_lin.predict(z_te.iloc[:, :144])]), columns=e_te.columns)
+        y_hat_e = m.invert(z_hat_e)
+        y_invert = m.invert(z_te)
+
+        fig, ax = plt.subplots(1, 1)
+        for i in range(50):
+            plt.cla()
+            ax.plot(z_te.iloc[i, 144:].values.ravel())
+            ax.plot(z_hat_e.iloc[i, 144:].values.ravel())
+            plt.pause(0.01)
+
+
+        fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+        for i in range(100):
+            plt.cla()
+            ax.plot(e_te.iloc[i, 144:].values)
+            ax.plot(y_hat.iloc[i, :].values, linewidth=1)
+            ax.plot(y_hat_e.iloc[i, 144:].values, linewidth=1)
+            ax.plot(y_invert.iloc[i, 144:].values, linestyle='--')
+            plt.pause(1e-6)
+        
+
+        m = CausalInvertibleNN(learning_rate=3e-2, batch_size=1000, load_path=None, n_hidden_x=e_tr.shape[1],
+                               n_layers=3, normalize_target=False, n_epochs=30, stopping_rounds=20, rel_tol=-1,
+                               end_to_end=True, n_hidden_y=288, n_prediction_layers=1).fit(e_tr, e_tr)
+
+        z_hat_ete = m.predict(e_te)
+
+        np.mean((z_hat_ete.values- e_te.iloc[:, 144:].values)**2)
+        np.mean((y_hat.values- e_te.iloc[:, 144:].values)**2)
+
+        fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+        for i in range(100):
+            plt.cla()
+            ax.plot(e_te.iloc[i, 144:].values)
+            ax.plot(y_hat.iloc[i, :].values, linewidth=1)
+            ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
+            plt.pause(1e-6)
+        """
+
 
 def boxconstr(x, ub, lb):
     return jnp.sum(jnp.maximum(0, x - ub)**2 + jnp.maximum(0, lb - x)**2)
