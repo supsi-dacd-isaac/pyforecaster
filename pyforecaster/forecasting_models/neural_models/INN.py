@@ -20,7 +20,6 @@ def end_to_end_loss_fn(params, inputs, targets, model=None):
     x_preds = x[:, :x.shape[1]//2]
     x_futures = x[:, x.shape[1]//2:]
     mse_loss = jnp.mean((x_preds - x_futures)**2)
-
     return mse_loss
 
 
@@ -110,7 +109,7 @@ class CausalInvertibleNN(NN):
                          probabilistic_loss_kind, **scengen_kwgs)
 
     def set_arch(self):
-        self.optimizer = optax.adamw(learning_rate=self.learning_rate)
+        self.optimizer = optax.adabelief(learning_rate=self.learning_rate)
         self.model = EndToEndCausalInvertibleModule(num_embedding_layers=self.n_layers, num_prediction_layers=self.n_prediction_layers, features_prediction=self.n_hidden_y, features_embedding=self.n_hidden_x) if (
             self.end_to_end) else CausalInvertibleModule(num_layers=self.n_layers, features=self.n_hidden_x)
 
@@ -144,14 +143,15 @@ class CausalInvertibleNN(NN):
             ax[0].legend()
 
             # inputs-forecast distributions
+            if self.input_scaler is not None:
+                y_np = self.input_scaler.inverse_transform(y_np)
             try:
                 ax[1].hist(np.array(y_np.ravel()), bins=100, alpha=0.5, label='forecast ')
             except:
                 print('Error in plotting forecast distribution')
             ax[1].hist(np.array(inputs.values.ravel()), bins=100, alpha=0.9, label='inputs')
             ax[1].legend()
-            if self.input_scaler is not None:
-                y_np = self.input_scaler.inverse_transform(y_np)
+
             y_hat = pd.DataFrame(y_np[:, inputs.shape[1]//2:], index=inputs.index, columns=self.target_columns[:inputs.shape[1]//2])
         else:
             y_hat = self.predict_batch(self.pars, x)

@@ -35,6 +35,49 @@ from flax.linen import initializers
 default_kernel_init = initializers.lecun_normal()
 
 
+def linloglin(x: Array, k=10):
+    r"""Linear-Log-Linear activation function with full co-domain
+
+    Args:
+    x : input array
+    """
+    m = 1 / ( k + 1) # 1/(k+1) is the slope of the linear part
+    q = jnp.log(k+1) -m*k # q is the intercept of the linear part
+    first = m * x - q
+    second = -jnp.log(jnp.clip(-x, 1e-12) + 1)
+    third = jnp.log(jnp.clip(x, 1e-12) + 1)
+    fourth = m * x + q
+
+    return (x<-k) * first + (x>=-k)*(x<0) * second + (x>=0) * (x<k) * third + (x>=k) * fourth
+
+
+
+@jit
+def linloglin_inverse(y: jnp.ndarray, k=10) -> jnp.ndarray:
+    m = 1 / (k + 1)  # Slope of the linear parts
+    q = jnp.log(k + 1) - m * k  # Intercept of the linear parts
+
+    # Inverse of the left linear part
+    left_linear_inv = (y + q) / m
+
+    # Inverse of the left logarithmic part
+    left_log_inv = 1 - jnp.exp(-y)
+
+    # Inverse of the right logarithmic part
+    right_log_inv = jnp.exp(y) - 1
+
+    # Inverse of the right linear part
+    right_linear_inv = (y - q) / m
+
+    # Determine which inverse to use based on the value of y
+    # Note: We need to determine the appropriate ranges for y that correspond to the original x ranges
+    y_left_linear_range = y <= m * (-k) - q  # Corresponds to x < -k
+    y_right_linear_range = y >= m * k + q  # Corresponds to x >= k
+
+    return (y_left_linear_range*left_linear_inv
+            + y_right_linear_range*right_linear_inv
+            + (1-y_left_linear_range)*(1-y_right_linear_range)*((y < 0)*left_log_inv
+                                                                + (y >= 0)*right_log_inv))
 
 @jit
 def invcondiff(x: Array, a=1, c=1) -> Array:
@@ -53,9 +96,9 @@ def invcondiff(x: Array, a=1, c=1) -> Array:
     """
     b = a * c
     k = a * c * (1 - jnp.log(a))
-    left = -b * jnp.log(jnp.clip(-x, 1e-6)) - k
+    left = -b * jnp.log(jnp.clip(-x, 1e-12)) - k
     middle = c * x
-    right = b * jnp.log(jnp.clip(x, 1e-6)) + k
+    right = b * jnp.log(jnp.clip(x, 1e-12)) + k
     return (x < -a) * left +  (x > a)*right +   middle*(jnp.logical_and(-a <= x, x <= a))
 
 
@@ -65,21 +108,25 @@ def invcondiff_inverse(y: jnp.ndarray, a=1, c=1) -> jnp.ndarray:
     k = a * c * (1 - jnp.log(a))
 
     # Inverse for x < -a
-    left_inv = -jnp.exp(-(y + k) / b)
+    exp_arg = -(y + k) / b
+    left_inv = -safe_exp(exp_arg)
 
     # Inverse for -a <= x <= a
     middle_inv = y / c
 
     # Inverse for x > a
-    right_inv = jnp.exp((y - k) / b)
+    exp_arg = (y - k) / b
+    right_inv = safe_exp(exp_arg)
 
     # Determine which inverse to use based on the value of y
     # Note: We need to determine the appropriate ranges for y that correspond to the original x ranges
     y_left_range = y < -b * jnp.log(a) - k  # Corresponds to x < -a
     y_right_range = y > b * jnp.log(a) + k  # Corresponds to x > a
-    return y_right_range * right_inv + y_left_range * left_inv + middle_inv * (y_right_range + y_left_range == 0)
+    return y_right_range * right_inv + y_left_range * left_inv + middle_inv * ((y_right_range + y_left_range) == 0)
 
-
+@jit
+def safe_exp(x: jnp.ndarray) -> jnp.ndarray:
+    return jnp.exp(jnp.clip(x, -12, 12))
 
 class PICNNLayer(nn.Module):
     features_x: int
@@ -128,9 +175,9 @@ class PICNNLayer(nn.Module):
 class CausalInvertibleLayer(nn.Module):
     features: int
     negative_slope:int = 0.01
-    scaling_factor: float = 0.01
+    scaling_factor: float = 0.1
     #activation: callable = partial(nn.leaky_relu,negative_slope=negative_slope)
-    activation: callable = invcondiff
+    activation: callable = linloglin
     init_type: str = 'normal'
     layer_normalization: bool = False
     prediction_layer: bool = False
@@ -178,8 +225,8 @@ class CausalInvertibleLayer(nn.Module):
         y -= jnp.reshape(self.bias, (1,) * (y.ndim - 1) + (-1,))
         kernel = jnp.tanh(self.kernel) * self.scaling_factor/self.features + jnp.eye(self.features)
         #return (jnp.linalg.inv(kernel) @ y.T).T
-        f = jax.scipy.linalg.solve_triangular(kernel, y.T, lower=True).T
         #f = jnp.linalg.solve(kernel, y.T).T
+        f = jax.scipy.linalg.solve_triangular(kernel, y.T, lower=True).T
         return f
     def predict(self, inputs):
         kernel = jnp.tanh(self.kernel)  * self.scaling_factor /self.features + jnp.eye(self.features)
@@ -197,8 +244,10 @@ class CausalInvertibleLayer(nn.Module):
             return jnp.where(y >= 0, y, y / self.negative_slope)
         elif name == "softplus":
             return inverse_softplus(jnp.maximum(1e-6, y))
-        elif name == "invcondiff":
+        elif name == "invcondiff" or name == "invcondiff_inverse" or name == "identity":
             return invcondiff_inverse(y)
+        elif name == "linloglin":
+            return linloglin_inverse(y)
         else:
             raise NotImplementedError('Activation function {} not implemented for inversion'.format(name))
 
