@@ -47,7 +47,7 @@ class TestFormatDataset(unittest.TestCase):
 
         study, replies = hyperpar_optimizer(self.x, self.y.iloc[:, [0]], model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun= param_space_fun,
-                                   hpo_type='one_fold')
+                                   cv_type='random_fold')
         trials_df = retrieve_cv_results(study)
         assert trials_df['value'].isna().sum() == 0
 
@@ -66,7 +66,7 @@ class TestFormatDataset(unittest.TestCase):
 
         study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun=self.param_space_fun,
-                                   hpo_type='one_fold')
+                                   cv_type='random_fold')
         optuna.visualization.matplotlib.plot_contour(study, [k for k in study.best_params.keys()])
         trials_df = retrieve_cv_results(study)
         assert trials_df['value'].isna().sum() == 0
@@ -85,7 +85,7 @@ class TestFormatDataset(unittest.TestCase):
 
         study, replies = hyperpar_optimizer(self.x, self.y, model, n_trials=n_trials, metric=nmae, cv=(f for f in cv_idxs),
                                    param_space_fun=self.param_space_fun,
-                                   hpo_type='full', storage_fun=base_storage_fun)
+                                   cv_type='full', storage_fun=base_storage_fun)
         assert len(replies) == len(study.trials_dataframe())
 
 
