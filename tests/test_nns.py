@@ -311,7 +311,7 @@ class TestFormatDataset(unittest.TestCase):
         study, replies = hyperpar_optimizer(self.x.iloc[:1000, :], self.y.iloc[:1000, :], model, n_trials=1, metric=custom_metric,
                                             cv=(f for f in cv_idxs),
                                             param_space_fun=None,
-                                            hpo_type='full')
+                                            cv_type='full')
 
     def test_structured_picnn_sigmoid(self):
 
