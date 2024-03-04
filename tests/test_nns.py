@@ -439,7 +439,7 @@ class TestFormatDataset(unittest.TestCase):
             makedirs(savepath_tr_plots)
 
         m_lin = LinearForecaster().fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
-        y_hat = m_lin.predict(e_te.iloc[:, :144])
+        y_hat_lin = m_lin.predict(e_te.iloc[:, :144])
         """
 
         m = CausalInvertibleNN(learning_rate=1e-2,  batch_size=1000, load_path=None, n_hidden_x=e_tr.shape[1],
@@ -500,32 +500,24 @@ class TestFormatDataset(unittest.TestCase):
         m = FFNN(n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=144, rel_tol=-1, stopping_rounds=20).fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
         y_hat = m.predict(e_te.iloc[:, :144])
 
-        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=200, load_path=None, n_hidden_x=e_tr.shape[1],
-                               n_layers=4, normalize_target=False, n_epochs=5, stopping_rounds=20, rel_tol=-1,
-                               end_to_end=True, n_hidden_y=300, n_prediction_layers=3).fit(e_tr, e_tr)
+        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=200, load_path=None, n_hidden_x=144,
+                               n_layers=2, normalize_target=False, n_epochs=15, stopping_rounds=20, rel_tol=-1,
+                               end_to_end='quasi', n_hidden_y=300, n_prediction_layers=3, n_out=144).fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
 
-
-
-        z_hat_ete = m.predict(e_te)
-
-        embeddings_hat = m.predict_batch(m.pars, e_te.values)[:, :e_te.shape[1] // 2]
-        embeddings_future = m.predict_batch(m.pars, e_te.values)[:, e_te.shape[1] // 2:]
-
-        plt.figure()
-        plt.plot(embeddings_hat[:, 0], alpha=0.3)
-        plt.plot(embeddings_future[:, 0], linestyle='--', alpha=0.3)
-        plt.plot(y_hat.iloc[:, 0].values, linestyle='--', alpha=0.3)
+        z_hat_ete = m.predict(e_te.iloc[:, :144])
 
         np.mean((z_hat_ete.values- e_te.iloc[:, 144:].values)**2)
         np.mean((y_hat.values- e_te.iloc[:, 144:].values)**2)
+        np.mean((y_hat_lin.values- e_te.iloc[:, 144:].values)**2)
 
         fig, ax = plt.subplots(1, 1, figsize=(4, 3))
-        for i in range(2):
-            plt.cla()
-            ax.plot(e_te.iloc[i, 144:].values)
-            ax.plot(y_hat.iloc[i, :].values, linewidth=1)
-            ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
-            plt.pause(1e-6)
+        for i in range(2000):
+            if i%10 == 0:
+                plt.cla()
+                ax.plot(e_te.iloc[i, 144:].values)
+                ax.plot(y_hat.iloc[i, :].values, linewidth=1)
+                ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
+                plt.pause(1e-6)
 
 
 
