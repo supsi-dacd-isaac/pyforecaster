@@ -21,10 +21,13 @@ def loss_fn(params, inputs, targets, model=None):
 
 def end_to_end_loss_fn(params, inputs, targets, model=None, embedder=None, inverter=identity):
     e_preds = model(params, inputs)
-    e_target = embedder(params, jnp.hstack([inputs[:, targets.shape[1]:], targets]))
-    err = e_preds - e_target
-    mse_loss = jnp.mean(inverter(params, err)**2)
-    return mse_loss
+    e_target = embedder(params, jnp.hstack([inputs[:, targets.shape[1]:], targets]))[:, :targets.shape[1]]
+    e_preds = inverter(params, e_preds)
+    e_target = inverter(params, e_target)
+    err = e_target - e_preds
+    persistent_error = e_target - jnp.roll(e_target, 1)
+    skill_score = jnp.mean(err**2) / jnp.mean(persistent_error**2)
+    return skill_score
 
 
 class CausalInvertibleModule(nn.Module):
@@ -87,7 +90,7 @@ class CausalInvertibleNN(NN):
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
-                 stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=True,
+                 stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=False,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  probabilistic_loss_kind='maximum_likelihood', end_to_end='none', n_prediction_layers=3,
                  n_hidden_y=200,
@@ -126,6 +129,10 @@ class CausalInvertibleNN(NN):
         return pd.DataFrame(y_np, columns=y.columns)
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
+        # You really don't want to normalize in here. Pre normalize your data if needed
+        self.normalize_target = False
+        self.unnormalized_inputs = inputs.columns
+
         if self.end_to_end in ['full', 'quasi']:
             assert targets.shape[1] == self.n_out, 'End to end models require the number of targets to be equal to n_out'
 
@@ -141,18 +148,18 @@ class CausalInvertibleNN(NN):
             # embedding-predicted embedding distributions
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(2, 1, figsize = (10, 6))
-            ax[0].hist(np.array(embeddings.ravel()), bins=100, alpha=0.5, label='past embedding')
-            ax[0].hist(np.array(embeddings_hat.ravel()), bins=100, alpha=0.5, label='forecasted embedding')
+            ax[0].hist(np.array(embeddings.ravel()), bins=100, alpha=0.5, density=True, label='past embedding')
+            ax[0].hist(np.array(embeddings_hat.ravel()), bins=100, alpha=0.5, density=True, label='forecasted embedding')
             ax[0].legend()
 
             # inputs-forecast distributions
-            if self.input_scaler is not None:
-                y_hat = self.input_scaler.inverse_transform(y_hat)
+            if self.target_scaler is not None:
+                y_hat = self.target_scaler.inverse_transform(y_hat)
             try:
-                ax[1].hist(np.array(y_hat.ravel()), bins=100, alpha=0.5, label='forecast ')
+                ax[1].hist(np.array(y_hat.ravel()), bins=100, alpha=0.5, density=True, label='forecast ')
             except:
                 print('Error in plotting forecast distribution')
-            ax[1].hist(np.array(inputs.values.ravel()), bins=100, alpha=0.9, label='inputs')
+            ax[1].hist(np.array(inputs.values.ravel()), bins=100, alpha=0.5, density=True, label='inputs')
             ax[1].legend()
         else:
             y_hat = self.predict_batch(self.pars, x)
