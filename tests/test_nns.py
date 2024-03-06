@@ -511,11 +511,11 @@ class TestFormatDataset(unittest.TestCase):
         np.mean((y_hat_lin.values- e_te.iloc[:, 144:].values)**2)
 
         fig, ax = plt.subplots(1, 1, figsize=(4, 3))
-        for i in range(10):
+        for i in range(100):
             if i%10 == 0:
                 plt.cla()
                 ax.plot(e_te.iloc[i, 144:].values)
-                ax.plot(y_hat.iloc[i, :].values, linewidth=1)
+                ax.plot(y_hat_lin.iloc[i, :].values, linewidth=1)
                 ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
                 plt.pause(1e-6)
 

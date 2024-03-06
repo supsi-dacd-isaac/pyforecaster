@@ -22,10 +22,10 @@ def loss_fn(params, inputs, targets, model=None):
 def end_to_end_loss_fn(params, inputs, targets, model=None, embedder=None, inverter=identity):
     e_preds = model(params, inputs)
     e_target = embedder(params, jnp.hstack([inputs[:, targets.shape[1]:], targets]))[:, :targets.shape[1]]
-    e_preds = inverter(params, e_preds)
+    e_preds = inverter(params, jnp.hstack([inputs[:, e_preds.shape[1]:], e_preds]))
     e_target = inverter(params, e_target)
     err = e_target - e_preds
-    persistent_error = e_target - jnp.roll(e_target, 1)
+    persistent_error = e_target - jnp.roll(e_target, 1, axis=1)
     skill_score = jnp.mean(err**2) / jnp.mean(persistent_error**2)
     return skill_score
 
