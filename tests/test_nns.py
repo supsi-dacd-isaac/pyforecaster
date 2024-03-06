@@ -502,7 +502,7 @@ class TestFormatDataset(unittest.TestCase):
 
         m = CausalInvertibleNN(learning_rate=1e-2, batch_size=200, load_path=None, n_hidden_x=144,
                                n_layers=2, normalize_target=False, n_epochs=5, stopping_rounds=20, rel_tol=-1,
-                               end_to_end='quasi', n_hidden_y=300, n_prediction_layers=3, n_out=144).fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
+                               end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=144).fit(e_tr.iloc[:, :144], e_tr.iloc[:, -144:])
 
         z_hat_ete = m.predict(e_te.iloc[:, :144])
 
