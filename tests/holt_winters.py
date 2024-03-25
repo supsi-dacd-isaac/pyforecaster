@@ -4,6 +4,9 @@ import wget
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from tqdm import tqdm
+from pyforecaster.utilities import kalman_update, kalman_predict, kalman
+from numba import njit
+from numba.typed import List
 
 data = pd.read_pickle('tests/data/test_data.zip')['y'][['all']]
 data /= data.std()
@@ -120,8 +123,15 @@ class fourier_hw:
             P_f = get_basis(t_f, m, self.n_harmonics)
             P_f = P_f[m:, :]
             Ps_future.append(P_f)
-        self.Ps_future = Ps_future
-        self.Ps_past = Ps_past
+        Ps_future_typed = List()
+        for arr in Ps_future:
+            Ps_future_typed.append(arr)
+        Ps_past_typed = List()
+        for arr in Ps_past:
+            Ps_past_typed.append(arr)
+
+        self.Ps_future = Ps_future_typed
+        self.Ps_past = Ps_past_typed
         self.coeffs = None
         self.eps = None
         self.last_1sa_preds = 0
@@ -199,7 +209,6 @@ mae(y.iloc[n_tr:n_tr+n_te,:].values, y_hat[n_tr:n_tr+n_te, :])
 
 
 from filterpy.kalman import KalmanFilter
-from filterpy.common import Q_discrete_white_noise
 
 
 class Fourier_kexp(fourier_hw):
@@ -267,6 +276,84 @@ class Fourier_kexp(fourier_hw):
         return (self.coeffs, self.eps,self.last_1sa_preds)
     def __setstate__(self, state):
         self.coeffs, self.eps, self.last_1sa_preds = state
+
+
+
+@njit
+def update_predictions(coeffs_t_history, start_from, y, Ps_past, Ps_future, h, m, omega, last_1sa_preds, eps, x, P, F, Q, H, R, n_harmonics):
+    preds = []
+    for i in range(start_from, len(y)):
+        P_past = Ps_past[i % m]
+        P_f = Ps_future[(i - h) % m]
+        start = max(0, i - m + 1)
+
+        w = y[start:i + 1].copy()
+        eps = omega * (w[-1] - last_1sa_preds) + (1 - omega) * eps
+        coeffs_t = P_past[-len(w):, :].T @ w
+        x, P = kalman(x, P, F, Q, coeffs_t, H, R)  # Assuming kalman is a Numba-compatible function
+        coeffs = x
+
+        last_preds = (P_f @ coeffs).ravel()
+        last_1sa_preds = last_preds[0]
+        preds.append((last_preds + eps * (h - np.arange(h)) ** 2 / h ** 2).ravel())
+        coeffs_t_history[:, i] = coeffs
+
+        if i % m == 0 and i >= m:
+            Q = np.corrcoef(coeffs_t_history[:, :i])
+            R = Q * 0.01
+            P = np.eye(n_harmonics * 2 + 1) * 1000
+
+    return preds, last_1sa_preds, eps, x, P, Q, R, coeffs_t_history
+
+class Fourier_kexp_custom(fourier_hw):
+    def __init__(self, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3):
+        super().__init__(h, alpha, m, omega, n_harmonics)
+        n_harmonics = np.minimum(n_harmonics, m // 2)
+
+        coeffs = np.zeros(2 * n_harmonics + 1)
+
+        # precompute basis over all possible periods
+        self.x = coeffs.copy()
+
+        self.F = np.eye(n_harmonics * 2 + 1)
+
+        self.H = np.eye(n_harmonics * 2 + 1)
+        self.P = np.eye(n_harmonics * 2 + 1) * 1000
+        self.R = np.eye(n_harmonics * 2 + 1) * 0.01
+        self.Q = np.eye(n_harmonics * 2 + 1) * 0.01
+        self.n_harmonics = n_harmonics
+        self.coeffs_t_history = []
+    def predict(self, y, return_coeffs=False, start_from=0):
+        if self.coeffs is None:
+            coeffs = np.zeros(2 * self.n_harmonics + 1)
+            coeffs[0] = y[0]*np.sqrt(self.m)
+            eps = 0
+            preds = [[0]]
+        else:
+            eps = self.eps
+            coeffs = self.coeffs
+            preds = [[y[start_from]+eps]]
+
+        if len(self.coeffs_t_history)>0:
+            coeffs_t_history = np.vstack([self.coeffs_t_history, np.zeros((len(y) - start_from, self.n_harmonics * 2 + 1))])
+        else:
+            coeffs_t_history = np.zeros((len(y) - start_from, self.n_harmonics * 2 + 1))
+        preds_updated, self.last_1sa_preds, self.eps, self.x, self.P, self.Q, self.R, coeffs_t_history = update_predictions(coeffs_t_history.T, start_from, y, self.Ps_past, self.Ps_future, self.h, self.m, self.omega, self.last_1sa_preds, eps, self.x, self.P, self.F, self.Q, self.H, self.R,
+                           self.n_harmonics)
+
+        preds = preds + preds_updated
+        self.coeffs_t_history = coeffs_t_history.T
+        self.coeffs = coeffs_t_history.T[-1, :]
+        self.eps = eps
+        if return_coeffs:
+            return np.vstack(preds[1:]), coeffs_t_history.T
+        return np.vstack(preds[1:])
+
+    def __getstate__(self):
+        return (self.coeffs, self.eps,self.last_1sa_preds)
+    def __setstate__(self, state):
+        self.coeffs, self.eps, self.last_1sa_preds = state
+
 
 def fourier_kexp(y, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, return_coeffs=False):
     """
@@ -337,6 +424,7 @@ m = 24*6
 data_te = x.iloc[:, 0].values[:2100].copy()
 data_te[500:] -= 5
 data_te[1000:] += 5
+"""
 y_hat_kexp, coeffs_t = fourier_kexp(data_te, h=24*6, alpha=0.9, omega=0.9, n_harmonics=20, m=m, return_coeffs=True)
 ts_animation(data_te, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
 ts_animation(data_te, coeffs_t, 2000, labels=['ground truth', 'predictions'])
@@ -344,6 +432,9 @@ ts_animation(data_te, coeffs_t, 2000, labels=['ground truth', 'predictions'])
 y_hat_kexp, coeffs_t = Fourier_kexp(h=24*6, alpha=0.9, omega=0.9, n_harmonics=20, m=m).predict(data_te, return_coeffs=True)
 ts_animation(data_te, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
 
+y_hat_kexp, coeffs_t = Fourier_kexp_custom(h=24*6, alpha=0.9, omega=0.9, n_harmonics=20, m=m).predict(data_te, return_coeffs=True)
+ts_animation(data_te, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
+"""
 def fourier_kexp_2(y, h=1, n_predictors=4,  m_max=24, omega=0.9, alpha=0.9, n_harmonics=3, return_coeffs=False):
     """
     :param y:
@@ -371,7 +462,7 @@ def fourier_kexp_2(y, h=1, n_predictors=4,  m_max=24, omega=0.9, alpha=0.9, n_ha
     my_filter.R = np.eye(n_predictors)
     my_filter.Q = 0.1
 
-    models = [Fourier_kexp(h=h, alpha=alpha, omega=omega, n_harmonics=n_harmonics, m=ms[i]) for i in range(n_predictors)]
+    models = [Fourier_kexp_custom(h=h, alpha=alpha, omega=omega, n_harmonics=n_harmonics, m=ms[i]) for i in range(n_predictors)]
     states = [models[j].__getstate__() for j in range(n_predictors)]
 
 
@@ -411,6 +502,81 @@ def fourier_kexp_2(y, h=1, n_predictors=4,  m_max=24, omega=0.9, alpha=0.9, n_ha
 
 
 
+class fourier_kexp_2_custom:
+    """
+    :param y:
+    :param h:
+    :param alpha:
+    :param m:
+    :return:
+    """
+
+    def __init__(self, h=1, n_predictors=4,  m_max=24, omega=0.9, alpha=0.9, n_harmonics=3):
+
+        n_harmonics = np.minimum(n_harmonics, m_max // 2)
+        ms = np.linspace(1, m_max, n_predictors + 1).astype(int)[1:]
+        self.n_predictors = n_predictors
+        self.h = h
+
+        # precompute basis over all possible periods
+        self.x = np.ones(n_predictors) / n_predictors
+
+        self.F = np.eye(n_predictors)
+        self.H = np.eye(n_predictors)
+        self.P = np.eye(n_predictors) * 1000
+        self.R = np.eye(n_predictors)
+        self.Q = 0.1
+
+        self.models = [Fourier_kexp_custom(h=h, alpha=alpha, omega=omega, n_harmonics=n_harmonics, m=ms[i]) for i in
+                  range(n_predictors)]
+
+    def predict(self,y, return_coeffs=False, start_from=0):
+        preds = [[0]]
+        coeffs_t_history = []
+
+        self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+
+        preds_models = List()
+        for _ in range(self.n_predictors):
+            preds_models.append(List([np.array([], dtype=np.float64)]))
+
+        preds_models = [[] for i in range(self.n_predictors)]
+        for i in tqdm(np.arange(len(y))):
+
+            [self.models[j].__setstate__(self.states[j]) for j in range(self.n_predictors)]
+            preds_t = [self.models[j].predict(y[:i+1].copy(), return_coeffs=False, start_from=i).ravel() for j in range(self.n_predictors)]
+            for j in range(self.n_predictors):
+                preds_models[j].append(preds_t[j])
+            if i >= self.h:
+                for j in range(self.n_predictors):
+                    preds_models[j].pop(0)
+                # average last point error over different prediction times for all the models
+                avg_err = [np.mean([np.abs(p[-(k + 1)] - y[i]) for k, p in enumerate(preds_models[j])]) for j in
+                           range(self.n_predictors)]
+                coeffs_t = np.exp(-np.array(avg_err)) / np.exp(-np.array(avg_err)).sum()
+            else:
+                coeffs_t = np.ones(self.n_predictors) / self.n_predictors
+            states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+
+            self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+
+            self.x, self.P = kalman(self.x, self.P, self.F, self.Q, coeffs_t, self.H, self.R)
+
+            coeffs = self.x
+            coeffs = coeffs / np.abs(coeffs).sum()
+            preds.append(np.vstack(preds_t).T@coeffs)
+
+            if return_coeffs:
+                coeffs_t_history.append(coeffs_t)
+            if i%m==0 and i>=m:
+                self.Q = np.corrcoef(np.vstack(coeffs_t_history).T)
+                self.R = np.corrcoef(np.vstack(coeffs_t_history).T)*10
+                self.P = np.eye(self.n_predictors) * 10
+
+        if return_coeffs:
+            return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
+        return np.vstack(preds[1:])
+
 data.iloc[11500:12500]-=5
 x, y = fr.transform(data, time_features=False)
 
@@ -418,9 +584,13 @@ n_tr = 10000
 n_te = 2800
 
 m = 24*6*3
+y_hat_kexp, coeffs_t = fourier_kexp_2_custom(h=24*6, omega=0.99, alpha=0.8, n_harmonics=50, m_max=m, n_predictors=3).predict(x.iloc[n_tr:n_tr+n_te,0].values, return_coeffs=True)
+ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
+
 y_hat_kexp, coeffs_t = fourier_kexp_2(x.iloc[n_tr:n_tr+n_te,0].values, h=24*6, omega=0.99, alpha=0.8, n_harmonics=50, m_max=m, n_predictors=3, return_coeffs=True)
 ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
 ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, coeffs_t, 2000, labels=['ground truth', 'predictions'])
+
 
 
 lf = LinearForecaster().fit(x.iloc[:n_tr,:], y.iloc[:n_tr,:])
