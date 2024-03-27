@@ -90,8 +90,12 @@ class HourlyGaussianCopula(GaussianCopula):
                 continue
             else:
                 mvr_samples = mvr.rvs((np.sum(hour_filt), n_scen), random_state=random_state)
-                if len(mvr_samples.shape) == 2:
+                # if sum(hour_filt) == 1, mvr_sample has lower dimensionality
+                if np.sum(hour_filt) == 1:
                     mvr_samples = np.expand_dims(mvr_samples, 0)
+                # if we're predicting only one target, mvr.rvs has lower dimensionality
+                if len(mvr_samples.shape) == 2:
+                    mvr_samples = np.expand_dims(mvr_samples, -1)
                 mvr_samples = np.swapaxes(mvr_samples, 1, 2)
                 copula_samples[hour_filt, :, :] = norm.cdf(mvr_samples)
         return copula_samples
