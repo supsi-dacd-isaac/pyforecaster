@@ -7,6 +7,8 @@ from tqdm import tqdm
 from pyforecaster.utilities import kalman_update, kalman_predict, kalman
 from numba import njit
 from numba.typed import List
+from pyforecaster.forecasting_models.holtwinters import Fourier_es as FES
+from pyforecaster.forecasting_models.holtwinters import FK_multi, FK
 
 data = pd.read_pickle('tests/data/test_data.zip')['y'][['all']]
 data /= data.std()
@@ -91,7 +93,7 @@ def get_basis(t, l, n_h):
   return P
 
 
-class fourier_hw:
+class Fourier_es:
 
 
     def __init__(self, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3):
@@ -192,17 +194,21 @@ ts_animation(y.iloc[n_tr:n_tr+n_te,0].values, y_hat_lin.values, 2000, labels=['g
 m = int(24*6)
 
 
-y_hat, coeffs_t = fourier_hw(h=24*6, alpha=0.5, omega=0.1, n_harmonics=80, m=m).predict(data['all'].values[:2100], return_coeffs=True)
+y_hat, coeffs_t = Fourier_es(h=24*6, alpha=0.5, omega=0.9, n_harmonics=80, m=m).predict(data['all'].values[:2100], return_coeffs=True)
 ts_animation(x.iloc[:, 0].values, y_hat, 2000, labels=['ground truth', 'predictions'])
 
 ts_animation(x.iloc[:, 0].values, coeffs_t[:, :], 2000, labels=['ground truth', 'coeffs'])
+
+fes = FES(n_sa=24*6, alpha=0.8, omega=0.99, n_harmonics=80, m=m, target_name='all').fit(data.iloc[:2100, :])
+y_hat = fes.predict(data.iloc[2100:4100, :])
+
+ts_animation(x.iloc[2100:4100, 0].values, y_hat, 2000, labels=['ground truth', 'predictions'])
+
+
 """
-
-
 mae = lambda x, y: np.mean(np.abs(x-y))
 mae(y.iloc[n_tr:n_tr+n_te,:].values, y_hat_lin.values)
 mae(y.iloc[n_tr:n_tr+n_te,:].values, y_hat[n_tr:n_tr+n_te, :])
-
 """
 
 # Fourier-Kalman exponential smoothing
@@ -211,7 +217,7 @@ mae(y.iloc[n_tr:n_tr+n_te,:].values, y_hat[n_tr:n_tr+n_te, :])
 from filterpy.kalman import KalmanFilter
 
 
-class Fourier_kexp(fourier_hw):
+class Fourier_kexp(Fourier_es):
     def __init__(self, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3):
         super().__init__(h, alpha, m, omega, n_harmonics)
         n_harmonics = np.minimum(n_harmonics, m // 2)
@@ -289,11 +295,11 @@ def update_predictions(coeffs_t_history, start_from, y, Ps_past, Ps_future, h, m
 
         w = y[start:i + 1].copy()
         eps = omega * (w[-1] - last_1sa_preds) + (1 - omega) * eps
-        coeffs_t = P_past[-len(w):, :].T @ w
+        coeffs_t = np.dot(P_past[-len(w):, :].T, w)
         x, P = kalman(x, P, F, Q, coeffs_t, H, R)  # Assuming kalman is a Numba-compatible function
         coeffs = x
 
-        last_preds = (P_f @ coeffs).ravel()
+        last_preds = np.dot(P_f, coeffs).ravel()
         last_1sa_preds = last_preds[0]
         preds.append((last_preds + eps * (h - np.arange(h)) ** 2 / h ** 2).ravel())
         coeffs_t_history[:, i] = coeffs
@@ -305,7 +311,7 @@ def update_predictions(coeffs_t_history, start_from, y, Ps_past, Ps_future, h, m
 
     return preds, last_1sa_preds, eps, x, P, Q, R, coeffs_t_history
 
-class Fourier_kexp_custom(fourier_hw):
+class Fourier_kexp_custom(Fourier_es):
     def __init__(self, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3):
         super().__init__(h, alpha, m, omega, n_harmonics)
         n_harmonics = np.minimum(n_harmonics, m // 2)
@@ -420,7 +426,7 @@ def fourier_kexp(y, h=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, return_coef
         return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
     return np.vstack(preds[1:])
 
-m = 24*6
+m = 336
 data_te = x.iloc[:, 0].values[:2100].copy()
 data_te[500:] -= 5
 data_te[1000:] += 5
@@ -432,9 +438,15 @@ ts_animation(data_te, coeffs_t, 2000, labels=['ground truth', 'predictions'])
 y_hat_kexp, coeffs_t = Fourier_kexp(h=24*6, alpha=0.9, omega=0.9, n_harmonics=20, m=m).predict(data_te, return_coeffs=True)
 ts_animation(data_te, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
 
-y_hat_kexp, coeffs_t = Fourier_kexp_custom(h=24*6, alpha=0.9, omega=0.9, n_harmonics=20, m=m).predict(data_te, return_coeffs=True)
-ts_animation(data_te, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
+y_hat_kexp, coeffs_t = Fourier_kexp_custom(h=24*6, alpha=0.9, omega=0.9, n_harmonics=10, m=m).predict(x.iloc[:6100, :]['all'].values, return_coeffs=True)
+
+fks = FKS(n_sa=24*6, alpha=0.9, omega=0.9, n_harmonics=10, m=m, target_name='all').fit(x.iloc[:2100, :], return_coeffs=False)
+y_hat_kexp_fast = fks.predict(x.iloc[2100:6100, :])
+
+from pyforecaster.plot_utils import ts_animation
+ts_animation([y_hat_kexp[2100:6100, :], y_hat_kexp_fast], names=['kexp custom', 'kexp fast', 'target'], target=x['all'].iloc[2100:6100], frames=100, interval=0.1, step=3)
 """
+
 def fourier_kexp_2(y, h=1, n_predictors=4,  m_max=24, omega=0.9, alpha=0.9, n_harmonics=3, return_coeffs=False):
     """
     :param y:
@@ -583,17 +595,20 @@ x, y = fr.transform(data, time_features=False)
 n_tr = 10000
 n_te = 2800
 
-m = 24*6*3
-y_hat_kexp, coeffs_t = fourier_kexp_2_custom(h=24*6, omega=0.99, alpha=0.8, n_harmonics=50, m_max=m, n_predictors=3).predict(x.iloc[n_tr:n_tr+n_te,0].values, return_coeffs=True)
-ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
+m = 24*6*7
+n_sa =24*9
+periodicity = 24*6
+fks = FK(n_sa=n_sa, alpha=0.8, omega=0.99, n_harmonics=10, m=336, target_name='all', n_predictors=3, periodicity=periodicity).fit(x.iloc[:2000, :], return_coeffs=True)
+y_hat_kexp_multi_fast = fks.predict(x.iloc[2100:6100,:])
+from pyforecaster.plot_utils import ts_animation
+ts_animation([y_hat_kexp_multi_fast], names=['kexp fast', 'target'], target=x['all'].iloc[2100:6100], frames=300, step=2)
 
-y_hat_kexp, coeffs_t = fourier_kexp_2(x.iloc[n_tr:n_tr+n_te,0].values, h=24*6, omega=0.99, alpha=0.8, n_harmonics=50, m_max=m, n_predictors=3, return_coeffs=True)
-ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, y_hat_kexp, 2000, labels=['ground truth', 'predictions'])
-ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, coeffs_t, 2000, labels=['ground truth', 'predictions'])
 
+fks = FK_multi(n_sa=n_sa, alpha=0.8, omega=0.99, n_harmonics=10, m=m, target_name='all', n_predictors=3, periodicity=periodicity).fit(x.iloc[:2100, :], return_coeffs=True)
+y_hat_kexp_multi_fast = fks.predict(x.iloc[2100:6100,:])
 
+kexp2c = fourier_kexp_2_custom(h=n_sa, omega=0.99, alpha=0.8, n_harmonics=10, m_max=m, n_predictors=3)
+y_hat_kexp_multi, coeffs_t = kexp2c.predict(x.iloc[:6100,0].values, return_coeffs=True)
 
-lf = LinearForecaster().fit(x.iloc[:n_tr,:], y.iloc[:n_tr,:])
+ts_animation([y_hat_kexp_multi[2100:6100, :], y_hat_kexp_multi_fast], names=['kexp custom', 'kexp fast', 'target'], target=x['all'].iloc[2100:6100], frames=100, interval=0.1, step=2)
 
-y_hat_lin = lf.predict(x.iloc[n_tr:n_tr+n_te,:])
-ts_animation(x.iloc[n_tr:n_tr+n_te,0].values, y_hat_lin.values, 2000, labels=['ground truth', 'predictions'])

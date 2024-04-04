@@ -6,10 +6,10 @@ import numpy as np
 import logging
 from sklearn.linear_model import ElasticNet
 from sklearn.pipeline import Pipeline
-from pyforecaster.trainer import hyperpar_optimizer, retrieve_cv_results, base_storage_fun
-from pyforecaster.metrics import make_scorer, nmae
+from pyforecaster.trainer import hyperpar_optimizer, retrieve_cv_results, base_storage_fun, cross_validate
+from pyforecaster.metrics import make_scorer, nmae, rmse, crps
 from lightgbm import LGBMRegressor, Dataset, train
-
+from pyforecaster.forecaster import LinearForecaster
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
@@ -87,6 +87,21 @@ class TestFormatDataset(unittest.TestCase):
                                    param_space_fun=self.param_space_fun,
                                    cv_type='full', storage_fun=base_storage_fun)
         assert len(replies) == len(study.trials_dataframe())
+
+    def test_scores(self):
+
+        model = LinearForecaster()
+
+        n_trials = 3
+        n_folds = 3
+        cv_idxs = []
+        for i in range(n_folds):
+            tr_idx = np.random.randint(0, 2, len(self.x.index), dtype=bool)
+            te_idx = ~tr_idx
+            cv_idxs.append((tr_idx, te_idx))
+
+        cross_validate(self.x, self.y, model, cv_folds=(f for f in cv_idxs), scoring={'nmae': make_scorer(nmae), 'rmse': make_scorer(rmse), 'crps': make_scorer(crps)}, cv_type='full', trial=None,
+                       storage_fun=None)
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
+from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti, FK, FK_multi, Fourier_es
 from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
@@ -111,25 +111,29 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_hw_multi(self):
-        n_tr = int(len(self.x) * 0.5)
-        df_tr, df_te = self.data.iloc[:n_tr], self.data.iloc[n_tr:]
+        self.data = self.data.resample('1h').mean()
+        df_tr, df_te = self.data.iloc[:1200], self.data.iloc[1200:1500]
+        steps_day = 24
+        fes = Fourier_es(n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=30, m=steps_day*7, target_name='all', n_predictors=3).fit(df_tr, df_tr['all'])
 
-        hw = HoltWinters(periods=[144, 144 * 7], n_sa=144, optimization_budget=5, q_vect=np.arange(11) / 10,
+
+        hw = HoltWinters(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=5, q_vect=np.arange(11) / 10,
                          target_name='all').fit(df_tr, df_tr['all'])
-        hw_multi = HoltWintersMulti(periods=[144, 144 * 7], n_sa=144, optimization_budget=50, q_vect=np.arange(11) / 10,
-                         target_name='all', models_periods=np.array([1,2,144])).fit(df_tr, df_tr['all'])
+        hw_multi = HoltWintersMulti(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=50, q_vect=np.arange(11) / 10,
+                         target_name='all', models_periods=np.array([1,2,steps_day])).fit(df_tr, df_tr['all'])
+
+        fks_multi = FK_multi(n_predictors=6, n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=20, m=steps_day*7, target_name='all', periodicity=steps_day*2).fit(df_tr, df_tr['all'])
+        fks = FK(n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=10, m=steps_day, target_name='all').fit(df_tr, df_tr['all'])
 
         y_hat = hw.predict(df_te)
         y_hat_multi = hw_multi.predict(df_te)
+        y_hat_fes = fes.predict(df_te)
+        y_hat_fks = fks.predict(df_te)
+        y_hat_fks_multi = fks_multi.predict(df_te)
 
-        n_plot = 50
-        for i in range(n_plot):
-            plt.cla()
-            plt.plot(df_te['all'].iloc[i + 1:i + self.periods[1] + 1].values, label='observed')
-            plt.plot(y_hat[i, :], label='HW')
-            plt.plot(y_hat_multi[i, :], label='HW multi')
-            plt.legend()
-            plt.pause(0.0001)
+        ys = [y_hat, y_hat_multi, y_hat_fes, y_hat_fks, y_hat_fks_multi]
+        from pyforecaster.plot_utils import ts_animation
+        ts_animation(ys, target = df_te['all'].values, names = ['hw', 'hw_multi', 'fes', 'fks', 'fks_multi', 'target'], frames = 50, interval = 1, step = 1, repeat = False)
 
     def test_linear_val_split(self):
 

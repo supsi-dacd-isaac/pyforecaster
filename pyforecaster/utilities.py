@@ -28,17 +28,17 @@ def get_logger(level=logging.INFO, name='pyforecaster'):
 
 @njit
 def kalman_predict(x, P, F, Q):
-    x = F @ x
-    P = F @ P @ F.T + Q
+    x = np.dot(F, x)
+    P = np.dot(F, np.dot(P, F.T))  + Q
     return x, P
 @njit
 def kalman_update(x, P, y, H, R):
-    S = H @ P @ H.T + R
-    K = P @ H.T @ np.linalg.pinv(S)
-    x = x + K @ (y - H @ x)
-    P = P - K @ H @ P
-    I_KH = np.eye(K.shape[0]) - K @ H
-    P = I_KH @ P @ I_KH.T + K @ R @ K.T
+    S = np.dot(H, np.dot(P, H.T)) + R
+    K = np.dot(P, np.dot(H.T, np.linalg.pinv(S)))
+    x = x + np.dot(K, (y - np.dot(H , x)))
+    P = P - np.dot(K,np.dot(H, P))
+    I_KH = np.eye(K.shape[0]) - np.dot(K, H)
+    P = np.dot(I_KH,np.dot(P,I_KH.T)) + np.dot(K, np.dot(R, K.T))
     return x, P
 @njit
 def kalman(x, P, F, Q, y, H, R):
@@ -46,3 +46,13 @@ def kalman(x, P, F, Q, y, H, R):
     x, P = kalman_update(x, P, y, H, R)
     return x, P
 
+
+def find_most_important_frequencies(x, n_max=10):
+    # Perform FFT on the signal
+    fft_x = np.fft.fft(x)
+
+    # Calculate the magnitude spectrum
+    mag_spectrum = np.abs(fft_x)[:len(x) // 2]
+
+    # Find the indices corresponding to the highest magnitudes
+    return np.sort(np.argsort(mag_spectrum)[::-1][:n_max]) + 1

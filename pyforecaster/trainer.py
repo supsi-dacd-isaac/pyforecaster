@@ -1,5 +1,6 @@
 from sklearn.model_selection import cross_validate as sklear_cv
 from sklearn.model_selection import KFold
+from sklearn.metrics import make_scorer
 import optuna
 import pandas as pd
 from pyforecaster.metrics import nmae, make_scorer
@@ -13,9 +14,14 @@ def default_param_space_fun(trial):
                    'model__learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2)}
     return param_space
 
+def get_score_key(cv_results, scoring, score_key=None):
+    fallback_name = 'test_' + list(scoring.keys())[0] if isinstance(scoring, dict) else list(cv_results.keys())[-1]
+    fallback_name = 'test_score' if 'test_score' in cv_results.keys() else fallback_name
+    score_key = score_key if score_key is not None else fallback_name
+    return score_key
 
 def cross_validate(x: pd.DataFrame, y: pd.DataFrame, model, cv_folds, scoring=None, cv_type='full',
-                   trial=None, storage_fun=None, **cv_kwargs):
+                   trial=None, storage_fun=None, score_key=None, **cv_kwargs):
     """
     :param x: pd.DataFrame of features
     :param y: pd.DataFrame of target
@@ -37,10 +43,13 @@ def cross_validate(x: pd.DataFrame, y: pd.DataFrame, model, cv_folds, scoring=No
         if storage_fun is not None:
             cv_kwargs.update({'return_estimator': True})
         cv_results = sklear_cv(model, x, y, scoring=scoring, cv=cv_gen, **cv_kwargs)
-        scores = cv_results['test_score']
+        score_key = get_score_key(cv_results, scoring, score_key=score_key)
+        scores = cv_results[score_key]
+        score = np.mean(scores)
+
         if trial is not None:
             trial.set_user_attr('cv_test_scores', scores)
-        score = np.mean(scores)
+
         if storage_fun:
             cv_results['y_te'] = {'fold_{}'.format(i): y.loc[cv_idxs[1]] for i, cv_idxs in enumerate(cv_folds)}
             cv_results['y_hat'] = {'fold_{}'.format(i): m.predict(x.loc[cv_idxs[1]]) for i, cv_idxs, m in
@@ -50,12 +59,17 @@ def cross_validate(x: pd.DataFrame, y: pd.DataFrame, model, cv_folds, scoring=No
         x_tr, x_te, y_tr, y_te = x.loc[tr_idx], x.loc[te_idx], y.loc[tr_idx], y.loc[te_idx]
         model.fit(x_tr, y_tr)
         y_hat = model.predict(x_te)
-        score = scoring(model, x_te, y_te)
-        cv_results = {'estimator': model, 'y_te': y_te, 'y_hat': y_hat}
+        cv_results = {k:np.atleast_1d(s(model, x_te, y_te)) for k, s in scoring.items()} if isinstance(scoring, dict) else {'test_score': np.atleast_1d(scoring(model, x_te, y_te))}
+        score_key = get_score_key(cv_results, scoring, score_key=score_key)
+        score = cv_results[score_key]
+
+        if storage_fun:
+            cv_results['y_te'] = y_te
+            cv_results['y_hat'] = y_hat
     else:
         raise ValueError('cv_type must be either "full" or "random_fold"')
 
-    return score, cv_results
+    return cv_results, score
 
 
 def optuna_objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring=None, param_space_fun=default_param_space_fun,
@@ -84,7 +98,7 @@ def optuna_objective(trial, x: pd.DataFrame, y: pd.DataFrame, model, cv, scoring
     model.set_params(**params)
 
     # retrieve cross validation score
-    score, cv_results = cross_validate(x, y, model, cv, scoring=scoring, cv_type=cv_type, trial=trial,
+    cv_results, score = cross_validate(x, y, model, cv, scoring=scoring, cv_type=cv_type, trial=trial,
                                        storage_fun=storage_fun, **cv_kwargs)
 
     # this is thought to permanently store some function outputs that take as input the current trained model
@@ -145,8 +159,8 @@ def hyperpar_optimizer(x, y, model, n_trials=40, metric=None, cv=5, param_space_
     return study, stored_replies
 
 
-def base_storage_fun(storage, results):
-    reply = results['y_hat']
+def base_storage_fun(storage, cv_results):
+    reply = cv_results['y_hat']
     storage.append(reply)
 
 

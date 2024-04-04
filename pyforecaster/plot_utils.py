@@ -161,7 +161,7 @@ def hist_2d(data, value, x, y, plot=True, qs=None, **basic_setup_kwargs):
     return hist
 
 
-def ts_animation(ys:list, ts=None, names=None, frames=150, interval=1, step=1, repeat=False):
+def ts_animation(ys:list,  ts=None, names=None, frames=150, interval=1, step=1, repeat=False, target=None):
     "plot the first n_rows of the two y_te and y_hat matrices"
     ts = [np.arange(len(ys[0][0]))]*len(ys) if ts is None else ts
     fig, ax = plt.subplots(1)
@@ -173,6 +173,9 @@ def ts_animation(ys:list, ts=None, names=None, frames=150, interval=1, step=1, r
         for y, t in zip(ys, ts):
             l, = ax.plot(t, y[0, :], alpha=0.8, linewidth=1)
             lines.append(l)
+        if target is not None:
+            l, = ax.plot(ts[0], target[:len(ts[0])], alpha=0.8, linewidth=1)
+            lines.append(l)
         ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
         plt.legend(names)
         return lines
@@ -180,11 +183,12 @@ def ts_animation(ys:list, ts=None, names=None, frames=150, interval=1, step=1, r
     def animate(i):
         for y, l, t in zip(ys, lines, ts):
             l.set_data(t, y[i*step, :])
-        for y, l, t in zip(ys, lines[len(ys):], ts):
-            l.set_data(t, y[i, :])
+        if target is not None:
+            lines[-1].set_data(ts[0], target[i*step:i*step+len(ts[0])])
+
         return lines
 
-    plt.pause(1e-5)
+
     ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=interval, repeat=repeat)
 
     return ani
