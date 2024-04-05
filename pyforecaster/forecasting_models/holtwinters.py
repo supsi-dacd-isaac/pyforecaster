@@ -446,9 +446,9 @@ class Fourier_es(ScenarioGenerator):
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
     def __getstate__(self):
-        return (self.coeffs, self.eps,self.last_1sa_preds)
+        return (self.coeffs, self.eps, self.last_1sa_preds, self.w)
     def __setstate__(self, state):
-        self.coeffs, self.eps, self.last_1sa_preds = state
+        self.coeffs, self.eps, self.last_1sa_preds, self.w = state
 
 
 
@@ -655,6 +655,7 @@ class FK_multi(ScenarioGenerator):
 
         self.models = [base_predictor(n_sa=n_sa, alpha=alpha, omega=omega, n_harmonics=n_harmonics, m=ms[i], target_name=target_name, periodicity=periodicity) for i in
                   range(n_predictors)]
+        self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
         self.coeffs_t_history = []
 
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
@@ -683,10 +684,10 @@ class FK_multi(ScenarioGenerator):
         R = np.copy(self.R)
         P = np.copy(self.P)
         x = np.copy(self.x)
-        if fit:
-            self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
 
-        [self.models[j].__setstate__(self.states[j]) for j in range(self.n_predictors)]
+        # set stored states
+        for j in range(self.n_predictors):
+            self.models[j].__setstate__(self.states[j])
 
         preds_experts = np.dstack([self.models[j].run(x_pd.values, x_pd[self.target_name].values,
                                       return_coeffs=False, fit=True) for j in
@@ -728,6 +729,7 @@ class FK_multi(ScenarioGenerator):
                 #P = np.eye(self.n_predictors) * 1000
 
         if fit:
+            # if we were fitting, store states. Do nothing if we're predicting
             self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
             self.Q = Q
             self.R = R

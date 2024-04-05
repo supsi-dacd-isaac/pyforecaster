@@ -130,6 +130,11 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_fes = fes.predict(df_te)
         y_hat_fks = fks.predict(df_te)
         y_hat_fks_multi = fks_multi.predict(df_te)
+        y_hat_fks_multi_q = fks_multi.predict_quantiles(df_te)
+
+        import matplotlib.pyplot as plt
+        plt.plot(y_hat_fks_multi[0])
+        plt.plot(y_hat_fks_multi_q[0], color='r', alpha=0.3)
 
         ys = [y_hat, y_hat_multi, y_hat_fes, y_hat_fks, y_hat_fks_multi]
         from pyforecaster.plot_utils import ts_animation
