@@ -118,8 +118,12 @@ def make_scorer(metric):
     elif 'func' in  dir(metric):
         name = metric.func.__name__
     def scorer(estimator, X, y):
+        kwargs = {}
         if name  in ["crps", "reliability"]:
             y_hat = estimator.predict_quantiles(X)
+            if 'q_vect' in dir(estimator):
+                alphas = estimator.q_vect
+                kwargs['alphas'] = alphas
         else:
             y_hat = estimator.predict(X)
             if not isinstance(y_hat, pd.DataFrame):
@@ -129,7 +133,7 @@ def make_scorer(metric):
         # default behaviour is to reduce metric over forecasting horizon.
         # If just one step ahead is forecasted, metric is reduced on samples
         agg_index = np.zeros(len(y)) if len(y.shape)<2 else np.zeros(y.shape[1])
-        score = metric(y_hat, y, agg_index=agg_index)
+        score = metric(y_hat, y, agg_index=agg_index, **kwargs)
         return np.mean(score.mean()) if len(score.shape)>1 else score.mean()
     return scorer
 

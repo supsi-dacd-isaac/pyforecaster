@@ -10,7 +10,7 @@ from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
 from pyforecaster.forecasting_models.neural_models.base_nn import FFNN
-
+from pyforecaster.plot_utils import ts_animation
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 10000
@@ -41,13 +41,7 @@ class TestFormatDataset(unittest.TestCase):
         #hw.reinit(x_tr['target'])
         y_hat = hw.predict(pd.concat([x_te,y_te], axis=1))
 
-        n_plot = 50
-        for i in range(n_plot):
-            plt.cla()
-            plt.plot(y_te.iloc[i+1:i+self.periods[1]+1].values)
-            plt.plot(y_hat[i, :])
-            plt.pause(0.0001)
-        plt.close('all')
+        ts_animation([y_hat], names=['y_hat', 'target'], target=y_te.values, frames=100, repeat=False)
 
     def test_fast_linreg(self):
 
@@ -92,22 +86,14 @@ class TestFormatDataset(unittest.TestCase):
                                   y.iloc[n_tr:].copy()]
 
         hw = HoltWinters(periods=self.periods, n_sa=self.n_sa, optimization_budget=5, q_vect=np.arange(11)/10,
-                         target_name='target').fit(None, y_tr)
+                         target_name='target').fit(y_tr)
         y_hat = hw.predict(y_te)
 
         hw_multi = HoltWintersMulti(periods=self.periods, n_sa=self.n_sa, optimization_budget=50, q_vect=np.arange(11)/10,
-                         target_name='target', models_periods=np.array([1,2,3,5, 10, 24]), constraints=[0, np.inf]).fit(None, y_tr)
+                         target_name='target', models_periods=np.array([1,2,3,5, 10, 24]), constraints=[0, np.inf]).fit(y_tr,y_tr)
         y_hat_multi = hw_multi.predict(y_te)
 
-        n_plot = 50
-        for i in range(n_plot):
-            plt.cla()
-            plt.plot(y_te.iloc[i+1:i+self.periods[1]+1].values)
-            plt.plot(y_hat[i, :], label='y_hat')
-            plt.plot(y_hat_multi[i, :], label='yhat constrained')
-            plt.legend()
-            plt.pause(0.0001)
-        plt.close('all')
+        ts_animation([y_hat, y_hat_multi], names=['y_hat', 'y_hat_multi', 'target'], target=y_te.values, frames=100, repeat=False)
 
 
     def test_hw_multi(self):
@@ -139,7 +125,6 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_fks_multi_q = fks_multi.predict_quantiles(df_te)
 
         ys = [y_hat, y_hat_multi, y_hat_fes, y_hat_fks, y_hat_fks_multi]
-        from pyforecaster.plot_utils import ts_animation
         ts_animation(ys, target = df_te['all'].values, names = ['hw', 'hw_multi', 'fes', 'fks', 'fks_multi', 'target'], frames = 120, interval = 1, step = 1, repeat = False)
 
     def test_linear_val_split(self):

@@ -362,7 +362,7 @@ class HoltWintersMulti(ScenarioGenerator):
 
         self.models = models
 
-    def fit(self, x_pd, y_pd):
+    def fit(self, x_pd, y_pd=None):
         err_distr = np.zeros((self.n_sa, len(self.q_vect)))
         k = 0
         for i,m in enumerate(self.models):
