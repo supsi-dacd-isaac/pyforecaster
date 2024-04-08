@@ -114,31 +114,33 @@ class TestFormatDataset(unittest.TestCase):
         self.data = self.data.resample('1h').mean()
         df_tr, df_te = self.data.iloc[:1200], self.data.iloc[1200:1500]
         steps_day = 24
-        fes = Fourier_es(n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=30, m=steps_day*7, target_name='all', n_predictors=3).fit(df_tr, df_tr['all'])
 
+        fks_multi = FK_multi(n_predictors=6, n_sa=steps_day, m=steps_day*7,
+                             target_name='all', periodicity=steps_day*2,
+                             optimize_hyperpars=True, optimization_budget=1, targets_names=['all']).fit(df_tr, df_tr['all'])
 
-        hw = HoltWinters(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=5, q_vect=np.arange(11) / 10,
+        fks = FK(n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=10, m=steps_day, target_name='all',
+                 optimization_budget=5).fit(df_tr, df_tr['all'])
+
+        fes = Fourier_es(n_sa=steps_day, m=steps_day*7, target_name='all', optimization_budget=1).fit(df_tr, df_tr['all'])
+
+        hw = HoltWinters(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=1, q_vect=np.arange(11) / 10,
                          target_name='all').fit(df_tr, df_tr['all'])
-        hw_multi = HoltWintersMulti(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=50, q_vect=np.arange(11) / 10,
+        hw_multi = HoltWintersMulti(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=1, q_vect=np.arange(11) / 10,
                          target_name='all', models_periods=np.array([1,2,steps_day])).fit(df_tr, df_tr['all'])
 
-        fks_multi = FK_multi(n_predictors=6, n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=20, m=steps_day*7, target_name='all', periodicity=steps_day*2).fit(df_tr, df_tr['all'])
-        fks = FK(n_sa=steps_day, alpha=0.9, omega=0.9, n_harmonics=10, m=steps_day, target_name='all').fit(df_tr, df_tr['all'])
 
         y_hat = hw.predict(df_te)
         y_hat_multi = hw_multi.predict(df_te)
         y_hat_fes = fes.predict(df_te)
         y_hat_fks = fks.predict(df_te)
+
         y_hat_fks_multi = fks_multi.predict(df_te)
         y_hat_fks_multi_q = fks_multi.predict_quantiles(df_te)
 
-        import matplotlib.pyplot as plt
-        plt.plot(y_hat_fks_multi[0])
-        plt.plot(y_hat_fks_multi_q[0], color='r', alpha=0.3)
-
         ys = [y_hat, y_hat_multi, y_hat_fes, y_hat_fks, y_hat_fks_multi]
         from pyforecaster.plot_utils import ts_animation
-        ts_animation(ys, target = df_te['all'].values, names = ['hw', 'hw_multi', 'fes', 'fks', 'fks_multi', 'target'], frames = 50, interval = 1, step = 1, repeat = False)
+        ts_animation(ys, target = df_te['all'].values, names = ['hw', 'hw_multi', 'fes', 'fks', 'fks_multi', 'target'], frames = 120, interval = 1, step = 1, repeat = False)
 
     def test_linear_val_split(self):
 

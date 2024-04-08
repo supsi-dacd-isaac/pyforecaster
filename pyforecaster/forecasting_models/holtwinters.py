@@ -4,7 +4,9 @@ from tqdm import tqdm
 from pyforecaster.forecaster import ScenarioGenerator
 import pandas as pd
 from pyforecaster.utilities import kalman
-
+from functools import partial
+import matplotlib.pyplot as plt
+from copy import deepcopy
 
 def hankel(x, n, generate_me=None):
     if generate_me is None:
@@ -17,9 +19,80 @@ def hankel(x, n, generate_me=None):
         h.append(x[w + g].reshape(-1, 1))
     return np.hstack(h)
 
+def tune_hyperpars(x, model_class, hyperpars, n_trials=100, targets_names=None, verbose=True, return_model=True, **model_init_kwargs):
+    """
+    :param x: pd.DataFrame (n, n_cov)
+    :param y: pd.Series (n)
+    :param model: ScenarioGenerator
+    :param hyperpars: dict of hyperparameters to be tuned, keys=hyperpar name, values: 2 elements array with min-max
+    :param n_trials: number of calls to the optimizer
+    :param targets_names: list if not None, consider all the columns in targets_list to be different time series
+                          to train on, in a global model fashion
+    :return:
+    """
+
+    par_minima = np.array([v[0] for v in hyperpars.values()])
+    par_maxima = np.array([v[1] for v in hyperpars.values()])
+    n_pars = len(par_minima)
+    pars_cartridge = np.random.rand(n_trials, n_pars) * (par_maxima-par_minima) + par_minima
+    model_init_kwargs.update({'optimize_hyperpars':False})
+    model_init_kwargs_0 = deepcopy(model_init_kwargs)
+    scores = []
+    generator = tqdm(pars_cartridge) if verbose else pars_cartridge
+    for i, p in enumerate(generator):
+        pars_dict = {k:v for k, v in zip(hyperpars.keys(), p)}
+        model_init_kwargs.update(pars_dict)
+        model = model_class(**model_init_kwargs)
+        if targets_names is not None:
+            subscores = []
+            for c in targets_names:
+                model_init_kwargs.update({'target_name':c, 'targets_names':None})
+                model = model_class(**model_init_kwargs)
+                # features are all x columns except the targets and current target c
+                features_names = [n for n in x.columns if n not in set(targets_names) - {c}]
+                subscores.append(score_autoregressive(model, x[features_names], target_name=c))
+            scores.append(np.mean(subscores))
+        else:
+            scores.append(score_autoregressive(model, x))
+    if verbose:
+        plt.figure()
+        t = np.linspace(0.01, 0.99, 30)
+        plt.plot(np.quantile(scores, t), t)
+
+    best_idx = np.argmin(scores)
+    best_pars = {k:p for k, p in zip(hyperpars.keys(), pars_cartridge[best_idx, :])}
+
+    model_init_kwargs.update(best_pars)
+    model = model_class(**model_init_kwargs)
+    if return_model:
+        if 'target_name' in model_init_kwargs.keys():
+            model.target_name = model_init_kwargs_0['target_name']
+        model.fit(x, x)
+        return model
+    else:
+        return model.get_params()
+
+def score_autoregressive(model, x, tr_ratio=0.7, target_name=None):
+    target_name = model.target_name if target_name is None else target_name
+    model.target_name = target_name
+    n_sa = model.n_sa
+
+    # training test split
+    n_training = int(tr_ratio*len(x))
+    x_tr, x_te = x.iloc[:n_training], x.iloc[n_training:]
+
+    # create the target
+    target = hankel(x_te[target_name].values[1:], n_sa)
+
+    # fit and score
+    model.fit(x_tr, x_tr)
+    y_hat = model.predict(x_te)
+
+    return np.mean((y_hat[:len(target), :] - target) ** 2)
 
 class HoltWinters(ScenarioGenerator):
-    def __init__(self, periods, target_name, q_vect=None, optimization_budget=800, n_sa=1, constraints=None,
+    def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800, n_sa=1, constraints=None,
+                 optimize_hyperpars = True, alpha=0.2, beta=0, gamma_1=0.1, gamma_2=0.1, verbose=True,
                  **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
@@ -27,16 +100,22 @@ class HoltWinters(ScenarioGenerator):
         :param n_sa: number of steps ahead to be predicted
         :param q_vect: vector of quantiles
         """
-
-        super().__init__(q_vect, **scengen_kwgs)
+        self.init_pars = {'periods': periods, 'target_name': target_name, 'q_vect': q_vect, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+                            'optimization_budget': optimization_budget, 'n_sa': n_sa, 'constraints': constraints, 'optimize_hyperpars': optimize_hyperpars,
+                          'verbose':verbose, 'alpha': alpha, 'beta': beta, 'gamma_1': gamma_1, 'gamma_2': gamma_2}
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+        self.targets_names = [target_name] if targets_names is None else targets_names
         self.periods = periods
-        self.budget = optimization_budget
+        self.optimization_budget = optimization_budget
         self.n_sa = n_sa
+        self.optimize_hyperpars = optimize_hyperpars
+        self.verbose = verbose
 
         # HW parameters
-        self.alpha = 1
-        self.beta = 0
-        self.gamma = [0.1, 0.1]
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma_1 = gamma_1
+        self.gamma_2 = gamma_2
 
         # HW states
         self.a = None
@@ -57,37 +136,29 @@ class HoltWinters(ScenarioGenerator):
         self.err_distr = None
         self.constraints = constraints
 
-        super().__init__()
+    def fit(self, x_pd, y_pd=None, **kwargs):
+        if self.optimize_hyperpars:
+            pars_opt = tune_hyperpars(x_pd, HoltWinters, hyperpars={'alpha':[0, 1], 'gamma_1':[0, 1], 'gamma_2':[0, 1]},
+                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False, **self.init_pars)
+            self.set_params(**pars_opt)
 
-    def fit(self, x_pd, y_pd):
-        """
-        :param x: pd.DataFrame (n_obs, n_cov), pandas of covariates
-        :param y: pd.DataFrame (n_obs, 1), target
-        :return:
-        """
-        y = np.vstack(y_pd.values)
+        y = x_pd[self.target_name].values
+        x = x_pd.values
 
-        # exclude the last n_sa, we need them to create the target
-        hw_input = y[:-self.n_sa]
+        y_hat_hw, self.a, self.b, self.s1, self.s2 = self._run(y)
 
-        # hankelize the target
         hw_target = hankel(y[1:], self.n_sa)
 
-        # optimize HW parameters
-        y_hat_hw = self.rand_search(hw_input.ravel(), hw_target)
+        # we cannot exploit predictinos without ground truth, trim them
+        y_hat_hw = y_hat_hw[:hw_target.shape[0], :]
 
-        # see if there is some residual error which can be explained with the regressors
-        resid = hw_target -y_hat_hw
-        if x_pd is not None:
-            x = x_pd.values
-            self.coeffs_output = np.linalg.pinv(x[:-self.n_sa,:].T @ x[:-self.n_sa,:]) @ (x[:-self.n_sa,:].T @ resid)
-            self.y_hat_tr = pd.DataFrame(y_hat_hw + x[:-self.n_sa, :] @ self.coeffs_output,
-                                         index=y_pd.index[:-self.n_sa])
-            resid = hw_target - self.y_hat_tr
-        else:
-            self.y_hat_tr = pd.DataFrame(y_hat_hw, index=y_pd.index[:-self.n_sa])
+        resid = hw_target - y_hat_hw
+        self.coeffs_output = np.linalg.pinv(x[:-self.n_sa,:].T @ x[:-self.n_sa,:]) @ (x[:-self.n_sa,:].T @ resid)
+        self.y_hat_tr = pd.DataFrame(y_hat_hw + x[:-self.n_sa, :] @ self.coeffs_output,
+                                        index=x_pd.index[:-self.n_sa])
+        resid = hw_target - self.y_hat_tr
 
-        self.y_tr = pd.DataFrame(hw_target, index=y_pd.index[:-self.n_sa])
+        self.y_tr = pd.DataFrame(hw_target, index=x_pd.index[:-self.n_sa])
 
         # reinit HW
         # concat past inputs and last row of target
@@ -107,7 +178,7 @@ class HoltWinters(ScenarioGenerator):
         hw_input = y_past
 
         # predict the HW
-        y_hat_hw, a, b, s1, s2 = self._run(hw_input.ravel(), self.alpha, 0, self.gamma)
+        y_hat_hw, a, b, s1, s2 = self._run(hw_input.ravel(), self.alpha, 0, self.gamma_1, self.gamma_2)
 
         # set the states (it is thought that the forecaster is called in sequence on ordinate samples)
         self.a = a
@@ -127,8 +198,6 @@ class HoltWinters(ScenarioGenerator):
         return y_hat
 
     def predict_quantiles(self, x, **kwargs):
-        if isinstance(x, pd.DataFrame):
-            x = x.values
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
@@ -136,7 +205,7 @@ class HoltWinters(ScenarioGenerator):
         np.random.seed(0)
         test_from = int(len(hw_input)/10)
 
-        test_pars = np.random.rand(self.budget,3)
+        test_pars = np.random.rand(self.optimization_budget,3)
         rmses = np.zeros(len(test_pars))
         '''
         res = forest_minimize(partial(self.run_wrapper, hw_input, hw_output),[(0.,1.), (0.,1.), (0.,1.)], n_calls=N)
@@ -145,13 +214,13 @@ class HoltWinters(ScenarioGenerator):
         self.reinit(hw_input[:np.max(self.periods)])
         for i in tqdm(range(len(test_pars))):
             self.reinit(hw_input[:np.max(self.periods)])
-            y_hat = self._run(hw_input.ravel(), test_pars[i][0], 1e-3, test_pars[i][1:3])[0]
+            y_hat = self._run(hw_input.ravel(), test_pars[i][0], 1e-3, test_pars[i][1], test_pars[i][2])[0]
             rmses[i] = self.rmse(y_hat[test_from:,:],hw_output[test_from:,:])
         best_idx = np.argmin(rmses)
 
-        self.alpha, self.gamma[0], self.gamma[1] = test_pars[best_idx, :]
+        self.alpha, self.gamma_1, self.gamma_2 = test_pars[best_idx, :]
 
-        y_hat_hw, a, b, s1, s2 = self._run(hw_input.ravel(), self.alpha, self.beta, self.gamma)
+        y_hat_hw, a, b, s1, s2 = self._run(hw_input.ravel(), self.alpha, self.beta, self.gamma_1, self.gamma_2)
 
         self.a = a
         self.b = b
@@ -198,11 +267,12 @@ class HoltWinters(ScenarioGenerator):
             self.s1 = s1
             self.s2 = s2
 
-    def _run(self, Y, alpha=None, beta=None, gamma=None):
+    def _run(self, Y, alpha=None, beta=None, gamma_1=None, gamma_2=None):
         alpha = self.alpha if alpha is None else alpha
         beta = self.beta if beta is None else beta
-        gamma = self.gamma if gamma is None else gamma
-
+        gamma_1 = self.gamma_1 if gamma_1 is None else gamma_1
+        gamma_2 = self.gamma_2 if gamma_2 is None else gamma_2
+        gamma = [gamma_1, gamma_2]
         am1 = 0 if self.a is None or np.isnan(self.a) else self.a
         bm1 = 0 if self.b is None or np.isnan(self.b) else self.b
         s1_init = np.tile(Y[-1], self.periods[0]) if self.s1 is None or np.all(np.isnan(self.s1)) else self.s1
@@ -268,8 +338,8 @@ def constrainify(x, constraints):
 
 
 class HoltWintersMulti(ScenarioGenerator):
-    def __init__(self, periods, target_name, q_vect=None, optimization_budget=800, n_sa=1, constraints=None,
-                 models_periods=None, **scengen_kwgs):
+    def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800, n_sa=1, constraints=None,
+                 models_periods=None, verbose=True, **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
         :param optimization_budget: number of test point to optimize the parameters
@@ -277,16 +347,18 @@ class HoltWintersMulti(ScenarioGenerator):
         :param q_vect: vector of quantiles
         """
 
-        super().__init__(q_vect, **scengen_kwgs)
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+        self.targets_names = [target_name] if targets_names is None else targets_names
         self.periods = periods
-        self.budget = optimization_budget
+        self.optimization_budget = optimization_budget
         self.n_sa = n_sa
         self.models_periods = models_periods if models_periods is not None else np.arange(1, 1+n_sa)
-
+        self.target_name = target_name
         models = []
         for n in self.models_periods:
             models.append(HoltWinters(periods=periods, q_vect=q_vect,
-                             n_sa=n, target_name=target_name, optimization_budget=optimization_budget))
+                             n_sa=n, target_name=target_name, optimization_budget=optimization_budget,
+                                      targets_names=self.targets_names, verbose=False))
 
         self.models = models
 
@@ -301,7 +373,7 @@ class HoltWintersMulti(ScenarioGenerator):
 
         # reinit HW
         # concat past inputs and last row of target
-        self.reinit(y_pd)
+        self.reinit(x_pd[self.target_name].values)
         self.err_distr = err_distr
 
         return self
@@ -339,7 +411,9 @@ def get_basis(t, l, n_h, frequencies=None):
 class Fourier_es(ScenarioGenerator):
 
 
-    def __init__(self, target_name='target', n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3,
+                 val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None, optimize_hyperpars=True,
+                 optimization_budget=100,  diagnostic_plots=True, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h:
@@ -351,14 +425,25 @@ class Fourier_es(ScenarioGenerator):
         assert 0<alpha<1, 'alpha must be in (0, 1)'
         assert 0<omega<1, 'omega must be in (0, 1)'
         assert n_harmonics>0, 'n_harmonics must be positive'
+        n_harmonics = int(np.minimum(n_harmonics, m // 2))
+        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'alpha': alpha, 'm': m, 'omega': omega,
+                          'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+                          'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
+                          'optimization_budget': optimization_budget, 'diagnostic_plots': diagnostic_plots,
+                          'verbose': verbose}
+        self.init_pars.update(scengen_kwgs)
+        self.targets_names = [target_name] if targets_names is None else targets_names
+        self.optimize_hyperpars = optimize_hyperpars
+        self.optimization_budget = optimization_budget
         self.periodicity = periodicity if periodicity is not None else n_sa
         self.target_name = target_name
+        self.verbose = verbose
         # precompute basis over all possible periods
         self.alpha = alpha
         self.omega = omega
         self.n_sa=n_sa
         self.m = m
-        self.n_harmonics = np.minimum(n_harmonics, m // 2)
+        self.n_harmonics = n_harmonics
         self.coeffs = None
         self.eps = None
         self.last_1sa_preds = 0
@@ -366,18 +451,27 @@ class Fourier_es(ScenarioGenerator):
         self.P_past = None
         self.P_future = None
         self.store_basis()
+        self.diagnostic_plots = diagnostic_plots
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def store_basis(self):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
         self.P_future = get_basis(t_f, self.m, self.n_harmonics)
     def fit(self, x_pd, y_pd=None, **kwargs):
+        if self.optimize_hyperpars:
+            pars_opt = tune_hyperpars(x_pd, Fourier_es, hyperpars={'alpha':[0, 1], 'omega':[0, 1], 'n_harmonics':[1, self.m//2]},
+                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
+                                      **self.init_pars)
+            self.set_params(**pars_opt)
+            self.store_basis()
+
         y_present = x_pd[self.target_name].values
         x = x_pd.values
-        self.run(x, y_present, start_from=0, fit=True)
+
 
         # exclude the last n_sa, we need them to create the target
-        preds = self.predict(x_pd)[:-self.n_sa]
+        preds = self.run(x, y_present, start_from=0, fit=True)[:-self.n_sa]
+        #preds = self.predict(x_pd)[:-self.n_sa]
 
         # hankelize the target
         hw_target = hankel(y_present[1:], self.n_sa)
@@ -494,7 +588,8 @@ def update_predictions(coeffs_t_history, start_from, y, Ps_future, period, h, m,
 class FK(ScenarioGenerator):
 
 
-    def __init__(self, target_name='target', n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
+                 optimize_hyperpars=True,optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h:
@@ -507,6 +602,16 @@ class FK(ScenarioGenerator):
         assert 0<omega<1, 'omega must be in (0, 1)'
         assert n_harmonics>0, 'n_harmonics must be positive'
 
+
+        self.targets_names = [target_name] if targets_names is None else targets_names
+        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'alpha': alpha, 'm': m, 'omega': omega,
+                          'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+                          'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
+                          'optimization_budget': optimization_budget, 'r': r, 'q': q, 'verbose':verbose}
+        self.init_pars.update(scengen_kwgs)
+        self.verbose=verbose
+        self.optimize_hyperpars = optimize_hyperpars
+        self.optimization_budget = optimization_budget
         self.periodicity = periodicity if periodicity is not None else n_sa
         if self.periodicity < n_sa:
             print('WARNING: periodicity is smaller than n_sa, this may lead to suboptimal results.')
@@ -522,38 +627,50 @@ class FK(ScenarioGenerator):
         self.last_1sa_preds = 0
         self.w = np.zeros(m)
 
-        n_harmonics = np.minimum(n_harmonics, self.m // 2)
-
         self.n_harmonics = n_harmonics
+        self.r = r
+        self.q = q
 
-        # precompute basis over all possible periods
-        self.x = np.zeros(2 * n_harmonics + 1)
-
-        self.F = np.eye(n_harmonics * 2 + 1)
-
-        self.H = np.eye(n_harmonics * 2 + 1)
-        self.P = np.eye(n_harmonics * 2 + 1) * 1000
-        self.R = np.eye(n_harmonics * 2 + 1) * 0.01
-        self.Q = np.eye(n_harmonics * 2 + 1) * 0.01
-
+        self.reinit_pars()
         self.coeffs_t_history = []
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+
+    def reinit_pars(self):
+        self.n_harmonics = int(np.minimum(self.n_harmonics, self.m // 2))
+        # precompute basis over all possible periods
+        self.x = np.zeros(2 * self.n_harmonics + 1)
+
+        self.F = np.eye(self.n_harmonics * 2 + 1)
+
+        self.H = np.eye(self.n_harmonics * 2 + 1)
+        self.P = np.eye(self.n_harmonics * 2 + 1) * 1000
+
+        self.R = np.eye(self.n_harmonics * 2 + 1) * self.r
+        self.Q = np.eye(self.n_harmonics * 2 + 1) * self.q
         self.P_future = None
         self.store_basis()
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def store_basis(self):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
         self.P_future = get_basis(t_f, self.m, self.n_harmonics)
 
     def fit(self, x_pd, y_pd=None, **kwargs):
+        if self.optimize_hyperpars:
+            pars_opt = tune_hyperpars(x_pd, FK, hyperpars={'alpha':[0, 1], 'omega':[0, 1],
+                                                                   'n_harmonics':[1, self.m//2],
+                                                                   'r':[0.001, 0.8], 'q':[0.001, 0.8]},
+                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
+                                      **self.init_pars)
+            self.set_params(**pars_opt)
+            self.reinit_pars()
+
 
         y_present = x_pd[self.target_name].values
-
         x = x_pd.values
-        self.run(x, y_present, start_from=0, fit=True)
 
         # exclude the last n_sa, we need them to create the target
-        preds = self.predict(x_pd)[:-self.n_sa]
+        preds = self.run(x, y_present, start_from=0, fit=True)[:-self.n_sa]
+        #preds = self.predict(x_pd)[:-self.n_sa]
 
         # hankelize the target
         hw_target = hankel(y_present[1:], self.n_sa)
@@ -613,8 +730,8 @@ class FK_multi(ScenarioGenerator):
         Multistep ahead forecasting with multiple Fourier-Kalman regressors
     """
 
-    def __init__(self, target_name='target', n_sa=1,  n_predictors=4, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
-                 base_predictor=Fourier_es, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
+                 base_predictor=Fourier_es, optimize_hyperpars=True, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h: this is the numebr of steps ahead to be predicted.
@@ -622,19 +739,40 @@ class FK_multi(ScenarioGenerator):
         :param m:
         :return:
         """
+        n_predictors = int(n_predictors)
+        self.base_predictor = base_predictor
+        self.targets_names = targets_names
+        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'n_predictors': n_predictors, 'alpha': alpha, 'm': m, 'omega': omega,
+                            'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+                            'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
+                            'optimization_budget': optimization_budget, 'r': r, 'q': q}
+        self.init_pars.update(scengen_kwgs)
+        self.verbose=verbose
+        self.optimize_hyperpars = optimize_hyperpars
+        self.optimization_budget = optimization_budget
+
         self.periodicity = periodicity if periodicity is not None else n_sa
         assert self.periodicity < m, 'Periodicity must be smaller than history m'
         if self.periodicity < n_sa:
             print('WARNING: periodicity is smaller than n_sa, this may lead to suboptimal results.')
-
+        self.alpha = alpha
+        self.omega = omega
         self.n_sa = n_sa
         self.m = m
         self.target_name = target_name
         self.n_harmonics = n_harmonics
+        self.n_predictors = n_predictors
+        self.r = r
+        self.q = q
+        self.reinit_pars()
+        self.coeffs_t_history = []
 
-        n_harmonics = np.minimum(n_harmonics, m // 2)
-        ms = np.linspace(1, m, n_predictors + 1).astype(int)[1:]
-        ms = np.maximum(ms, n_sa)
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+
+    def reinit_pars(self):
+        self.n_harmonics = int(np.minimum(self.n_harmonics, self.m // 2))
+        ms = np.linspace(1, self.m, self.n_predictors + 1).astype(int)[1:]
+        ms = np.maximum(ms, self.n_sa)
 
         if np.any([m<self.periodicity for m in ms]):
             print('The history of the predictors are: {}'.format(ms))
@@ -642,25 +780,31 @@ class FK_multi(ScenarioGenerator):
             print('I am going to set the history of the predictors with m<periodicity to the periodicity')
             ms = np.maximum(ms, self.periodicity)
 
-        self.n_predictors = n_predictors
-
         # precompute basis over all possible periods
-        self.x = np.ones(n_predictors) / n_predictors
+        self.x = np.ones(self.n_predictors) / self.n_predictors
 
-        self.F = np.eye(n_predictors)
-        self.H = np.eye(n_predictors)
-        self.P = np.eye(n_predictors) * 1000
-        self.R = np.eye(n_predictors)
-        self.Q = 0.1
+        self.F = np.eye(self.n_predictors)
+        self.H = np.eye(self.n_predictors)
+        self.P = np.eye(self.n_predictors) * 1000
 
-        self.models = [base_predictor(n_sa=n_sa, alpha=alpha, omega=omega, n_harmonics=n_harmonics, m=ms[i], target_name=target_name, periodicity=periodicity) for i in
-                  range(n_predictors)]
+        self.R = np.eye(self.n_predictors) * self.r
+        self.Q = np.eye(self.n_predictors) * self.q
+
+        self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alpha, omega=self.omega, n_harmonics=self.n_harmonics, m=ms[i],
+                                      target_name=self.target_name, periodicity=self.periodicity,
+                                      targets_names=self.targets_names,
+                                      optimization_budget=self.optimization_budget, verbose=False) for i in
+                  range(self.n_predictors)]
         self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
-        self.coeffs_t_history = []
-
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def fit(self, x_pd, y_pd=None, **kwargs):
+        if self.optimize_hyperpars:
+            pars_opt = tune_hyperpars(x_pd, FK_multi, hyperpars={'n_predictors':[2, 6],
+                                                                   'r':[0.001, 0.8], 'q':[0.001, 0.8]},
+                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
+                                      **self.init_pars)
+            self.set_params(**pars_opt)
+            self.reinit_pars()
 
         preds, _ = self.run(x_pd, fit=True)
 
@@ -686,12 +830,11 @@ class FK_multi(ScenarioGenerator):
         x = np.copy(self.x)
 
         # set stored states
-        for j in range(self.n_predictors):
-            self.models[j].__setstate__(self.states[j])
+        if fit:
+            for j in range(self.n_predictors):
+                self.models[j].fit(x_pd, x_pd[self.target_name])
 
-        preds_experts = np.dstack([self.models[j].run(x_pd.values, x_pd[self.target_name].values,
-                                      return_coeffs=False, fit=True) for j in
-                   range(self.n_predictors)])
+        preds_experts = np.dstack([ self.models[j].predict(x_pd) for j in range(self.n_predictors)])
 
         #from pyforecaster.plot_utils import ts_animation
         #ts_animation(np.rollaxis(preds_experts, -1),
@@ -704,8 +847,8 @@ class FK_multi(ScenarioGenerator):
                 last_obs = x_pd[self.target_name].iloc[i]
                 prev_obs = x_pd[self.target_name].iloc[i-1]
                 # sometimes persistence error is too small, sometimes signal could be small. We normalize by the average
-                norm_factor = (np.abs(last_obs - prev_obs) + np.abs(last_obs + prev_obs))/2
-                norm_avg_err = [np.mean([np.abs(preds_experts[i-sa, sa, predictor]-last_obs) for sa in range(self.n_sa)]) / norm_factor for predictor in range(self.n_predictors)]
+                norm_avg_err = [np.mean([np.abs(preds_experts[i-sa, sa, predictor]-last_obs) for sa in range(self.n_sa)]) for predictor in range(self.n_predictors)]
+                norm_avg_err = np.array(norm_avg_err) / np.mean(norm_avg_err)
                 coeffs_t = np.exp(-np.array(norm_avg_err)) / np.exp(-np.array(norm_avg_err)).sum()
             else:
                 coeffs_t = x

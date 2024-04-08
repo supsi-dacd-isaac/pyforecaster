@@ -10,12 +10,13 @@ from pyforecaster.trainer import hyperpar_optimizer, retrieve_cv_results, base_s
 from pyforecaster.metrics import make_scorer, nmae, rmse, crps
 from lightgbm import LGBMRegressor, Dataset, train
 from pyforecaster.forecaster import LinearForecaster
-
+from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti, tune_hyperpars, Fourier_es, FK, FK_multi
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
-        self.t = 100
+        self.t = 500
+        period = 50
         self.n = 10
-        self.x = pd.DataFrame(np.sin(np.arange(self.t)*10*np.pi/self.t).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
+        self.x = pd.DataFrame(np.sin(np.arange(self.t)*period*np.pi/self.t).reshape(-1,1) * np.random.randn(1, self.n), index=pd.date_range('01-01-2020', '01-05-2020', self.t))
         self.y = self.x  @ np.random.randn(self.n, 5)
         self.y.iloc[10, :] =0
         self.logger =logging.getLogger()
@@ -102,6 +103,17 @@ class TestFormatDataset(unittest.TestCase):
 
         cross_validate(self.x, self.y, model, cv_folds=(f for f in cv_idxs), scoring={'nmae': make_scorer(nmae), 'rmse': make_scorer(rmse), 'crps': make_scorer(crps)}, cv_type='full', trial=None,
                        storage_fun=None)
+
+
+    def test_hw_trainer(self):
+
+        model = HoltWinters
+        hyperpars = {'gamma_1':[0, 1], 'gamma_2':[0, 1], 'alpha':[0, 1]}
+        model_init_kwargs = {'periods':[20, 80], "target_name":0, "n_sa":20}
+        best_model = tune_hyperpars(self.x, model, hyperpars=hyperpars, n_trials=100, **model_init_kwargs, targets_names=[0, 1])
+        y_hat = best_model.predict(self.x)
+        from pyforecaster.plot_utils import ts_animation
+        ts_animation([y_hat], names=['y_hat', 'target'], target=self.x[0].iloc[1:])
 
 
 if __name__ == '__main__':

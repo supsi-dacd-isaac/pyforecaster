@@ -65,6 +65,7 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):
         print('warning: alphas not specified, assuming linear spacing from 0 to 1')
     alphas = np.linspace(0, 1, n_quantiles) if alphas is None else alphas
     qscore_alpha, reliability_alpha = {}, {}
+    axis = chose_axis(t, agg_index)
     for a, alpha in enumerate(alphas):
         if quantile_axis == 1:
             err_alpha = q_hat[:, a, :] - t.values
@@ -72,10 +73,16 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):
             err_alpha = q_hat[:, :, a] - t.values
         I = (err_alpha > 0).astype(int)
         qs_a = (I - alpha) * err_alpha
-        qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
+
+        if axis == 0:
+            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).groupby(agg_index).mean()
+            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index).mean()
+
+        else:
+            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).T.groupby(agg_index).mean()
+            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).T.groupby(agg_index).mean()
 
         qscore_alpha[alpha] = qs_a
-        reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index, axis=chose_axis(t, agg_index)).mean()
 
     qscore = pd.concat(qscore_alpha, axis=1, names=['alpha'])
     reliability = pd.concat(reliability_alpha, axis=1, names=['alpha'])
@@ -88,7 +95,7 @@ def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True, **k
 
     # collapse quantile axis
     if collapse_quantile_axis:
-        qscore = qscore.groupby(axis=1, level=1).mean()
+        qscore = qscore.T.groupby(level=1).mean()
 
     return qscore
 
@@ -106,8 +113,12 @@ def reliability(q_hat, t, alphas=None, agg_index=None, get_score=False, **kwargs
 
 
 def make_scorer(metric):
+    if '__name__' in  dir(metric):
+        name = metric.__name__
+    elif 'func' in  dir(metric):
+        name = metric.func.__name__
     def scorer(estimator, X, y):
-        if metric in [crps, reliability]:
+        if name  in ["crps", "reliability"]:
             y_hat = estimator.predict_quantiles(X)
         else:
             y_hat = estimator.predict(X)
