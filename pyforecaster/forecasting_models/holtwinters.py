@@ -84,12 +84,12 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, targets_names=None, 
         alphas = np.array([m.alpha for m in fitted_model.models])
         gammas_1 = ([m.gamma_1 for m in fitted_model.models])
         gammas_2 = ([m.gamma_2 for m in fitted_model.models])
-        best_pars = {'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2}
+        best_pars = {'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2, 'optimize_submodels_hyperpars':False}
     elif model_class in [FK_multi]:
         alphas = np.array([m.alpha for m in fitted_model.models])
         omegas = ([m.omega for m in fitted_model.models])
         n_harmonics = ([m.n_harmonics for m in fitted_model.models])
-        best_pars = {'alphas': alphas, 'omegas': omegas, 'n_harmonics': n_harmonics}
+        best_pars = {'alphas': alphas, 'omegas': omegas, 'n_harmonics': n_harmonics, 'optimize_submodels_hyperpars':False}
     else:
         best_idx = np.argmin(scores)
         best_pars = pars_cartridge[best_idx]
@@ -371,7 +371,7 @@ def constrainify(x, constraints):
 
 class HoltWintersMulti(ScenarioGenerator):
     def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800,
-                 optimize_hyperpars = True, n_sa=1, constraints=None,
+                 optimize_hyperpars = True, optimize_submodels_hyperpars=True, n_sa=1, constraints=None,
                  models_periods=None, verbose=True, alphas=None, gammas_1=None, gammas_2=None, **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
@@ -384,10 +384,11 @@ class HoltWintersMulti(ScenarioGenerator):
         self.init_pars = {'periods': periods, 'target_name': target_name, 'q_vect': q_vect, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                             'optimization_budget': optimization_budget, 'n_sa': n_sa, 'constraints': constraints, 'optimize_hyperpars': optimize_hyperpars,
                           'verbose':verbose, 'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2,
-                          'models_periods': models_periods}
+                          'models_periods': models_periods, 'optimize_submodels_hyperpars':optimize_submodels_hyperpars}
         self.targets_names = [target_name] if targets_names is None else targets_names
         self.periods = periods
         self.optimization_budget = optimization_budget
+        self.optimize_submodels_hyperpars = optimize_submodels_hyperpars
         self.n_sa = n_sa
         self.models_periods = models_periods if models_periods is not None else np.arange(1, 1+n_sa)
         self.alphas = np.ones(len(self.models_periods)) * 0.01 if alphas is None else alphas
@@ -395,11 +396,15 @@ class HoltWintersMulti(ScenarioGenerator):
         self.gammas_2 = np.ones(len(self.models_periods)) * 0.01 if gammas_2 is None else gammas_2
         self.optimize_hyperpars = optimize_hyperpars
         self.target_name = target_name
+        self.models = None
+        self.reinit_pars()
+
+    def reinit_pars(self):
         models = []
         for i, n in enumerate(self.models_periods):
-            models.append(HoltWinters(periods=periods, q_vect=q_vect,
-                             n_sa=n, target_name=target_name, optimization_budget=optimization_budget,
-                                      targets_names=self.targets_names, verbose=False, optimize_hyperpars=True,
+            models.append(HoltWinters(periods=self.periods, q_vect=self.q_vect,
+                             n_sa=n, target_name=self.target_name, optimization_budget=self.optimization_budget,
+                                      targets_names=self.targets_names, verbose=False, optimize_hyperpars=self.optimize_submodels_hyperpars,
                                       alpha=self.alphas[i], gamma_1=self.gammas_1[i], gamma_2=self.gammas_2[i]))
 
         self.models = models
@@ -408,6 +413,7 @@ class HoltWintersMulti(ScenarioGenerator):
         if self.optimize_hyperpars:
             pars_opt = tune_hyperpars(x_pd, HoltWintersMulti, hyperpars={'fake':[0, 1]}, n_trials=1, targets_names=self.targets_names, return_model=False, parallel=False, **self.init_pars)
             self.set_params(**pars_opt)
+            self.reinit_pars()
 
         err_distr = np.zeros((self.n_sa, len(self.q_vect)))
         k = 0
@@ -776,8 +782,10 @@ class FK_multi(ScenarioGenerator):
         Multistep ahead forecasting with multiple Fourier-Kalman regressors
     """
 
-    def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alphas=None, m=24, omegas=None, ns_harmonics=None, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
-                 base_predictor=Fourier_es, optimize_hyperpars=False, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alphas=None, m=24, omegas=None,
+                 ns_harmonics=None, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
+                 base_predictor=Fourier_es, optimize_hyperpars=False, optimize_submodels_hyperpars=True,
+                 optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h: this is the numebr of steps ahead to be predicted.
@@ -791,11 +799,12 @@ class FK_multi(ScenarioGenerator):
         self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'n_predictors': n_predictors, 'alpha': alphas, 'm': m, 'omega': omegas,
                             'ns_harmonics': ns_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                             'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
-                            'optimization_budget': optimization_budget, 'r': r, 'q': q}
+                            'optimization_budget': optimization_budget, 'r': r, 'q': q,'optimize_submodels_hyperpars':optimize_submodels_hyperpars}
         self.init_pars.update(scengen_kwgs)
         self.verbose=verbose
         self.optimize_hyperpars = optimize_hyperpars
         self.optimization_budget = optimization_budget
+        self.optimize_submodels_hyperpars = optimize_submodels_hyperpars
 
         self.periodicity = periodicity if periodicity is not None else n_sa
         assert self.periodicity < m, 'Periodicity must be smaller than history m'
@@ -838,7 +847,7 @@ class FK_multi(ScenarioGenerator):
         self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alphas[i], omega=self.omegas[i], n_harmonics=self.ns_harmonics[i], m=ms[i],
                                       target_name=self.target_name, periodicity=self.periodicity,
                                       targets_names=self.targets_names,
-                                      optimization_budget=self.optimization_budget, verbose=False, optimize_hyperpars=True) for i in
+                                      optimization_budget=self.optimization_budget, verbose=False, optimize_hyperpars=self.optimize_submodels_hyperpars) for i in
                   range(self.n_predictors)]
         self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
 
