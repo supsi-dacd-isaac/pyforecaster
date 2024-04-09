@@ -19,8 +19,7 @@ def hankel(x, n, generate_me=None):
         h.append(x[w + g].reshape(-1, 1))
     return np.hstack(h)
 
-def fit_sample(p, hyperpars,model_class, model_init_kwargs, x, targets_names=None):
-    pars_dict = {k: v for k, v in zip(hyperpars.keys(), p)}
+def fit_sample(pars_dict,model_class, model_init_kwargs, x, targets_names=None, return_model=False):
     model_init_kwargs.update(pars_dict)
     model = model_class(**model_init_kwargs)
     if targets_names is not None:
@@ -34,7 +33,10 @@ def fit_sample(p, hyperpars,model_class, model_init_kwargs, x, targets_names=Non
         score = np.mean(subscores)
     else:
         score = score_autoregressive(model, x)
-    return score
+    if return_model:
+        return model
+    else:
+        return score
 
 def tune_hyperpars(x, model_class, hyperpars, n_trials=100, targets_names=None, verbose=True, return_model=True, parallel=True, **model_init_kwargs):
     """
@@ -48,33 +50,49 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, targets_names=None, 
     :return:
     """
 
-    par_minima = np.array([v[0] for v in hyperpars.values()])
-    par_maxima = np.array([v[1] for v in hyperpars.values()])
-    n_pars = len(par_minima)
-    pars_cartridge = np.random.rand(n_trials, n_pars) * (par_maxima-par_minima) + par_minima
+    pars_cartridge = []
+    for i in range(n_trials):
+        trial = {}
+        for k,v in hyperpars.items():
+            v = np.array(v)
+            if len(v.shape)<2:
+                sample = np.random.rand() * (v[1] - v[0]) + v[0]
+            else:
+                sample = np.random.rand(v.shape[0]) * (v[:, 1] - v[:, 0]) + v[:, 0]
+            trial[k] = sample
+        pars_cartridge.append(trial)
+
     model_init_kwargs.update({'optimize_hyperpars':False})
     model_init_kwargs_0 = deepcopy(model_init_kwargs)
 
 
-    if parallel:
+    if len(pars_cartridge)>1:
         from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor() as executor:
-            scores = list(tqdm(executor.map(partial(fit_sample, hyperpars=hyperpars, model_class=model_class,
+        from multiprocessing import cpu_count
+        with ProcessPoolExecutor(max_workers=np.minimum(cpu_count(), 10)) as executor:
+            scores = list(tqdm(executor.map(partial(fit_sample, model_class=model_class,
                                                model_init_kwargs=model_init_kwargs, x=x, targets_names=targets_names),
                                        pars_cartridge), total=n_trials, desc='Tuning hyperpars for {}'.format(model_class.__name__)))
-
+        if verbose:
+            plt.figure()
+            t = np.linspace(0.01, 0.99, 30)
+            plt.plot(np.quantile(scores, t), t)
     else:
-        generator = tqdm(pars_cartridge) if verbose else pars_cartridge
-        scores = []
-        for i, p in enumerate(generator):
-            scores.append(fit_sample(p, hyperpars, model_class, model_init_kwargs, x, targets_names=targets_names))
-    if verbose:
-        plt.figure()
-        t = np.linspace(0.01, 0.99, 30)
-        plt.plot(np.quantile(scores, t), t)
+        fitted_model = fit_sample(pars_cartridge[0], model_class, model_init_kwargs, x, targets_names=targets_names, return_model=True)
 
-    best_idx = np.argmin(scores)
-    best_pars = {k:p for k, p in zip(hyperpars.keys(), pars_cartridge[best_idx, :])}
+    if model_class in [HoltWintersMulti]:
+        alphas = np.array([m.alpha for m in fitted_model.models])
+        gammas_1 = ([m.gamma_1 for m in fitted_model.models])
+        gammas_2 = ([m.gamma_2 for m in fitted_model.models])
+        best_pars = {'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2}
+    elif model_class in [FK_multi]:
+        alphas = np.array([m.alpha for m in fitted_model.models])
+        omegas = ([m.omega for m in fitted_model.models])
+        n_harmonics = ([m.n_harmonics for m in fitted_model.models])
+        best_pars = {'alphas': alphas, 'omegas': omegas, 'n_harmonics': n_harmonics}
+    else:
+        best_idx = np.argmin(scores)
+        best_pars = pars_cartridge[best_idx]
 
     model_init_kwargs.update(best_pars)
     model = model_class(**model_init_kwargs)
@@ -352,8 +370,9 @@ def constrainify(x, constraints):
 
 
 class HoltWintersMulti(ScenarioGenerator):
-    def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800, n_sa=1, constraints=None,
-                 models_periods=None, verbose=True, **scengen_kwgs):
+    def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800,
+                 optimize_hyperpars = True, n_sa=1, constraints=None,
+                 models_periods=None, verbose=True, alphas=None, gammas_1=None, gammas_2=None, **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
         :param optimization_budget: number of test point to optimize the parameters
@@ -362,21 +381,34 @@ class HoltWintersMulti(ScenarioGenerator):
         """
 
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+        self.init_pars = {'periods': periods, 'target_name': target_name, 'q_vect': q_vect, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+                            'optimization_budget': optimization_budget, 'n_sa': n_sa, 'constraints': constraints, 'optimize_hyperpars': optimize_hyperpars,
+                          'verbose':verbose, 'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2,
+                          'models_periods': models_periods}
         self.targets_names = [target_name] if targets_names is None else targets_names
         self.periods = periods
         self.optimization_budget = optimization_budget
         self.n_sa = n_sa
         self.models_periods = models_periods if models_periods is not None else np.arange(1, 1+n_sa)
+        self.alphas = np.ones(len(self.models_periods)) * 0.01 if alphas is None else alphas
+        self.gammas_1 = np.ones(len(self.models_periods)) * 0.01 if gammas_1 is None else gammas_1
+        self.gammas_2 = np.ones(len(self.models_periods)) * 0.01 if gammas_2 is None else gammas_2
+        self.optimize_hyperpars = optimize_hyperpars
         self.target_name = target_name
         models = []
-        for n in self.models_periods:
+        for i, n in enumerate(self.models_periods):
             models.append(HoltWinters(periods=periods, q_vect=q_vect,
                              n_sa=n, target_name=target_name, optimization_budget=optimization_budget,
-                                      targets_names=self.targets_names, verbose=False))
+                                      targets_names=self.targets_names, verbose=False, optimize_hyperpars=True,
+                                      alpha=self.alphas[i], gamma_1=self.gammas_1[i], gamma_2=self.gammas_2[i]))
 
         self.models = models
 
     def fit(self, x_pd, y_pd=None):
+        if self.optimize_hyperpars:
+            pars_opt = tune_hyperpars(x_pd, HoltWintersMulti, hyperpars={'fake':[0, 1]}, n_trials=1, targets_names=self.targets_names, return_model=False, parallel=False, **self.init_pars)
+            self.set_params(**pars_opt)
+
         err_distr = np.zeros((self.n_sa, len(self.q_vect)))
         k = 0
         for i,m in enumerate(self.models):
@@ -603,7 +635,7 @@ class FK(ScenarioGenerator):
 
 
     def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
-                 optimize_hyperpars=True,optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
+                 optimize_hyperpars=True, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h:
@@ -744,8 +776,8 @@ class FK_multi(ScenarioGenerator):
         Multistep ahead forecasting with multiple Fourier-Kalman regressors
     """
 
-    def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
-                 base_predictor=Fourier_es, optimize_hyperpars=True, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alphas=None, m=24, omegas=None, ns_harmonics=None, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
+                 base_predictor=Fourier_es, optimize_hyperpars=False, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h: this is the numebr of steps ahead to be predicted.
@@ -756,8 +788,8 @@ class FK_multi(ScenarioGenerator):
         n_predictors = int(n_predictors)
         self.base_predictor = base_predictor
         self.targets_names = targets_names
-        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'n_predictors': n_predictors, 'alpha': alpha, 'm': m, 'omega': omega,
-                            'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
+        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'n_predictors': n_predictors, 'alpha': alphas, 'm': m, 'omega': omegas,
+                            'ns_harmonics': ns_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                             'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
                             'optimization_budget': optimization_budget, 'r': r, 'q': q}
         self.init_pars.update(scengen_kwgs)
@@ -769,12 +801,12 @@ class FK_multi(ScenarioGenerator):
         assert self.periodicity < m, 'Periodicity must be smaller than history m'
         if self.periodicity < n_sa:
             print('WARNING: periodicity is smaller than n_sa, this may lead to suboptimal results.')
-        self.alpha = alpha
-        self.omega = omega
+        self.alphas = np.ones(n_predictors) * 0.01 if alphas is None else alphas
+        self.omegas = np.ones(n_predictors) * 0.01 if alphas is None else alphas
         self.n_sa = n_sa
         self.m = m
         self.target_name = target_name
-        self.n_harmonics = n_harmonics
+        self.ns_harmonics = (np.ones(n_predictors) * 10).astype(int) if ns_harmonics is None else ns_harmonics
         self.n_predictors = n_predictors
         self.r = r
         self.q = q
@@ -784,7 +816,6 @@ class FK_multi(ScenarioGenerator):
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
-        self.n_harmonics = int(np.minimum(self.n_harmonics, self.m // 2))
         ms = np.linspace(1, self.m, self.n_predictors + 1).astype(int)[1:]
         ms = np.maximum(ms, self.n_sa)
 
@@ -804,18 +835,17 @@ class FK_multi(ScenarioGenerator):
         self.R = np.eye(self.n_predictors) * self.r
         self.Q = np.eye(self.n_predictors) * self.q
 
-        self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alpha, omega=self.omega, n_harmonics=self.n_harmonics, m=ms[i],
+        self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alphas[i], omega=self.omegas[i], n_harmonics=self.ns_harmonics[i], m=ms[i],
                                       target_name=self.target_name, periodicity=self.periodicity,
                                       targets_names=self.targets_names,
-                                      optimization_budget=self.optimization_budget, verbose=False) for i in
+                                      optimization_budget=self.optimization_budget, verbose=False, optimize_hyperpars=True) for i in
                   range(self.n_predictors)]
         self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
 
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
-            pars_opt = tune_hyperpars(x_pd, FK_multi, hyperpars={'n_predictors':[2, 6],
-                                                                   'r':[0.001, 0.8], 'q':[0.001, 0.8]},
-                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
+            pars_opt = tune_hyperpars(x_pd, FK_multi, hyperpars={'fake':[0, 1]},
+                            n_trials=1, targets_names=self.targets_names, return_model=False, parallel=False,
                                       **self.init_pars)
             self.set_params(**pars_opt)
             self.reinit_pars()
