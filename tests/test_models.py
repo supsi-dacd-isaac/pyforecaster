@@ -100,11 +100,11 @@ class TestFormatDataset(unittest.TestCase):
         self.data = self.data.resample('1h').mean()
         df_tr, df_te = self.data.iloc[:1200], self.data.iloc[1200:1500]
         steps_day = 24
-        fks_multi = FK_multi(n_predictors=6, n_sa=steps_day, m=steps_day*7,
+        fks_multi = FK_multi(n_predictors=2, n_sa=steps_day, m=steps_day*7,
                              target_name='all', periodicity=steps_day*2,
-                             optimize_hyperpars=True, optimization_budget=2, targets_names=['all']).fit(df_tr, df_tr['all'])
+                             optimize_hyperpars=True, optimization_budget=2, targets_names=df_tr.columns[:2]).fit(df_tr)
         hw_multi = HoltWintersMulti(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=100, q_vect=np.arange(11) / 10,
-                         target_name='all', models_periods=np.array([1,2,steps_day])).fit(df_tr, df_tr['all'])
+                         target_name='all', models_periods=np.array([1,2,steps_day]), targets_names=df_tr.columns[:6]).fit(df_tr)
 
 
         fks = FK(n_sa=steps_day, m=steps_day, target_name='all',
