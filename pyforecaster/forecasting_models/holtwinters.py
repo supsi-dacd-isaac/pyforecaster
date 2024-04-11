@@ -89,8 +89,8 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return
     elif model_class in [FK_multi]:
         alphas = np.array([m.alpha for m in fitted_model.models])
         omegas = ([m.omega for m in fitted_model.models])
-        n_harmonics = ([m.n_harmonics for m in fitted_model.models])
-        best_pars = {'alphas': alphas, 'omegas': omegas, 'n_harmonics': n_harmonics, 'optimize_submodels_hyperpars':False}
+        ns_harmonics = ([m.n_harmonics for m in fitted_model.models])
+        best_pars = {'alphas': alphas, 'omegas': omegas, 'ns_harmonics': ns_harmonics, 'optimize_submodels_hyperpars':False}
     else:
         best_idx = np.argmin(scores)
         best_pars = pars_cartridge[best_idx]
@@ -898,7 +898,7 @@ class FK_multi(ScenarioGenerator):
         #             names=[str(i) for i in range(self.n_predictors)], target=x_pd['all'].values, frames=1000,
         #             interval=0.1, step=3)
 
-        for i, idx in enumerate(tqdm(x_pd.index)):
+        for i, idx in enumerate(x_pd.index):
             if i >= self.n_sa:
                 # average last point error over different prediction times for all the models
                 last_obs = x_pd[self.target_name].iloc[i]
