@@ -480,7 +480,7 @@ class Fourier_es(ScenarioGenerator):
         assert 0<alpha<1, 'alpha must be in (0, 1)'
         assert 0<omega<1, 'omega must be in (0, 1)'
         assert n_harmonics>0, 'n_harmonics must be positive'
-        n_harmonics = int(np.minimum(n_harmonics, m // 2))
+
         self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'alpha': alpha, 'm': m, 'omega': omega,
                           'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                           'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
@@ -499,6 +499,7 @@ class Fourier_es(ScenarioGenerator):
         self.n_sa=n_sa
         self.m = m
         self.n_harmonics = n_harmonics
+        self.n_harmonics_int = int(np.minimum(n_harmonics, m // 2))
         self.coeffs = None
         self.eps = None
         self.last_1sa_preds = 0
@@ -511,7 +512,7 @@ class Fourier_es(ScenarioGenerator):
 
     def store_basis(self):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
-        self.P_future = get_basis(t_f, self.m, self.n_harmonics)
+        self.P_future = get_basis(t_f, self.m, self.n_harmonics_int)
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
             pars_opt = tune_hyperpars(x_pd, Fourier_es, hyperpars={'alpha':[0, 1], 'omega':[0, 1], 'n_harmonics':[1, self.m//2]},
@@ -542,7 +543,7 @@ class Fourier_es(ScenarioGenerator):
 
     def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
         if self.coeffs is None:
-            coeffs = np.zeros(2 * self.n_harmonics + 1)
+            coeffs = np.zeros(2 * self.n_harmonics_int + 1)
             coeffs[0] = y[0]*np.sqrt(self.m)
             eps = 0
             preds = [[0]]
@@ -691,23 +692,23 @@ class FK(ScenarioGenerator):
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
-        self.n_harmonics = int(np.minimum(self.n_harmonics, self.m // 2))
+        self.n_harmonics_int = int(np.minimum(self.n_harmonics, self.m // 2))
         # precompute basis over all possible periods
-        self.x = np.zeros(2 * self.n_harmonics + 1)
+        self.x = np.zeros(2 * self.n_harmonics_int + 1)
 
-        self.F = np.eye(self.n_harmonics * 2 + 1)
+        self.F = np.eye(self.n_harmonics_int * 2 + 1)
 
-        self.H = np.eye(self.n_harmonics * 2 + 1)
-        self.P = np.eye(self.n_harmonics * 2 + 1) * 1000
+        self.H = np.eye(self.n_harmonics_int * 2 + 1)
+        self.P = np.eye(self.n_harmonics_int * 2 + 1) * 1000
 
-        self.R = np.eye(self.n_harmonics * 2 + 1) * self.r
-        self.Q = np.eye(self.n_harmonics * 2 + 1) * self.q
+        self.R = np.eye(self.n_harmonics_int * 2 + 1) * self.r
+        self.Q = np.eye(self.n_harmonics_int * 2 + 1) * self.q
         self.P_future = None
         self.store_basis()
 
     def store_basis(self):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
-        self.P_future = get_basis(t_f, self.m, self.n_harmonics)
+        self.P_future = get_basis(t_f, self.m, self.n_harmonics_int)
 
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
@@ -748,12 +749,12 @@ class FK(ScenarioGenerator):
             preds = [[y[start_from]+eps]]
 
         if len(self.coeffs_t_history)>0:
-            coeffs_t_history = np.vstack([self.coeffs_t_history, np.zeros((len(y) - start_from, self.n_harmonics * 2 + 1))])
+            coeffs_t_history = np.vstack([self.coeffs_t_history, np.zeros((len(y) - start_from, self.n_harmonics_int * 2 + 1))])
         else:
-            coeffs_t_history = np.zeros((len(y) - start_from, self.n_harmonics * 2 + 1))
+            coeffs_t_history = np.zeros((len(y) - start_from, self.n_harmonics_int * 2 + 1))
         w_init = np.copy(self.w)
         preds_updated, last_1sa_preds, eps, x, P, Q, R, coeffs_t_history, w = update_predictions(coeffs_t_history.T, start_from, y, self.P_future, self.periodicity, self.n_sa, self.m, self.omega, self.last_1sa_preds, eps, self.x, self.P, self.F, self.Q, self.H, self.R,
-                           self.n_harmonics, w_init)
+                           self.n_harmonics_int, w_init)
         if fit:
             self.last_1sa_preds = last_1sa_preds
             self.eps = eps
