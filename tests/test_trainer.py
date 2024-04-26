@@ -10,7 +10,9 @@ from pyforecaster.trainer import hyperpar_optimizer, retrieve_cv_results, base_s
 from pyforecaster.metrics import make_scorer, nmae, rmse, crps
 from lightgbm import LGBMRegressor, Dataset, train
 from pyforecaster.forecaster import LinearForecaster
-from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti, tune_hyperpars, Fourier_es, FK, FK_multi
+from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti, tune_hyperpars
+from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
+
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 500

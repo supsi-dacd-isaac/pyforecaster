@@ -7,8 +7,8 @@ from tqdm import tqdm
 from pyforecaster.utilities import kalman_update, kalman_predict, kalman
 from numba import njit
 from numba.typed import List
-from pyforecaster.forecasting_models.holtwinters import Fourier_es as FES
-from pyforecaster.forecasting_models.holtwinters import FK_multi, FK
+from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es as FES
+from pyforecaster.forecasting_models.fast_adaptive_models import FK_multi, FK
 
 data = pd.read_pickle('tests/data/test_data.zip')['y'][['all']]
 data /= data.std()
