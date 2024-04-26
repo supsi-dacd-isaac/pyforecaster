@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
-from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti, FK, FK_multi, Fourier_es
+from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
+from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
 from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
@@ -100,6 +101,7 @@ class TestFormatDataset(unittest.TestCase):
         self.data = self.data.resample('1h').mean()
         df_tr, df_te = self.data.iloc[:1200], self.data.iloc[1200:1500]
         steps_day = 24
+        fes = Fourier_es(n_sa=steps_day, m=steps_day*7, target_name='all', optimization_budget=20).fit(df_tr, df_tr['all'])
         fks_multi = FK_multi(n_predictors=4, n_sa=steps_day, m=steps_day*7,
                              target_name='all', periodicity=steps_day*2,
                              optimize_hyperpars=True, optimization_budget=3, targets_names=df_tr.columns[:2]).fit(df_tr)
@@ -110,7 +112,7 @@ class TestFormatDataset(unittest.TestCase):
         fks = FK(n_sa=steps_day, m=steps_day, target_name='all',
                  optimization_budget=2).fit(df_tr, df_tr['all'])
 
-        fes = Fourier_es(n_sa=steps_day, m=steps_day*7, target_name='all', optimization_budget=2).fit(df_tr, df_tr['all'])
+
 
         hw = HoltWinters(periods=[steps_day, steps_day * 7], n_sa=steps_day, optimization_budget=2, q_vect=np.arange(11) / 10,
                          target_name='all').fit(df_tr, df_tr['all'])
