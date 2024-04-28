@@ -164,7 +164,7 @@ def hist_2d(data, value, x, y, plot=True, qs=None, **basic_setup_kwargs):
 def ts_animation(ys:list,  ts=None, names=None, frames=150, interval=1, step=1, repeat=False, target=None):
     "plot the first n_rows of the two y_te and y_hat matrices"
     ts = [np.arange(len(ys[0][0]))]*len(ys) if ts is None else ts
-    fig, ax = plt.subplots(1)
+    fig, ax = plt.subplots(1, figsize=(6, 4))
     lines = []
     f_min = np.min([np.min(y) for y in ys])
     f_max = np.max([np.max(y) for y in ys])
@@ -177,7 +177,7 @@ def ts_animation(ys:list,  ts=None, names=None, frames=150, interval=1, step=1, 
             l, = ax.plot(ts[0], target[:len(ts[0])], alpha=0.8, linewidth=1)
             lines.append(l)
         ax.set_ylim(f_min - np.abs(f_min) * 0.1, f_max + np.abs(f_max) * 0.1)
-        plt.legend(names)
+        plt.legend(names, loc='upper left')
         return lines
 
     def animate(i):

@@ -3,6 +3,7 @@ import pandas as pd
 from pyforecaster.forecaster import ScenarioGenerator
 from pyforecaster.utilities import kalman
 from pyforecaster.forecasting_models.holtwinters import tune_hyperpars, hankel
+from copy import deepcopy
 
 def get_basis(t, l, n_h, frequencies=None):
   """
@@ -13,6 +14,25 @@ def get_basis(t, l, n_h, frequencies=None):
   trigonometric = np.vstack([np.vstack([np.sin(2*np.pi*k*t/l), np.cos(2*np.pi*k*t/l)]) for k in frequencies])
   P = np.vstack([np.ones(len(t))/np.sqrt(2), trigonometric]).T * np.sqrt(2 / l)
   return P
+
+def generate_recent_history(y, w, start, i):
+    """
+    :param y: target array during training / testing
+    :param w: window containing most recent history
+    :param start: int, if there was an offset in the start if y
+    :param i: current step w.r.t. step zero
+    :return:
+    """
+    w = np.copy(w)
+    m = len(w)  # lookback steps
+    # deal with the prediction case: no y, we use stored window values
+    y_w = y[start:i + 1]
+    if len(y_w) == m:
+        w = y_w
+    else:
+        w = np.roll(w, -len(y_w))
+        w[-len(y_w):] = y_w
+    return w
 
 class Fourier_es(ScenarioGenerator):
 
@@ -50,17 +70,19 @@ class Fourier_es(ScenarioGenerator):
         self.m = m
         self.n_harmonics = n_harmonics
         self.n_harmonics_int = int(np.minimum(n_harmonics, m // 2))
-        self.coeffs = None
-        self.eps = None
-        self.last_1sa_preds = 0
-        self.w = np.zeros(m)
-        self.P_past = None
         self.P_future = None
-        self.reinint_pars()
         self.diagnostic_plots = diagnostic_plots
+
+        self.states = {'x': None, 'w':np.zeros(m), 'eps':0, 'last_1sa_preds':0}
+        self.reinit_pars()
+
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
-    def reinint_pars(self):
+    def reinit_pars(self):
+        self.states['x'] = None
+        self.states['w'] = np.zeros(self.m)
+        self.states['eps'] = 0
+        self.states['last_1sa_preds'] = 0
         self.store_basis()
 
     def store_basis(self):
@@ -74,7 +96,7 @@ class Fourier_es(ScenarioGenerator):
                             n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
                                       **self.init_pars)
             self.set_params(**pars_opt)
-            self.reinint_pars()
+            self.reinit_pars()
 
         y_present = x_pd[self.target_name].values
         x = x_pd.values
@@ -97,50 +119,44 @@ class Fourier_es(ScenarioGenerator):
 
 
     def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
-        if self.coeffs is None:
-            coeffs = np.zeros(2 * self.n_harmonics_int + 1)
-            coeffs[0] = y[0]*np.sqrt(self.m)
-            eps = 0
+        states = deepcopy(self.states)
+        x = states['x']
+        eps = states['eps']
+        last_1sa_preds = states['last_1sa_preds']
+        w_init = states['w']
+
+        if x is None:
+            x = np.zeros(2 * self.n_harmonics_int + 1)
+            x[0] = y[0]*np.sqrt(self.m)
             preds = [[0]]
         else:
-            eps = self.eps
-            coeffs = self.coeffs
             preds = [[y[start_from]+eps]]
 
         coeffs_t_history = []
-        last_1sa_preds = np.copy(self.last_1sa_preds)
-        w = np.copy(self.w)
+        last_1sa_preds = np.copy(last_1sa_preds)
+
         for i in range(start_from, len(y)):
             P_past = self.P_future[i % self.m:(i % self.m + self.m), :]
             # this is copy-pasting the Fourier smoothing in the last periodicity
             P_f = self.P_future[i % self.m + self.m - self.periodicity:i % self.m + self.m -self.periodicity + self.n_sa, :]
             start = np.maximum(0, i-self.m+1)
 
-            # deal with the prediction case: no y, we use stored window values
-            y_w = y[start:i+1]
-            if len(y_w)==self.m:
-                w = y_w
-            else:
-                w = np.roll(np.copy(self.w), -len(y_w))
-                w[-len(y_w):] = y_w
+            w = generate_recent_history(y, w_init, start, i)
 
             #eps = self.omega * (w[-1] - preds[-1][0]) + (1-self.omega) * eps
             eps_obs = w[-1] - last_1sa_preds
             eps = self.omega * eps_obs + (1-self.omega) * eps
             coeffs_t = P_past[-len(w):,:].T@w
-            coeffs = self.alpha*coeffs_t + (1-self.alpha)*coeffs
-            last_preds = (P_f@coeffs).ravel()
+            x = self.alpha*coeffs_t + (1-self.alpha)*x
+            last_preds = (P_f@x).ravel()
             last_1sa_preds = last_preds[0]
             preds.append((last_preds + eps*(self.n_sa-np.arange(self.n_sa))**2/self.n_sa**2).ravel() )
             if return_coeffs:
-                coeffs_t_history.append(coeffs)
+                coeffs_t_history.append(x)
 
         # only store states if we are fitting
         if fit:
-            self.coeffs = coeffs
-            self.eps = eps
-            self.last_1sa_preds = last_1sa_preds
-            self.w = w
+            self.__setstate__({'x': x, 'w': w, 'eps': eps, 'last_1sa_preds': last_1sa_preds})
 
         if return_coeffs:
             return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
@@ -151,9 +167,10 @@ class Fourier_es(ScenarioGenerator):
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
     def __getstate__(self):
-        return (self.coeffs, self.eps, self.last_1sa_preds, self.w)
-    def __setstate__(self, state):
-        self.coeffs, self.eps, self.last_1sa_preds, self.w = state
+        return self.states
+
+    def __setstate__(self, states):
+        self.states.update(states)
 
 
 
@@ -233,31 +250,35 @@ class FK(ScenarioGenerator):
         self.omega = omega
         self.n_sa=n_sa
         self.m = m
-
-        self.eps = None
-        self.last_1sa_preds = 0
-        self.w = np.zeros(m)
-
+        #self.eps = None
+        #self.last_1sa_preds = 0
+        #self.w = np.zeros(m)
         self.n_harmonics = n_harmonics
         self.r = r
         self.q = q
-
-        self.reinit_pars()
+        self.F = None
+        self.H = None
+        self.P_future = None
         self.coeffs_t_history = []
+
+        self.states = {'x': None, 'P': None, 'R': None, 'Q': None, 'w':np.zeros(m), 'eps':None, 'last_1sa_preds':0}
+        self.reinit_pars()
+
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
         self.n_harmonics_int = int(np.minimum(self.n_harmonics, self.m // 2))
         # precompute basis over all possible periods
-        self.x = np.zeros(2 * self.n_harmonics_int + 1)
-
         self.F = np.eye(self.n_harmonics_int * 2 + 1)
-
         self.H = np.eye(self.n_harmonics_int * 2 + 1)
-        self.P = np.eye(self.n_harmonics_int * 2 + 1) * 1000
 
-        self.R = np.eye(self.n_harmonics_int * 2 + 1) * self.r
-        self.Q = np.eye(self.n_harmonics_int * 2 + 1) * self.q
+        self.states['x'] = np.zeros(2 * self.n_harmonics_int + 1)
+        self.states['P'] = np.eye(self.n_harmonics_int * 2 + 1) * 1000
+        self.states['R'] = np.eye(self.n_harmonics_int * 2 + 1) * self.r
+        self.states['Q'] = np.eye(self.n_harmonics_int * 2 + 1) * self.q
+        self.states['w'] = np.zeros(self.m)
+        self.states['eps'] = None
+        self.states['last_1sa_preds'] = 0
         self.P_future = None
         self.store_basis()
 
@@ -296,28 +317,32 @@ class FK(ScenarioGenerator):
 
 
     def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
-        if self.eps is None:
+        states = deepcopy(self.states)
+        Q = states['Q']
+        R = states['R']
+        P = states['P']
+        x = states['x']
+        w = states['w']
+        eps = states['eps']
+        last_1sa_preds = states['last_1sa_preds']
+
+        if eps is None:
             eps = 0
             preds = [[0]]
         else:
-            eps = self.eps
             preds = [[y[start_from]+eps]]
 
         if len(self.coeffs_t_history)>0:
             coeffs_t_history = np.vstack([self.coeffs_t_history, np.zeros((len(y) - start_from, self.n_harmonics_int * 2 + 1))])
         else:
             coeffs_t_history = np.zeros((len(y) - start_from, self.n_harmonics_int * 2 + 1))
-        w_init = np.copy(self.w)
-        preds_updated, last_1sa_preds, eps, x, P, Q, R, coeffs_t_history, w = update_predictions(coeffs_t_history.T, start_from, y, self.P_future, self.periodicity, self.n_sa, self.m, self.omega, self.last_1sa_preds, eps, self.x, self.P, self.F, self.Q, self.H, self.R,
-                           self.n_harmonics_int, w_init)
+        (preds_updated, last_1sa_preds, eps,
+         x, P, Q, R, coeffs_t_history, w) = update_predictions(coeffs_t_history.T, start_from, y, self.P_future,
+                                                               self.periodicity, self.n_sa, self.m, self.omega,
+                                                               last_1sa_preds, eps, x, P, self.F, Q, self.H, R,
+                                                               self.n_harmonics_int, w)
         if fit:
-            self.last_1sa_preds = last_1sa_preds
-            self.eps = eps
-            self.x = x
-            self.P = P
-            self.Q = Q
-            self.R = R
-            self.w = w
+            self.__setstate__({'x': x, 'P': P, 'R': R, 'Q': Q, 'w': w, 'eps': eps, 'last_1sa_preds': last_1sa_preds})
 
         preds = preds + preds_updated
         self.coeffs_t_history = coeffs_t_history.T
@@ -331,9 +356,10 @@ class FK(ScenarioGenerator):
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
     def __getstate__(self):
-        return (self.eps,self.last_1sa_preds, self.x, self.P, self.R, self.w)
-    def __setstate__(self, state):
-        self.eps, self.last_1sa_preds, self.x, self.P, self.R, self.w = state
+        return self.states
+
+    def __setstate__(self, states):
+        self.states.update(states)
 
 
 class FK_multi(ScenarioGenerator):
@@ -379,8 +405,13 @@ class FK_multi(ScenarioGenerator):
         self.n_predictors = n_predictors
         self.r = r
         self.q = q
-        self.reinit_pars()
         self.coeffs_t_history = []
+        self.H = None
+        self.F = None
+        self.models = None
+
+        self.states = {'x':None, 'P':None, 'R':None, 'Q':None}
+        self.reinit_pars()
 
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
@@ -395,21 +426,20 @@ class FK_multi(ScenarioGenerator):
             ms = np.maximum(ms, self.periodicity)
 
         # precompute basis over all possible periods
-        self.x = np.ones(self.n_predictors) / self.n_predictors
-
         self.F = np.eye(self.n_predictors)
         self.H = np.eye(self.n_predictors)
-        self.P = np.eye(self.n_predictors) * 1000
 
-        self.R = np.eye(self.n_predictors) * self.r
-        self.Q = np.eye(self.n_predictors) * self.q
+        self.states['x'] = np.ones(self.n_predictors) / self.n_predictors
+        self.states['P'] = np.eye(self.n_predictors) * 1000
+        self.states['R'] = np.eye(self.n_predictors) * self.r
+        self.states['Q'] = np.eye(self.n_predictors) * self.q
 
         self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alphas[i], omega=self.omegas[i], n_harmonics=self.ns_harmonics[i], m=ms[i],
                                       target_name=self.target_name, periodicity=self.periodicity,
                                       targets_names=self.targets_names,
                                       optimization_budget=self.optimization_budget, verbose=False, optimize_hyperpars=self.optimize_submodels_hyperpars) for i in
                   range(self.n_predictors)]
-        self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+        #self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
 
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
@@ -437,10 +467,11 @@ class FK_multi(ScenarioGenerator):
     def run(self, x_pd, return_coeffs=True, fit=True):
         preds = [[0]]
         coeffs_t_history = []
-        Q = np.copy(self.Q)
-        R = np.copy(self.R)
-        P = np.copy(self.P)
-        x = np.copy(self.x)
+        states = deepcopy(self.states)
+        Q = states['Q']
+        R = states['R']
+        P = states['P']
+        x = states['x']
 
         # set stored states
         if fit:
@@ -486,12 +517,8 @@ class FK_multi(ScenarioGenerator):
 
         if fit:
             # if we were fitting, store states. Do nothing if we're predicting
-            self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
-            self.Q = Q
-            self.R = R
-            self.P = P
-            self.x = x
-
+            # self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+            self.__setstate__({'Q':Q, 'R':R, 'P':P, 'x':x})
         if return_coeffs:
             return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
         return np.vstack(preds[1:])
@@ -501,6 +528,7 @@ class FK_multi(ScenarioGenerator):
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
     def __getstate__(self):
-        return (self.coeffs, self.eps,self.last_1sa_preds)
-    def __setstate__(self, state):
-        self.coeffs, self.eps, self.last_1sa_preds = state
+        return self.states
+
+    def __setstate__(self, states):
+        self.states.update(states)
