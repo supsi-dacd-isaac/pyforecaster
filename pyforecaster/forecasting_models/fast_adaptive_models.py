@@ -4,6 +4,7 @@ from pyforecaster.forecaster import ScenarioGenerator
 from pyforecaster.utilities import kalman
 from pyforecaster.forecasting_models.holtwinters import tune_hyperpars, hankel
 from copy import deepcopy
+from abc import abstractmethod
 
 def get_basis(t, l, n_h, frequencies=None):
   """
@@ -34,11 +35,117 @@ def generate_recent_history(y, w, start, i):
         w[-len(y_w):] = y_w
     return w
 
-class Fourier_es(ScenarioGenerator):
 
-    def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3,
-                 val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None, optimize_hyperpars=True,
-                 optimization_budget=100,  diagnostic_plots=True, verbose=True, **scengen_kwgs):
+class StatefulForecaster(ScenarioGenerator):
+    """
+    Stateful Forecasters' predictions are a function of the past history seen by the model.
+    They are more general than ARIMA/state-space/exponential smoothing models, as they can be any model that can be
+    trained in a stateful way.
+    In particular, the model of this class are able to:
+    1) generate a past history vector, w, which is initially set to the first value observed when running the model, and
+       is then populated as the predictions are made.
+    2) train hyperparameters on multiple time series, by using the same hyperparameters for all time series, or by
+       training them individually.
+    """
+    def __init__(self, target_name='target', targets_names=None, n_sa=1, m=24, val_ratio=0.8, optimize_hyperpars=True,
+                 optimization_budget=100,  verbose=True, nodes_at_step=None,
+                 q_vect=None, **scengen_kwgs):
+        """
+        :param target_name:
+        :param targets_names:
+        :param n_sa:
+        :param alpha:
+        :param m:
+        :param omega:
+        :param n_harmonics:
+        :param val_ratio:
+        :param nodes_at_step:
+        :param q_vect:
+        :param periodicity:
+        :param optimize_hyperpars:
+        :param optimization_budget:
+        :param diagnostic_plots:
+        :param verbose:
+        :param scengen_kwgs:
+        """
+
+        assert m>0, 'm must be positive'
+        self.targets_names = [target_name] if targets_names is None else targets_names
+        self.init_pars = {'target_name': target_name, 'targets_names': self.targets_names, 'n_sa': n_sa, 'm': m,
+                          'val_ratio': val_ratio, 'optimize_hyperpars': optimize_hyperpars,
+                          'optimization_budget': optimization_budget, 'verbose': verbose,
+                          'nodes_at_step': nodes_at_step, 'q_vect': q_vect}
+        self.init_pars.update(scengen_kwgs)
+        self.optimize_hyperpars = optimize_hyperpars
+        self.optimization_budget = optimization_budget
+        self.target_name = target_name
+        self.m = m
+        self.n_sa = n_sa
+        self.val_ratio = val_ratio
+        self.verbose = verbose
+
+        self.states = {'w':None}
+        self.hyperpar_lims = {}
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+
+    @abstractmethod
+    def reinit_pars(self):
+        self.states['w'] = None
+
+    @staticmethod
+    def generate_recent_history(y, w, start, i):
+        """
+        :param y: target array during training / testing
+        :param w: window containing most recent history
+        :param start: int, if there was an offset in the start if y
+        :param i: current step w.r.t. step zero
+        :return:
+        """
+        w = np.copy(w)
+        m = len(w)  # lookback steps
+        # deal with the prediction case: no y, we use stored window values
+        y_w = y[start:i + 1]
+        if len(y_w) == m:
+            w = y_w
+        else:
+            w = np.roll(w, -len(y_w))
+            w[-len(y_w):] = y_w
+        return w
+
+    def tune_hyperpars(self, x_pd):
+        pars_opt = tune_hyperpars(x_pd, self.__class__, hyperpars=self.hyperpar_lims, n_trials=self.optimization_budget,
+                                  return_model=False, **self.init_pars)
+        self.set_params(**pars_opt)
+        self.reinit_pars()
+        return self
+
+
+    def fit(self, x_pd, y_pd=None, **kwargs):
+        if self.optimize_hyperpars:
+            self.tune_hyperpars(x_pd)
+
+        y_present = x_pd[self.target_name].values
+        x = x_pd.values
+
+        # exclude the last n_sa, we need them to create the target
+        preds = self.run(x, y_present, start_from=0, fit=True)[:-self.n_sa]
+        #preds = self.predict(x_pd)[:-self.n_sa]
+
+        # hankelize the target
+        hw_target = hankel(y_present[1:], self.n_sa)
+        resid = hw_target - preds
+        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
+        return self
+
+    @abstractmethod
+    def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
+        pass
+
+class Fourier_es(StatefulForecaster):
+
+    def __init__(self, target_name='target', targets_names=None, n_sa=1, m=24, val_ratio=0.8, optimize_hyperpars=True,
+                 optimization_budget=100,  verbose=True, nodes_at_step=None,
+                 q_vect=None, alpha=0.8, omega=0.99, n_harmonics=3, periodicity=None, **scengen_kwgs):
         """
         :param y:
         :param h:
@@ -46,37 +153,27 @@ class Fourier_es(ScenarioGenerator):
         :param m:
         :return:
         """
-        assert m>0, 'm must be positive'
         assert 0<alpha<1, 'alpha must be in (0, 1)'
         assert 0<omega<1, 'omega must be in (0, 1)'
         assert n_harmonics>0, 'n_harmonics must be positive'
 
-        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'alpha': alpha, 'm': m, 'omega': omega,
-                          'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
-                          'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
-                          'optimization_budget': optimization_budget, 'diagnostic_plots': diagnostic_plots,
-                          'verbose': verbose}
-        self.init_pars.update(scengen_kwgs)
-        self.targets_names = [target_name] if targets_names is None else targets_names
-        self.optimize_hyperpars = optimize_hyperpars
-        self.optimization_budget = optimization_budget
+        super().__init__(target_name=target_name, targets_names=targets_names, n_sa=n_sa, m=m, val_ratio=val_ratio,
+                         optimize_hyperpars=optimize_hyperpars, optimization_budget=optimization_budget,
+                         verbose=verbose, nodes_at_step=nodes_at_step, q_vect=q_vect, **scengen_kwgs)
+
+        self.init_pars.update({'alpha': alpha, 'omega': omega, 'n_harmonics': n_harmonics, 'periodicity': periodicity})
+
         self.periodicity = periodicity if periodicity is not None else n_sa
-        self.target_name = target_name
-        self.verbose = verbose
-        # precompute basis over all possible periods
         self.alpha = alpha
         self.omega = omega
-        self.n_sa=n_sa
-        self.m = m
         self.n_harmonics = n_harmonics
         self.n_harmonics_int = int(np.minimum(n_harmonics, m // 2))
         self.P_future = None
-        self.diagnostic_plots = diagnostic_plots
 
+        self.hyperpar_lims = {'alpha': [0, 1], 'omega': [0, 1], 'n_harmonics': [1, m//2]}
         self.states = {'x': None, 'w':np.zeros(m), 'eps':0, 'last_1sa_preds':0}
         self.reinit_pars()
 
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
         self.states['x'] = None
@@ -90,27 +187,6 @@ class Fourier_es(ScenarioGenerator):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
         self.P_future = get_basis(t_f, self.m, self.n_harmonics_int)
 
-    def fit(self, x_pd, y_pd=None, **kwargs):
-        if self.optimize_hyperpars:
-            pars_opt = tune_hyperpars(x_pd, Fourier_es, hyperpars={'alpha':[0, 1], 'omega':[0, 1], 'n_harmonics':[1, self.m//2]},
-                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
-                                      **self.init_pars)
-            self.set_params(**pars_opt)
-            self.reinit_pars()
-
-        y_present = x_pd[self.target_name].values
-        x = x_pd.values
-
-
-        # exclude the last n_sa, we need them to create the target
-        preds = self.run(x, y_present, start_from=0, fit=True)[:-self.n_sa]
-        #preds = self.predict(x_pd)[:-self.n_sa]
-
-        # hankelize the target
-        hw_target = hankel(y_present[1:], self.n_sa)
-        resid = hw_target - preds
-        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
-        return self
 
     def predict(self, x_pd, **kwargs):
         x = x_pd.values
@@ -141,7 +217,7 @@ class Fourier_es(ScenarioGenerator):
             P_f = self.P_future[i % self.m + self.m - self.periodicity:i % self.m + self.m -self.periodicity + self.n_sa, :]
             start = np.maximum(0, i-self.m+1)
 
-            w = generate_recent_history(y, w_init, start, i)
+            w = self.generate_recent_history(y, w_init, start, i)
 
             #eps = self.omega * (w[-1] - preds[-1][0]) + (1-self.omega) * eps
             eps_obs = w[-1] - last_1sa_preds
@@ -213,11 +289,12 @@ def update_predictions(coeffs_t_history, start_from, y, Ps_future, period, h, m,
 
 
 
-class FK(ScenarioGenerator):
+class FK(StatefulForecaster):
 
 
-    def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
-                 optimize_hyperpars=True, optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
+    def __init__(self, target_name='target', targets_names=None, n_sa=1, alpha=0.8, m=24, omega=0.99, n_harmonics=3,
+                 val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None, optimize_hyperpars=True,
+                 optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
         """
         :param y:
         :param h:
@@ -230,29 +307,20 @@ class FK(ScenarioGenerator):
         assert 0<omega<1, 'omega must be in (0, 1)'
         assert n_harmonics>0, 'n_harmonics must be positive'
 
+        super().__init__(target_name=target_name, targets_names=targets_names, n_sa=n_sa, m=m, val_ratio=val_ratio,
+                         optimize_hyperpars=optimize_hyperpars, optimization_budget=optimization_budget,
+                         verbose=verbose, nodes_at_step=nodes_at_step, q_vect=q_vect, **scengen_kwgs)
 
         self.targets_names = [target_name] if targets_names is None else targets_names
-        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'alpha': alpha, 'm': m, 'omega': omega,
-                          'n_harmonics': n_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
-                          'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
-                          'optimization_budget': optimization_budget, 'r': r, 'q': q, 'verbose':verbose}
+        self.init_pars.update({'alpha': alpha, 'omega': omega, 'n_harmonics': n_harmonics, 'periodicity': periodicity,
+                               'r': r, 'q': q})
         self.init_pars.update(scengen_kwgs)
-        self.verbose=verbose
-        self.optimize_hyperpars = optimize_hyperpars
-        self.optimization_budget = optimization_budget
         self.periodicity = periodicity if periodicity is not None else n_sa
         if self.periodicity < n_sa:
             print('WARNING: periodicity is smaller than n_sa, this may lead to suboptimal results.')
 
-        self.target_name = target_name
-        # precompute basis over all possible periods
         self.alpha = alpha
         self.omega = omega
-        self.n_sa=n_sa
-        self.m = m
-        #self.eps = None
-        #self.last_1sa_preds = 0
-        #self.w = np.zeros(m)
         self.n_harmonics = n_harmonics
         self.r = r
         self.q = q
@@ -261,10 +329,11 @@ class FK(ScenarioGenerator):
         self.P_future = None
         self.coeffs_t_history = []
 
+        self.hyperpar_lims = {'alpha': [0, 1], 'omega': [0, 1], 'n_harmonics': [1, self.m // 2], 'r': [0.001, 0.8],
+                              'q': [0.001, 0.8]}
         self.states = {'x': None, 'P': None, 'R': None, 'Q': None, 'w':np.zeros(m), 'eps':None, 'last_1sa_preds':0}
         self.reinit_pars()
 
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
         self.n_harmonics_int = int(np.minimum(self.n_harmonics, self.m // 2))
@@ -286,29 +355,6 @@ class FK(ScenarioGenerator):
         t_f = np.arange(2 * self.m + np.maximum(self.n_sa, self.periodicity))
         self.P_future = get_basis(t_f, self.m, self.n_harmonics_int)
 
-    def fit(self, x_pd, y_pd=None, **kwargs):
-        if self.optimize_hyperpars:
-            pars_opt = tune_hyperpars(x_pd, FK, hyperpars={'alpha':[0, 1], 'omega':[0, 1],
-                                                                   'n_harmonics':[1, self.m//2],
-                                                                   'r':[0.001, 0.8], 'q':[0.001, 0.8]},
-                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False,
-                                      **self.init_pars)
-            self.set_params(**pars_opt)
-            self.reinit_pars()
-
-
-        y_present = x_pd[self.target_name].values
-        x = x_pd.values
-
-        # exclude the last n_sa, we need them to create the target
-        preds = self.run(x, y_present, start_from=0, fit=True)[:-self.n_sa]
-        #preds = self.predict(x_pd)[:-self.n_sa]
-
-        # hankelize the target
-        hw_target = hankel(y_present[1:], self.n_sa)
-        resid = hw_target - preds
-        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
-        return self
 
     def predict(self, x_pd, **kwargs):
         x = x_pd.values
