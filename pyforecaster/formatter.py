@@ -180,7 +180,7 @@ class Formatter:
     @staticmethod
     def _transform_(tr, x):
         return tr.transform(x, augment=False)
-    def _transform(self, x, time_features=True, holidays=False, return_target=True, **holidays_kwargs):
+    def _transform(self, x, time_features=True, holidays=False, return_target=True, parallel=False, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -206,7 +206,7 @@ class Formatter:
                 target = self.normalize(x, target)
 
         if len(self.transformers)>0:
-            if self.n_parallel>1:
+            if parallel:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.n_parallel) as executor:
                     x_tr = pd.concat([i for i in executor.map(partial(self._transform_, x=x), self.transformers)], axis=1)
                     x = pd.concat([x, x_tr], axis=1)
@@ -513,11 +513,12 @@ class Formatter:
                     axis=1))
         return dfs
 
-    def global_form_postprocess(self, x, y, xs, ys, reduce_memory=False, corr_reorder=False):
+    def global_form_postprocess(self, x, y, xs, ys, reduce_memory=False, corr_reorder=False, use_ray=False,
+                                parallel=False):
 
         if reduce_memory:
-            x = reduce_mem_usage(x, use_ray=True)
-            y = reduce_mem_usage(y, use_ray=True)
+            x = reduce_mem_usage(x, use_ray=use_ray, parallel=parallel)
+            y = reduce_mem_usage(y, use_ray=use_ray, parallel=parallel)
 
         # for all transformations
         for tr in self.transformers:

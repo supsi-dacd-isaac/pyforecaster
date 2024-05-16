@@ -114,7 +114,7 @@ class StatefulForecaster(ScenarioGenerator):
 
     def tune_hyperpars(self, x_pd):
         pars_opt = tune_hyperpars(x_pd, self.__class__, hyperpars=self.hyperpar_lims, n_trials=self.optimization_budget,
-                                  return_model=False, **self.init_pars)
+                                  return_model=False, model_init_kwargs=self.init_pars)
         self.set_params(**pars_opt)
         self.reinit_pars()
         return self
@@ -144,7 +144,7 @@ class StatefulForecaster(ScenarioGenerator):
 class Fourier_es(StatefulForecaster):
 
     def __init__(self, target_name='target', targets_names=None, n_sa=1, m=24, val_ratio=0.8, optimize_hyperpars=True,
-                 optimization_budget=100,  verbose=True, nodes_at_step=None,
+                 optimization_budget=100,  verbose=False, nodes_at_step=None,
                  q_vect=None, alpha=0.8, omega=0.99, n_harmonics=3, periodicity=None, **scengen_kwgs):
         """
         :param y:
@@ -408,7 +408,7 @@ class FK(StatefulForecaster):
         self.states.update(states)
 
 
-class FK_multi(ScenarioGenerator):
+class FK_multi(StatefulForecaster):
     """
         Multistep ahead forecasting with multiple Fourier-Kalman regressors
     """
@@ -416,7 +416,7 @@ class FK_multi(ScenarioGenerator):
     def __init__(self, target_name='target', targets_names=None, n_sa=1,  n_predictors=4, alphas=None, m=24, omegas=None,
                  ns_harmonics=None, val_ratio=0.8, nodes_at_step=None, q_vect=None, periodicity=None,
                  base_predictor=Fourier_es, optimize_hyperpars=False, optimize_submodels_hyperpars=True,
-                 optimization_budget=100, r=0.1, q=0.1, verbose=True, **scengen_kwgs):
+                 optimization_budget=100, r=0.1, q=0.1, verbose=True, submodels_pars=None, **scengen_kwgs):
         """
         :param y:
         :param h: this is the numebr of steps ahead to be predicted.
@@ -426,28 +426,25 @@ class FK_multi(ScenarioGenerator):
         """
         n_predictors = int(n_predictors)
         self.base_predictor = base_predictor
-        self.targets_names = targets_names
-        self.init_pars = {'target_name': target_name, 'n_sa': n_sa, 'n_predictors': n_predictors, 'alpha': alphas, 'm': m, 'omegas': omegas,
-                            'ns_harmonics': ns_harmonics, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
-                            'q_vect': q_vect, 'periodicity': periodicity, 'optimize_hyperpars': optimize_hyperpars,
-                            'optimization_budget': optimization_budget, 'r': r, 'q': q,'optimize_submodels_hyperpars':optimize_submodels_hyperpars,
-                            'verbose':verbose, 'base_predictor': base_predictor,'targets_names':targets_names}
-        self.init_pars.update(scengen_kwgs)
-        self.verbose=verbose
-        self.optimize_hyperpars = optimize_hyperpars
-        self.optimization_budget = optimization_budget
-        self.optimize_submodels_hyperpars = optimize_submodels_hyperpars
 
+        super().__init__(target_name=target_name, targets_names=targets_names, n_sa=n_sa, m=m, val_ratio=val_ratio,
+                         optimize_hyperpars=optimize_hyperpars, optimization_budget=optimization_budget,
+                         verbose=verbose, nodes_at_step=nodes_at_step, q_vect=q_vect, **scengen_kwgs)
+        # submodels' init pars are set to the father init class pars
+        self.submodels_init_pars = deepcopy(self.init_pars)
+        self.submodels_pars = submodels_pars
+
+        self.init_pars.update({'n_predictors': n_predictors, 'alphas': alphas, 'omegas': omegas,
+                          'ns_harmonics': ns_harmonics, 'periodicity': periodicity, 'r': r, 'q': q,
+                          'optimize_submodels_hyperpars': optimize_submodels_hyperpars,
+                          'base_predictor': base_predictor, 'submodels_pars':submodels_pars})
+        self.init_pars.update(scengen_kwgs)
+
+        self.optimize_submodels_hyperpars = optimize_submodels_hyperpars
         self.periodicity = periodicity if periodicity is not None else n_sa
         assert self.periodicity < m, 'Periodicity must be smaller than history m'
         if self.periodicity < n_sa:
             print('WARNING: periodicity is smaller than n_sa, this may lead to suboptimal results.')
-        self.alphas = np.ones(n_predictors) * 0.01 if alphas is None else alphas
-        self.omegas = np.ones(n_predictors) * 0.01 if omegas is None else omegas
-        self.n_sa = n_sa
-        self.m = m
-        self.target_name = target_name
-        self.ns_harmonics = (np.ones(n_predictors) * 10).astype(int) if ns_harmonics is None else ns_harmonics
         self.n_predictors = n_predictors
         self.r = r
         self.q = q
@@ -455,21 +452,25 @@ class FK_multi(ScenarioGenerator):
         self.H = None
         self.F = None
         self.models = None
-
         self.states = {'x':None, 'P':None, 'R':None, 'Q':None}
         self.reinit_pars()
 
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
 
     def reinit_pars(self):
+        self.submodels_init_pars.update({'optimize_hyperpars': self.optimize_submodels_hyperpars,
+                                         'verbose':True})
+        # create models with increasing history length
         ms = np.linspace(1, self.m, self.n_predictors + 1).astype(int)[1:]
         ms = np.maximum(ms, self.n_sa)
 
+        submodels_pars = [self.submodels_init_pars.copy() for i in range(self.n_predictors)]
         if np.any([m<self.periodicity for m in ms]):
             print('The history of the predictors are: {}'.format(ms))
             print('But periodicity is {}'.format(self.periodicity))
             print('I am going to set the history of the predictors with m<periodicity to the periodicity')
             ms = np.maximum(ms, self.periodicity)
+        for i in range(self.n_predictors):
+            submodels_pars[i].update({'m':ms[i]})
 
         # precompute basis over all possible periods
         self.F = np.eye(self.n_predictors)
@@ -480,18 +481,16 @@ class FK_multi(ScenarioGenerator):
         self.states['R'] = np.eye(self.n_predictors) * self.r
         self.states['Q'] = np.eye(self.n_predictors) * self.q
 
-        self.models = [self.base_predictor(n_sa=self.n_sa, alpha=self.alphas[i], omega=self.omegas[i], n_harmonics=self.ns_harmonics[i], m=ms[i],
-                                      target_name=self.target_name, periodicity=self.periodicity,
-                                      targets_names=self.targets_names,
-                                      optimization_budget=self.optimization_budget, verbose=False, optimize_hyperpars=self.optimize_submodels_hyperpars) for i in
-                  range(self.n_predictors)]
-        #self.states = [self.models[j].__getstate__() for j in range(self.n_predictors)]
+
+        if self.submodels_pars is not None:
+            self.models = [self.base_predictor(**self.submodels_pars[i]) for i in range(self.n_predictors)]
+        else:
+            self.models = [self.base_predictor(**submodels_pars[i]) for i in range(self.n_predictors)]
 
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
             pars_opt = tune_hyperpars(x_pd, FK_multi, hyperpars={'fake':[0, 1]},
-                            n_trials=1, return_model=False, parallel=False,
-                                      **self.init_pars)
+                            n_trials=1, return_model=False, parallel=False, model_init_kwargs=self.init_pars)
             self.set_params(**pars_opt)
             self.reinit_pars()
 
@@ -526,16 +525,11 @@ class FK_multi(ScenarioGenerator):
 
         preds_experts = np.dstack([ self.models[j].predict(x_pd) for j in range(self.n_predictors)])
 
-        #from pyforecaster.plot_utils import ts_animation
-        #ts_animation(np.rollaxis(preds_experts, -1),
-        #             names=[str(i) for i in range(self.n_predictors)], target=x_pd['all'].values, frames=1000,
-        #             interval=0.1, step=3)
 
         for i, idx in enumerate(x_pd.index):
             if i >= self.n_sa:
                 # average last point error over different prediction times for all the models
                 last_obs = x_pd[self.target_name].iloc[i]
-                prev_obs = x_pd[self.target_name].iloc[i-1]
                 # sometimes persistence error is too small, sometimes signal could be small. We normalize by the average
                 norm_avg_err = [np.mean([np.abs(preds_experts[i-sa, sa, predictor]-last_obs) for sa in range(self.n_sa)]) for predictor in range(self.n_predictors)]
                 norm_avg_err = np.array(norm_avg_err) / np.mean(norm_avg_err)

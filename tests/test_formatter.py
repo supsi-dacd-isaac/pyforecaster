@@ -236,7 +236,7 @@ class TestFormatDataset(unittest.TestCase):
                                                                     agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_target_transform(['target'], ['mean'], agg_bins=[-10, -15, -20])
-        df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+        df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True, parallel=False)
 
     def test_global_multiindex_with_col_reordering(self):
         x_private = pd.DataFrame(np.random.randn(500, 15), index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'), columns=pd.MultiIndex.from_product([['b1', 'b2', 'b3'], ['a', 'b', 'c', 'd', 'e']]))

@@ -40,7 +40,7 @@ def fit_sample(pars_dict,model_class, model_init_kwargs, x, return_model=False):
     else:
         return score
 
-def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return_model=True, parallel=True, **model_init_kwargs):
+def tune_hyperpars(x, model_class, hyperpars, n_trials=100, return_model=True, parallel=True, model_init_kwargs=None):
     """
     :param x: pd.DataFrame (n, n_cov)
     :param y: pd.Series (n)
@@ -51,7 +51,7 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return
                           to train on, in a global model fashion
     :return:
     """
-
+    verbose = model_init_kwargs['verbose'] if 'verbose' in model_init_kwargs.keys() else False
     pars_cartridge = []
     for i in range(n_trials):
         trial = {}
@@ -68,7 +68,9 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return
     model_init_kwargs_0 = deepcopy(model_init_kwargs)
 
 
-    if len(pars_cartridge)>1:
+    if model_class.__name__ in ["HoltWintersMulti", "FK_multi"]:
+        fitted_model = fit_sample(pars_cartridge[0], model_class, model_init_kwargs, x, return_model=True)
+    else:
         if parallel:
             from concurrent.futures import ProcessPoolExecutor
             from multiprocessing import cpu_count
@@ -76,18 +78,14 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return
                 scores = list(tqdm(executor.map(partial(fit_sample, model_class=model_class,
                                                    model_init_kwargs=model_init_kwargs, x=x),
                                            pars_cartridge), total=n_trials, desc='Tuning hyperpars for {}'.format(model_class.__name__)))
-            if verbose:
-                plt.figure()
-                t = np.linspace(0.01, 0.99, 30)
-                plt.plot(np.quantile(scores, t), t)
         else:
             scores = []
             for i in tqdm(range(n_trials), desc='Tuning hyperpars for {}'.format(model_class.__name__)):
                 scores.append(fit_sample(pars_cartridge[i], model_class, model_init_kwargs, x))
-
-
-    else:
-        fitted_model = fit_sample(pars_cartridge[0], model_class, model_init_kwargs, x, return_model=True)
+        if verbose:
+            plt.figure()
+            t = np.linspace(0.01, 0.99, 30)
+            plt.plot(np.quantile(scores, t), t)
 
     if model_class.__name__ in ["HoltWintersMulti"]:
         alphas = np.array([m.alpha for m in fitted_model.models])
@@ -95,10 +93,8 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, verbose=True, return
         gammas_2 = ([m.gamma_2 for m in fitted_model.models])
         best_pars = {'alphas': alphas, 'gammas_1': gammas_1, 'gammas_2': gammas_2, 'optimize_submodels_hyperpars':False}
     elif model_class.__name__ in ["FK_multi"]:
-        alphas = np.array([m.alpha for m in fitted_model.models])
-        omegas = ([m.omega for m in fitted_model.models])
-        ns_harmonics = ([m.n_harmonics for m in fitted_model.models])
-        best_pars = {'alphas': alphas, 'omegas': omegas, 'ns_harmonics': ns_harmonics, 'optimize_submodels_hyperpars':False}
+        submodels_pars = [m.get_params() for m in fitted_model.models]
+        best_pars = {'submodels_pars':submodels_pars, 'optimize_submodels_hyperpars':False}
     else:
         best_idx = np.argmin(scores)
         best_pars = pars_cartridge[best_idx]
@@ -142,6 +138,7 @@ class HoltWinters(ScenarioGenerator):
                           'verbose':verbose, 'alpha': alpha, 'beta': beta, 'gamma_1': gamma_1, 'gamma_2': gamma_2}
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
         self.targets_names = [target_name] if targets_names is None else targets_names
+        self.init_pars.update({'targets_names':self.targets_names})
         self.periods = periods
         self.optimization_budget = optimization_budget
         self.n_sa = n_sa
@@ -176,7 +173,7 @@ class HoltWinters(ScenarioGenerator):
     def fit(self, x_pd, y_pd=None, **kwargs):
         if self.optimize_hyperpars:
             pars_opt = tune_hyperpars(x_pd, HoltWinters, hyperpars={'alpha':[0, 1], 'gamma_1':[0, 1], 'gamma_2':[0, 1]},
-                            n_trials=self.optimization_budget, targets_names=self.targets_names, return_model=False, **self.init_pars)
+                            n_trials=self.optimization_budget, return_model=False, model_init_kwargs=self.init_pars)
             self.set_params(**pars_opt)
 
         y = x_pd[self.target_name].values
@@ -418,7 +415,7 @@ class HoltWintersMulti(ScenarioGenerator):
 
     def fit(self, x_pd, y_pd=None):
         if self.optimize_hyperpars:
-            pars_opt = tune_hyperpars(x_pd, HoltWintersMulti, hyperpars={'fake':[0, 1]}, n_trials=1, return_model=False, parallel=False, **self.init_pars)
+            pars_opt = tune_hyperpars(x_pd, HoltWintersMulti, hyperpars={'fake':[0, 1]}, n_trials=1, return_model=False, parallel=False, model_init_kwargs=self.init_pars)
             self.set_params(**pars_opt)
             self.reinit_pars()
 
