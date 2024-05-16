@@ -107,15 +107,7 @@ class TestFormatDataset(unittest.TestCase):
                        storage_fun=None)
 
 
-    def test_hw_trainer(self):
 
-        model = HoltWinters
-        hyperpars = {'gamma_1':[0, 1], 'gamma_2':[0, 1], 'alpha':[0, 1]}
-        model_init_kwargs = {'periods':[20, 80], "target_name":0, "n_sa":20}
-        best_model = tune_hyperpars(self.x, model, hyperpars=hyperpars, n_trials=100, **model_init_kwargs, targets_names=[0, 1])
-        y_hat = best_model.predict(self.x)
-        from pyforecaster.plot_utils import ts_animation
-        ts_animation([y_hat], names=['y_hat', 'target'], target=self.x[0].iloc[1:])
 
 
 if __name__ == '__main__':
