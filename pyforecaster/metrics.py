@@ -20,9 +20,9 @@ def rmse(x, t, agg_index=None, **kwargs):
     res = squerr(x, t)
     axis = chose_axis(x, agg_index)
     if axis == 0:
-        res = res.groupby(agg_index).mean() ** 0.5
+        res = res.groupby(agg_index, observed=False).mean() ** 0.5
     else:
-        res = res.T.groupby(agg_index).mean() ** 0.5
+        res = res.T.groupby(agg_index, observed=False).mean() ** 0.5
     return res
 
 
@@ -31,9 +31,9 @@ def mape(x, t, agg_index=None, **kwargs):
     res = (err(x, t)/(np.abs(t) + 1e-5)).abs()
     axis = chose_axis(x, agg_index)
     if axis == 0:
-        res = res.groupby(agg_index).mean()
+        res = res.groupby(agg_index, observed=False).mean()
     else:
-        res = res.T.groupby(agg_index).mean()
+        res = res.T.groupby(agg_index, observed=False).mean()
     return res
 
 
@@ -43,9 +43,9 @@ def nmae(x, t, agg_index=None, inter_normalization=True, **kwargs):
     axis = chose_axis(x, agg_index)
     res = (err(x, t) / (t.abs().mean(axis=1).values.reshape(-1,1) + offset)).abs()
     if axis == 0:
-        res = res.groupby(agg_index).mean()
+        res = res.groupby(agg_index, observed=False).mean()
     else:
-        res = res.T.groupby(agg_index).mean()
+        res = res.T.groupby(agg_index, observed=False).mean()
     return res
 
 
@@ -75,12 +75,12 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):
         qs_a = (I - alpha) * err_alpha
 
         if axis == 0:
-            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).groupby(agg_index).mean()
-            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index).mean()
+            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).groupby(agg_index, observed=False) .mean()
+            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).groupby(agg_index, observed=False) .mean()
 
         else:
-            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).T.groupby(agg_index).mean()
-            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).T.groupby(agg_index).mean()
+            qs_a = pd.DataFrame(qs_a, index=t.index, columns=t.columns).T.groupby(agg_index, observed=False) .mean()
+            reliability_alpha[alpha] = pd.DataFrame(I, index=t.index, columns=t.columns).T.groupby(agg_index, observed=False) .mean()
 
         qscore_alpha[alpha] = qs_a
 
@@ -95,7 +95,7 @@ def crps(q_hat, t, alphas=None, agg_index=None, collapse_quantile_axis=True, **k
 
     # collapse quantile axis
     if collapse_quantile_axis:
-        qscore = qscore.T.groupby(level=1).mean()
+        qscore = qscore.T.groupby(level=1).mean().T
 
     return qscore
 
@@ -147,7 +147,7 @@ def summary_score(x, t, score=rmse, agg_index=None):
         elif isinstance(t, pd.DataFrame):
             x = pd.DataFrame(x, index=t.index, columns=t.columns)
 
-    return score(x, t, agg_index)
+    return score(x, t, agg_index=agg_index)
 
 
 def summary_scores(x, t, metrics, idxs: pd.DataFrame, mask=None, n_quantiles=10):
@@ -165,7 +165,7 @@ def summary_scores(x, t, metrics, idxs: pd.DataFrame, mask=None, n_quantiles=10)
     t = t if mask is None else t * mask[mask].values
 
     # quantize non-integer data
-    if np.any(~agg_indexes.dtypes.isin(['int', 'int32', 'int64'])):
+    if np.any(~agg_indexes.dtypes.isin([np.dtype('int'), np.dtype('int32'), np.dtype('int8'), np.dtype('int64'), np.dtype('object')])):
         qcuts = [pd.qcut(agg_indexes.loc[:, k], n_quantiles, duplicates='drop') for k in agg_indexes.columns if agg_indexes[k].dtype != int and len(agg_indexes[k].value_counts())>=n_quantiles]
         if len(qcuts)>0:
             replacement_idxs = [agg_indexes[k].dtype != int and len(agg_indexes[k].value_counts())>=n_quantiles for k in agg_indexes.columns]
@@ -173,6 +173,12 @@ def summary_scores(x, t, metrics, idxs: pd.DataFrame, mask=None, n_quantiles=10)
 
     scores_df = {}
     for m in metrics:
+        if '__name__' in dir(m):
+            name = m.__name__
+        elif 'func' in dir(m):
+            name = m.func.__name__
+        else:
+            name = 'metric'
         index_scores = {k: summary_score(x, t, m, pd.Index(v)) for k, v in agg_indexes.items()}
-        scores_df[m.__name__] = pd.concat(index_scores, axis=0)
+        scores_df[name] = pd.concat(index_scores, axis=0)
     return scores_df
