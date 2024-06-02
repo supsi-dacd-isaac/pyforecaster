@@ -138,7 +138,7 @@ class QRF(ScenarioGenerator):
 
     def predict(self, x, **kwargs):
         preds = []
-        period = kwargs['period'] if 'period' in kwargs else '24H'
+        period = kwargs['period'] if 'period' in kwargs else '24h'
         if self.parallel:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallel_workers) as executor:
                 preds = [i for i in tqdm(executor.map(partial(self._predict, x=x, period=period, **kwargs), range(self.n_single)),total=self.n_single)]
@@ -183,7 +183,7 @@ class QRF(ScenarioGenerator):
         return np.dstack(y_hat)
 
     @staticmethod
-    def dataset_at_stepahead(df, target_col_num, metadata_features, formatter, logger, method='periodic', keep_last_n_lags=1, period="24H",
+    def dataset_at_stepahead(df, target_col_num, metadata_features, formatter, logger, method='periodic', keep_last_n_lags=1, period="24h",
                              tol_period='1h', keep_last_seconds=0):
         if formatter is None:
             logger.warning('dataset_at_stepahead returned the unmodified dataset since there is no self.formatter')

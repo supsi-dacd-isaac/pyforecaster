@@ -6,14 +6,16 @@ from lightgbm import LGBMRegressor
 import numpy as np
 import concurrent.futures
 from time import time
-
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 class LGBMHybrid(ScenarioGenerator):
     def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=8, objective='regression', tol_period='1h', colsample_bytree=1,
+                 n_jobs=1, objective='regression', tol_period='1h', colsample_bytree=1,
                  colsample_bynode=1, verbose=-1, metric='l2', n_single=1,
                  red_frac_multistep=1, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 formatter=None, metadata_features=None, keep_last_n_lags=0, keep_last_seconds=0, **scengen_kwgs):
+                 formatter=None, metadata_features=None, keep_last_n_lags=0, keep_last_seconds=0, parallel=False,
+                 **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -28,6 +30,7 @@ class LGBMHybrid(ScenarioGenerator):
         """
 
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+        self.parallel = parallel
         self.device_type = device_type
         self.n_single = n_single
         self.red_frac_multistep = red_frac_multistep
@@ -75,12 +78,16 @@ class LGBMHybrid(ScenarioGenerator):
     def fit(self, x, y):
         lgb_pars = self.get_lgb_pars()
         x, y, x_val, y_val = self.train_val_split(x, y)
-        for i in tqdm(range(self.n_single)):
-            x_i = self.dataset_at_stepahead(x, i,  self.metadata_features, formatter=self.formatter,
-                                            logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
-                                            keep_last_seconds=self.keep_last_seconds,
-                                            tol_period=self.tol_period)
-            self.models.append(LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i]))
+        if self.parallel:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=cpu_count()-2) as executor:
+                self.models = list(executor.map(partial(self.fit_single, x=x, y=y, lgb_pars=lgb_pars), np.arange(self.n_single)))
+        else:
+            for i in tqdm(range(self.n_single)):
+                x_i = self.dataset_at_stepahead(x, i,  self.metadata_features, formatter=self.formatter,
+                                                logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                                keep_last_seconds=self.keep_last_seconds,
+                                                tol_period=self.tol_period)
+                self.models.append(LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i]))
 
         n_sa = y.shape[1]
         self.n_multistep = n_sa - self.n_single
@@ -110,9 +117,16 @@ class LGBMHybrid(ScenarioGenerator):
         super().fit(x_val, y_val)
         return self
 
+    def fit_single(self, i, x, y, lgb_pars):
+        x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
+                                        logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
+                                        keep_last_seconds=self.keep_last_seconds,
+                                        tol_period=self.tol_period)
+        m = LGBMRegressor(**lgb_pars).fit(x_i, y.iloc[:, i])
+        return m
     def predict(self, x, **kwargs):
         preds = []
-        period = kwargs['period'] if 'period' in kwargs else '24H'
+        period = kwargs['period'] if 'period' in kwargs else '24h'
         for i in range(self.n_single):
             x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,
                                             logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
@@ -125,21 +139,17 @@ class LGBMHybrid(ScenarioGenerator):
         preds = pd.DataFrame(np.hstack(preds), index=x.index)
         return preds
 
-    def predict_single(self, x, i):
+    def predict_single(self, i, x):
         x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i)], axis=1)
         return self.multi_step_model.predict(x,num_threads=1).reshape(-1, 1)
 
     def predict_parallel(self, x):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(self.predict_single, x, i) for i in range(self.n_multistep)]
-            y_hat = []
-            for idx, future in enumerate(concurrent.futures.as_completed(futures)):
-                y_hat_i = future.result()  # This will also raise any exceptions
-                y_hat.append(y_hat_i)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+            y_hat = list(executor.map(partial(self.predict_single, x=x), np.arange(self.n_multistep)))
         return np.hstack(y_hat)
 
     @staticmethod
-    def dataset_at_stepahead(df, target_col_num, metadata_features, formatter, logger, method='periodic', keep_last_n_lags=1, period="24H",
+    def dataset_at_stepahead(df, target_col_num, metadata_features, formatter, logger, method='periodic', keep_last_n_lags=1, period="24h",
                              tol_period='1h', keep_last_seconds=0):
         if formatter is None:
             logger.warning('dataset_at_stepahead returned the unmodified dataset since there is no self.formatter')

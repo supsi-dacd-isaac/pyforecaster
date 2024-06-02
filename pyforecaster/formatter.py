@@ -397,7 +397,7 @@ class Formatter:
         fold += '   -: train, |=test, x:skip'
         return fold
 
-    def prune_dataset_at_stepahead(self, df, target_col_num, metadata_features, method='periodic', period='24H', tol_period='1H', keep_last_n_lags=0, keep_last_seconds=0):
+    def prune_dataset_at_stepahead(self, df, target_col_num, metadata_features, method='periodic', period='24h', tol_period='1h', keep_last_n_lags=0, keep_last_seconds=0):
 
         features = []
         # retrieve referring_time of the given sa for the target from target_transformers
