@@ -438,8 +438,8 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-        m_lin = LinearForecaster().fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
-        y_hat_lin = m_lin.predict(e_te.iloc[:, :144])
+        m_lin = LinearForecaster().fit(e_tr.iloc[:, :184], e_tr.iloc[:, -120:])
+        y_hat_lin = m_lin.predict(e_te.iloc[:, :184])
         """
 
         m = CausalInvertibleNN(learning_rate=1e-2,  batch_size=1000, load_path=None, n_hidden_x=e_tr.shape[1],
@@ -497,24 +497,24 @@ class TestFormatDataset(unittest.TestCase):
             ax.plot(y_invert.iloc[i, 144:].values, linestyle='--')
             plt.pause(1e-6)
         """
-        m = FFNN(n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=144, rel_tol=-1, stopping_rounds=20).fit(e_tr.iloc[:, :144], e_tr.iloc[:, 144:])
-        y_hat = m.predict(e_te.iloc[:, :144])
+        m = FFNN(n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=120, rel_tol=-1, stopping_rounds=20).fit(e_tr.iloc[:, :184], e_tr.iloc[:, -120:])
+        y_hat = m.predict(e_te.iloc[:, :184])
 
-        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=200, load_path=None, n_hidden_x=144,
-                               n_layers=3, normalize_target=False, n_epochs=5, stopping_rounds=20, rel_tol=-1,
-                               end_to_end='quasi', n_hidden_y=300, n_prediction_layers=3, n_out=144).fit(e_tr.iloc[:, :144], e_tr.iloc[:, -144:])
+        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=200, load_path=None, n_in=184,
+                               n_layers=3, normalize_target=False, n_epochs=1, stopping_rounds=20, rel_tol=-1,
+                               end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=120,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :184], e_tr.iloc[:, -120:])
 
-        z_hat_ete = m.predict(e_te.iloc[:, :144])
+        z_hat_ete = m.predict(e_te.iloc[:, :184])
 
-        np.mean((z_hat_ete.values- e_te.iloc[:, 144:].values)**2)
-        np.mean((y_hat.values- e_te.iloc[:, 144:].values)**2)
-        np.mean((y_hat_lin.values- e_te.iloc[:, 144:].values)**2)
+        np.mean((z_hat_ete.values- e_te.iloc[:, -120:].values)**2)
+        np.mean((y_hat.values- e_te.iloc[:, -120:].values)**2)
+        np.mean((y_hat_lin.values- e_te.iloc[:, -120:].values)**2)
 
         fig, ax = plt.subplots(1, 1, figsize=(4, 3))
         for i in range(100):
             if i%10 == 0:
                 plt.cla()
-                ax.plot(e_te.iloc[i, 144:].values)
+                ax.plot(e_te.iloc[i, -120:].values)
                 ax.plot(y_hat_lin.iloc[i, :].values, linewidth=1)
                 ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
                 plt.pause(1e-6)

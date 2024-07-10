@@ -295,7 +295,7 @@ class NN(ScenarioGenerator):
             if val_loss[-1] > val_loss[-2]:
                 pars = old_pars
         self.pars = pars
-
+        super().fit(inputs_val_0, targets_val_0)
         return self
 
     def training_plots(self, inputs, target, tr_loss, te_loss, savepath, k):

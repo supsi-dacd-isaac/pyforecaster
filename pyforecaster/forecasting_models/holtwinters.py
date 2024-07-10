@@ -74,7 +74,7 @@ def tune_hyperpars(x, model_class, hyperpars, n_trials=100, return_model=True, p
         if parallel:
             from concurrent.futures import ProcessPoolExecutor
             from multiprocessing import cpu_count
-            with ProcessPoolExecutor(max_workers=np.minimum(cpu_count(), 10)) as executor:
+            with ProcessPoolExecutor(max_workers=np.minimum(cpu_count(), 20)) as executor:
                 scores = list(tqdm(executor.map(partial(fit_sample, model_class=model_class,
                                                    model_init_kwargs=model_init_kwargs, x=x),
                                            pars_cartridge), total=n_trials, desc='Tuning hyperpars for {}'.format(model_class.__name__)))
