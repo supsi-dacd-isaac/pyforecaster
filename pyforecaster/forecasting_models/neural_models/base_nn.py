@@ -343,18 +343,23 @@ class NN(ScenarioGenerator):
             return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
     def predict_quantiles(self, inputs, normalize=True, **kwargs):
-        if normalize:
-            mu_hat, sigma_hat = self.predict(inputs, return_sigma=True)
-        else:
-            x = inputs
-            y_hat = self.predict_batch(self.pars, x)
-            y_hat = np.array(y_hat)
-            mu_hat = y_hat[:, :y_hat.shape[1]//2]
-            sigma_hat = (y_hat[:, y_hat.shape[1] // 2:])** 0.5
+        if self.probabilistic:
+            if normalize:
+                mu_hat, sigma_hat = self.predict(inputs, return_sigma=True)
+            else:
+                x = inputs
+                y_hat = self.predict_batch(self.pars, x)
+                y_hat = np.array(y_hat)
+                mu_hat = y_hat[:, :y_hat.shape[1]//2]
+                sigma_hat = (y_hat[:, y_hat.shape[1] // 2:])** 0.5
 
-        preds = np.expand_dims(mu_hat, -1) * np.ones((1, 1, len(self.q_vect)))
-        for i, q in enumerate(self.q_vect):
-            preds[:, :, i] += sigma_hat * np.sqrt(2) * erfinv(2*q-1)
+            preds = np.expand_dims(mu_hat, -1) * np.ones((1, 1, len(self.q_vect)))
+            for i, q in enumerate(self.q_vect):
+                preds[:, :, i] += sigma_hat * np.sqrt(2) * erfinv(2*q-1)
+        else:
+            preds = np.expand_dims(self.predict(inputs), -1) * np.ones((1, 1, len(self.q_vect)))
+            for h in np.unique(inputs.index.hour):
+                preds[inputs.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
         return preds
 
     def get_normalized_inputs(self, inputs, target=None):
