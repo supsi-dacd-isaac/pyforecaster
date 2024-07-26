@@ -414,18 +414,19 @@ class Formatter:
             c1 = (target_start_time - metadata['start_time']) % pd.Timedelta(period) <= pd.Timedelta(tol_period)
             c2 = (target_end_time - metadata['end_time']) % pd.Timedelta(period) <= pd.Timedelta(tol_period)
             causality = metadata['end_time'] <= target_start_time
-            metadata['keep'] = (c1 | c2) & causality
+            metadata['keep'] = (c1 | c2)  # & causality
         elif method == 'up_to':
-            metadata['keep'] = metadata['end_time'] <= target_start_time
+            metadata['keep'] = metadata['end_time'] <= target_end_time
         else:
             metadata['keep'] = True
 
         if keep_last_n_lags > 0:
             metadata['keep'] = metadata['keep'] | metadata['lag'].isin(np.arange(keep_last_n_lags))
 
-        if keep_last_seconds >0:
-            close = (metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s')) | (metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s'))
-            predecessor = metadata['end_time'] <= target_start_time
+        if keep_last_seconds > 0:
+            close = (metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s')) | (
+                        metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s'))
+            predecessor = metadata['end_time'] <= target_end_time
             metadata['keep'] = metadata['keep'] | (close & predecessor)
 
         features = list(metadata.loc[metadata['keep']].index) + metadata_features
