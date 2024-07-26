@@ -21,10 +21,9 @@ class TestFormatDataset(unittest.TestCase):
 
         formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(24),
                                                                     relative_lags=True)
-        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 24])
         formatter.add_target_transform(['all'], lags=-np.arange(24)-1)
 
-        x, y = formatter.transform(self.data.iloc[:1000])
+        x, y = formatter.transform(self.data.resample('1h').mean())
         n_tr = int(len(x) * 0.7)
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
@@ -33,14 +32,16 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_lin = m_lin.predict(x_te)
         q = m_lin.predict_quantiles(x_te)
 
-        m_lgbhybrid = LGBMHybrid(red_frac_multistep=0.1,  val_ratio=0.3, lgb_pars={'num_leaves': 100, 'n_estimators': 100, 'learning_rate':0.05}, n_single=20, parallel=True, formatter=formatter, metadata_features=['minuteofday', 'utc_offset', 'dayofweek', 'hour']).fit(x_tr, y_tr)
+        m_lgbhybrid = LGBMHybrid(red_frac_multistep=0.1,  val_ratio=0.3, lgb_pars={'num_leaves': 300, 'n_estimators': 10, 'learning_rate':0.05},
+                                 n_single=10, parallel=True, formatter=formatter, metadata_features=['minuteofday', 'utc_offset', 'dayofweek', 'hour'],tol_period='1h', keep_last_seconds=3600).fit(x_tr, y_tr)
         y_hat_lgbh = m_lgbhybrid.predict(x_te)
         q = m_lgbhybrid.predict_quantiles(x_te)
 
-        m_lgb = LGBForecaster(lgb_pars={'num_leaves': 10, 'n_estimators': 100, 'learning_rate':0.05}).fit(x_tr, y_tr)
+        m_lgb = LGBForecaster(lgb_pars={'num_leaves': 10, 'n_estimators': 10, 'learning_rate':0.05}, parallel=True).fit(x_tr, y_tr)
         y_hat_lgb = m_lgb.predict(x_te)
 
-        # plot_quantiles([y_te.iloc[:10, :], y_hat_lin.iloc[:10, :], y_hat_lgbh.iloc[:10, :], y_hat_lgb.iloc[:10, :]], q[:10, :, :], ['y_te', 'y_lin', 'y_lgbhybrid_1', 'y_hat_lgb'])
+        # plot_quantiles([y_hat_lgbh.iloc[:100, :]], q[:100, :, :], ['y_hat_lgb'], n_rows=100, repeat=True)
+        plot_quantiles([y_hat_lin.iloc[:100, :]], q[:100, :, :], ['y_hat_lgb'], n_rows=100, repeat=False)
 
 
     def do_not_test_linear_val_split(self):

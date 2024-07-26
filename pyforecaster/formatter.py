@@ -399,40 +399,62 @@ class Formatter:
 
     def prune_dataset_at_stepahead(self, df, target_col_num, metadata_features, method='periodic', period='24h', tol_period='1h', keep_last_n_lags=0, keep_last_seconds=0):
 
-        features = []
         # retrieve referring_time of the given sa for the target from target_transformers
-        target_times = []
+        target_start_times = []
+        target_end_times = []
         for tt in self.target_transformers:
-            target_times.append(tt.metadata.iloc[target_col_num, :]['end_time'])
-            #target_times.append(tt.metadata.loc[tt.metadata['lag']==-sa, 'end_time'])
+            target_start_times.append(tt.metadata.iloc[target_col_num, :]['start_time'])
+            target_end_times.append(tt.metadata.iloc[target_col_num, :]['end_time'])
 
+        target_start_time = pd.to_timedelta(target_start_times[0])
+        target_end_time = pd.to_timedelta(target_end_times[0])
 
-        target_time = pd.to_timedelta(target_times[0])
-
+        metadata = pd.concat([t.metadata for t in self.transformers])
         if method == 'periodic':
-            # find signals with (target_time - referring_time) multiple of period
-            for t in self.transformers:
-                features += list(t.metadata.index[((target_time-t.metadata['end_time']).abs() % pd.Timedelta(period)
-                                                  <= pd.Timedelta(tol_period)) & (t.metadata['end_time']<=target_time)])
+            c1 = (target_start_time - metadata['start_time']) % pd.Timedelta(period) <= pd.Timedelta(tol_period)
+            c2 = (target_end_time - metadata['end_time']) % pd.Timedelta(period) <= pd.Timedelta(tol_period)
+            causality = metadata['end_time'] <= target_start_time
+            metadata['keep'] = (c1 | c2) & causality
         elif method == 'up_to':
-            for t in self.transformers:
-                features += list(t.metadata.index[t.metadata['end_time'] <= target_time])
+            metadata['keep'] = metadata['end_time'] <= target_start_time
+        else:
+            metadata['keep'] = True
 
         if keep_last_n_lags > 0:
-            last_lag_features = list(np.hstack([t.metadata.index[t.metadata['lag'].isin(np.arange(keep_last_n_lags))]
-                                           for t in self.transformers]))
-            features = np.unique(features + last_lag_features)
-        if keep_last_seconds >0:
-            closest_features = []
-            for t in self.transformers:
-                delta_sec = t.metadata.start_time.apply(lambda x: x.total_seconds())
-                keep_condition = (delta_sec> -keep_last_seconds) & (delta_sec<=0)
-                closest_features.append(t.metadata.index[keep_condition])
-            closest_features = list(np.unique(np.hstack(closest_features)))
-            features = np.unique(features + closest_features)
+            metadata['keep'] = metadata['keep'] | metadata['lag'].isin(np.arange(keep_last_n_lags))
 
-        features = np.unique(list(features) + metadata_features)
+        if keep_last_seconds >0:
+            close = (metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s')) | (metadata['end_time'] <= pd.Timedelta(keep_last_seconds, unit='s'))
+            predecessor = metadata['end_time'] <= target_start_time
+            metadata['keep'] = metadata['keep'] | (close & predecessor)
+
+        features = list(metadata.loc[metadata['keep']].index) + metadata_features
         return df[features]
+
+    def plot_dataset_at_stepahead(self, df, metadata_features=None, method='periodic', period='24h', tol_period='1h', keep_last_n_lags=0, keep_last_seconds=0):
+
+        n_target = np.sum([len(t.metadata) for t in self.target_transformers])
+        metadata = pd.concat([t.metadata for t in self.transformers])
+
+        import matplotlib.pyplot as plt
+        plt.figure()
+        for target_col_num in np.arange(n_target):
+            x_i = self.prune_dataset_at_stepahead(df, target_col_num, metadata_features=metadata_features, method=method,
+                                                 period=period, keep_last_n_lags=keep_last_n_lags,
+                                                 keep_last_seconds=keep_last_seconds,
+                                                 tol_period=tol_period)
+            plt.cla()
+            plt.plot(np.hstack([metadata['start_time'].min().total_seconds(), metadata['end_time'].max().total_seconds()]), np.hstack([0, 0]), linestyle='')
+            k = 0
+            for i, feature in enumerate(metadata['name'].unique()):
+                metadata_filt = metadata.loc[metadata['name'] == feature].loc[x_i.columns]
+                for _, var in metadata_filt.iterrows():
+                    k += 1
+                    plt.plot(np.hstack([var['start_time'].total_seconds(), var['end_time'].total_seconds()]), np.hstack([k, k]), label=feature, alpha=0.5)
+            plt.legend()
+            plt.title('target {}'.format(target_col_num))
+            plt.pause(0.1)
+
 
     def rename_features_prediction_time(self, x, sa):
         """

@@ -98,15 +98,15 @@ class LGBMHybrid(ScenarioGenerator):
             n_batch = int(len(x_pd)*red_frac)
             n_long = n_batch*self.n_multistep
             rand_idx = np.random.choice(x_pd.index, n_long).reshape(self.n_multistep, -1)
+
             x_long = []
-            for sa in range(self.n_multistep):
-                x_i = pd.concat([x_pd.loc[rand_idx[sa], :].reset_index(drop=True), pd.Series(np.ones(n_batch) * sa)], axis=1)
-                x_long.append(x_i)
-            x_long = pd.concat(x_long, axis=0)
-            y = y
             y_long = []
-            for i in range(self.n_multistep):
-                y_long.append(y.iloc[rand_idx[i], i])
+            for i, sa in enumerate(np.arange(self.n_single, self.n_single + self.n_multistep)):
+                x_i = pd.concat([x_pd.loc[rand_idx[i], :].reset_index(drop=True), pd.Series(np.ones(n_batch) * i)], axis=1)
+                y_long.append(y.iloc[rand_idx[i], sa])
+                x_long.append(x_i)
+
+            x_long = pd.concat(x_long, axis=0)
             y_long = pd.concat(y_long)
 
             t_0 = time()
