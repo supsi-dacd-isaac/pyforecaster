@@ -257,10 +257,14 @@ class Formatter:
                 # find df_n columns to normalize
                 nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
                 for c in nr_columns:
-                    df_n[c] = normalizing_fun(df_n, c)
+                    df_n[c] = self.normalizing_wrapper(normalizing_fun, df_n, c)
 
         df_n = df_n[[c for c in y.columns]]
         return df_n
+
+    def normalizing_wrapper(self, normalizing_fun, df, t):
+        return eval(normalizing_fun)
+
 
     def _simulate_transform(self, x=None):
         """

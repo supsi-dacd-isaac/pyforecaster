@@ -6,6 +6,7 @@ import numpy as np
 import logging
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
+from pyforecaster.forecasting_models.random_fourier_features import RFFRegression
 from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
@@ -182,6 +183,24 @@ class TestFormatDataset(unittest.TestCase):
 
         y_hat = qrf.predict(x_te.iloc[[0], :])
         q = qrf.predict(x_te.iloc[[0], :])
+
+    def test_rffr(self):
+        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
+                                                                    relative_lags=True)
+        formatter.add_target_transform(['all'], lags=-np.arange(144))
+
+        x, y = formatter.transform(self.data.iloc[:10000])
+        x.columns = x.columns.astype(str)
+        y.columns = y.columns.astype(str)
+        n_tr = int(len(x) * 0.95)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+                                  y.iloc[n_tr:].copy()]
+        m = RFFRegression(std_kernel=0.001, dim_kernel=30).fit(x_tr, y_tr)
+        y_hat = m.predict(x_te)
+        q = m.predict_quantiles(x_te)
+        plot_quantiles([y_te, pd.DataFrame(y_hat,index=y_te.index)], q, ['y_te', 'y_hat', 'y_hat_qrf'], n_rows=600, repeat=False)
+
+
 
 if __name__ == '__main__':
     unittest.main()

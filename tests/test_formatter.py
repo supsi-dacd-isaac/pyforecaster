@@ -257,14 +257,15 @@ class TestFormatDataset(unittest.TestCase):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
         formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
         formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
-        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
-        formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='b')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a_movingavg')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='a_movingstd')
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalizing_fun(lambda df, t: (df[t] - df['a'])/(df['b']+1))
+        #formatter.add_normalizing_fun(lambda df, t: (df[t] - df['a_movingavg'])/(df['a_movingstd']+1))
+        formatter.add_normalizing_fun("(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)")
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun=lambda df, t: df[t]*(df['b']+1) + df['a'])
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -279,9 +280,9 @@ class TestFormatDataset(unittest.TestCase):
 
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalizing_fun(lambda df, t: np.exp(df[t]+df['a']) + df['b'])
+        formatter.add_normalizing_fun("np.exp(df[t]+df['a']) + df['b']")
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun= lambda df, t: np.log(df[t]-df["b"]) -df["a"])
+        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun= "np.log(df[t]-df['b']) -df['a']")
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -308,7 +309,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['target'], 'std', agg_freq='5H', name='std')
 
         x, y = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
-        formatter.add_normalizing_fun(lambda df, t: (df[t] - df['mean'])/(df['std']+1))
+        formatter.add_normalizing_fun("(df[t] - df['mean'])/(df['std']+1)")
         x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
 
         xs = formatter.global_form_preprocess(df_mi)
