@@ -5,6 +5,10 @@ import functools
 import numpy as np
 import scipy.stats
 from sklearn.linear_model import LinearRegression
+from pyforecaster.forecaster import ScenarioGenerator
+import pandas as pd
+from concurrent.futures import ProcessPoolExecutor
+
 
 def seed(seed):
     """
@@ -93,12 +97,12 @@ class Base:
         self.W   = W
         self.b   = b
 
-    def conv(self, X, index=None):
+    def conv(self, x, index=None):
         """
         Applies random matrix to the given input vectors `X` and create feature vectors.
 
         Args:
-            X     (np.ndarray): Input matrix with shape (n_samples, n_features).
+            x     (pd.DataFrame): Input matrix with shape (n_samples, n_features).
             index (int)       : Index of the random matrix. This value should be specified only
                                 when multiple random matrices are used.
 
@@ -110,7 +114,7 @@ class Base:
         """
         W = self.W if index is None else self.W[index]
         b = self.b if index is None else self.b[index]
-        return np.cos(X @ W + b)
+        return np.cos(x.values @ W + b)
 
     def set_weight(self, dim_in):
         """
@@ -142,7 +146,7 @@ class Regression(Base):
     """
     Regression with random matrix (RFF/ORF).
     """
-    def __init__(self, rand_type, dim_kernel=16, std_kernel=0.1, W=None, b=None, **args):
+    def __init__(self, rand_type, reg_fun=LinearRegression, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
         """
         Constractor. Save hyper parameters as member variables and create LinearRegression instance.
 
@@ -154,10 +158,11 @@ class Regression(Base):
             b          (np.ndarray): Random bias for the input `X`. If None then generated automatically.
             args       (dict)      : Extra arguments. This arguments will be passed to the constructor of sklearn's LinearRegression model.
         """
-        super().__init__(rand_type, dim_kernel, std_kernel, W, b)
-        self.reg = LinearRegression(**args)
+        Base.__init__(self, rand_type, dim_kernel, std_kernel, W, b)
+        self.reg = reg_fun()
+        self.scaler = None
 
-    def fit(self, X, y, **args):
+    def fit(self, x, y, **args):
         """
         Trains the RFF regression model according to the given data.
 
@@ -169,23 +174,25 @@ class Regression(Base):
         Returns:
             (rfflearn.cpu.Regression): Fitted estimator.
         """
-        self.set_weight(X.shape[1])
-        self.reg.fit(self.conv(X), y, **args)
+        self.set_weight(x.shape[1])
+        self.reg.fit(self.conv(x), y, **args)
+
         return self
 
-    def predict(self, X, **args):
+    def predict(self, x, **args):
         """
         Performs prediction on the given data.
 
         Args:
-            X    (np.ndarray): Input matrix with shape (n_samples, n_features_input).
+            x    (pd.DataFrame): Input matrix with shape (n_samples, n_features_input).
             args (dict)      : Extra arguments. This arguments will be passed to the sklearn's `predict` function.
 
         Returns:
             (np.ndarray): Predicted vector.
         """
-        self.set_weight(X.shape[1])
-        return self.reg.predict(self.conv(X), **args)
+        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
+        self.set_weight(x.shape[1])
+        return pd.DataFrame(self.reg.predict(self.conv(x)), index=x.index)
 
     def score(self, X, y, **args):
         """
@@ -202,18 +209,33 @@ class Regression(Base):
         self.set_weight(X.shape[1])
         return self.reg.score(self.conv(X), y, **args)
 
+    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+        preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
+        for h in np.unique(x.index.hour):
+            preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
+        return preds
 
 # The above functions/classes are not visible from users of this library, becasue the usage of
 # the function is a bit complicated. The following classes are simplified version of the above
 # classes. The following classes are visible from users.
 
 
-class RFFRegression(Regression):
+class RFFRegression(Regression, ScenarioGenerator):
     """
     Regression with RFF.
     """
-    def __init__(self, *pargs, **kwargs):
-        super().__init__("rff", *pargs, **kwargs)
+    def __init__(self, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
+        Regression.__init__(self, "rff", LinearRegression, dim_kernel, std_kernel, W, b, q_vect, nodes_at_step, val_ratio, logger, n_scen_fit, additional_node, **scengen_kwgs)
+        ScenarioGenerator.__init__(self, q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+
+    def fit(self, x, y, **args):
+        self.scaler = sklearn.preprocessing.StandardScaler().fit(x)
+        x, y, x_val, y_val = self.train_val_split(x, y)
+        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
+        Regression.fit(self, x, y, **args)
+        ScenarioGenerator.fit(self, x_val, y_val)
+        return self
+
 
 
 class ORFRegression(Regression):
@@ -224,4 +246,14 @@ class ORFRegression(Regression):
         super().__init__("orf", *pargs, **kwargs)
 
 
+class AdditiveRFFRegression(ScenarioGenerator):
+    """
+    Regression with RFF.
+    """
+    def __init__(self, n_models, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
+        self.n_models = n_models
+        super().__init__("rff", LinearRegression, dim_kernel, std_kernel, W, b, q_vect, nodes_at_step, val_ratio, logger, n_scen_fit, additional_node, **scengen_kwgs)
 
+    def fit(self, x, y, **args):
+        for i in range(self.n_models):
+            super().fit(x, y, **args)
