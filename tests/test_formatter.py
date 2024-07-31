@@ -275,12 +275,12 @@ class TestFormatDataset(unittest.TestCase):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
         formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
         formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
-        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a')
-        formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a_n')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b_n')
 
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalizing_fun(expr="np.exp(df[t]+df['a']) + df['b']", inv_expr="np.log(df[t]-df['b']) -df['a']")
+        formatter.add_normalizing_fun(expr="np.exp(df[t]+df['a_n']) + df['b_n']", inv_expr="np.log(df[t]-df['b_n']) -df['a_n']")
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
         y_unnorm = formatter.denormalize(x, y_norm)
 

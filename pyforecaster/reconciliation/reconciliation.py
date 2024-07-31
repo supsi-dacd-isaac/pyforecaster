@@ -127,7 +127,7 @@ class HierarchicalReconciliation:
 
     def get_target_matrix(self, x, y):
         bottom_series = [c for c in x['name'].unique() if c not in self.hierarchy.keys()]
-        y_tr = y.T.reset_index(drop=True).T
+        y_tr = y
         y_tr = pd.concat([pd.concat({k: y_tr.loc[x['name'].isin([k])] for k in self.hierarchy.keys()}, axis=1),
                           pd.concat({k: y_tr.loc[x['name'].isin([k])] for k in bottom_series}, axis=1)],
                          axis=1)
@@ -183,10 +183,11 @@ class HierarchicalReconciliation:
         # fit reconciliation for all the steps ahead, keep errors, pre- and post-reconciliation
         self.steps = y_tr.columns.get_level_values(1).unique()
         errs_hat, errs_tilde = {}, {}
-        for sa in tqdm(self.steps):
+        target_names = y_hat.columns.get_level_values(1).unique()
+        for t_name in tqdm(target_names):
             # ---------------------------- get base predictions, ground truth for sa ---------------------------------------
-            y_hat_sa = y_hat.loc[:, y_hat.columns.get_level_values(1) == sa].droplevel(1, 1)
-            y_sa = y_tr.loc[:, y_tr.columns.get_level_values(1) == sa].droplevel(1, 1)
+            y_hat_sa = y_hat.loc[:, y_hat.columns.get_level_values(1) == t_name].droplevel(1, 1)
+            y_sa = y_tr.loc[:, y_hat.columns.get_level_values(1) == t_name].droplevel(1, 1)
 
             # ---------------------------- fit, predict -------------------------------------------------------------------
             self.fit_reconciliation(y_sa, y_hat_sa, self.hierarchy)
@@ -194,8 +195,8 @@ class HierarchicalReconciliation:
 
             # ---------------------------- retrieve error samples from the training set ------------------------------------
 
-            errs_hat[sa] = y_sa - y_hat_sa
-            errs_tilde[sa] = y_sa - y_tilde_sa
+            errs_hat[t_name] = y_sa - y_hat_sa
+            errs_tilde[t_name] = y_sa - y_tilde_sa
 
         self.errs_hat = pd.concat(errs_hat, axis=1).swaplevel(0, 1, axis=1).sort_index(axis=1)
         self.errs_tilde = pd.concat(errs_tilde, axis=1).swaplevel(0, 1, axis=1).sort_index(axis=1)
@@ -209,10 +210,11 @@ class HierarchicalReconciliation:
             return y_hat
 
         y_tilde = {}
-        for sa in tqdm(self.steps):
+        target_names = y_hat.columns.get_level_values(1).unique()
+        for t_name in tqdm(target_names):
             # get reconciled forecasts at this step ahead
-            y_hat_sa = y_hat.loc[:, y_hat.columns.get_level_values(1) == sa].droplevel(1, 1)
-            y_tilde[sa] = self.reconcile(y_hat_sa)
+            y_hat_sa = y_hat.loc[:, y_hat.columns.get_level_values(1) == t_name].droplevel(1, 1)
+            y_tilde[t_name] = self.reconcile(y_hat_sa)
 
         y_tilde = pd.concat(y_tilde, axis=1).swaplevel(0, 1, axis=1).sort_index(axis=1)
 
@@ -241,9 +243,10 @@ class HierarchicalReconciliation:
         """
 
         y_hat = self.get_predictions(x, level='all')
+        target_names = y_hat.columns.get_level_values(1).unique()
         if method == 'reconciled':
-            y_tilde = pd.concat({sa: self.reconcile(y_hat.loc[:, y_hat.columns.get_level_values(1) == sa].
-                                                    droplevel(1, 1)) for sa in self.steps}, axis=1)
+            y_tilde = pd.concat({t_name: self.reconcile(y_hat.loc[:, y_hat.columns.get_level_values(1) == t_name].
+                                                    droplevel(1, 1)) for t_name in target_names}, axis=1)
             y_tilde = y_tilde.swaplevel(0, 1, axis=1).sort_index(axis=1)
 
         scens = []
@@ -370,7 +373,8 @@ class HierarchicalReconciliation:
     def compute_kpis(self, hat, x, y, metric, **metric_kwargs):
         y_mat = self.get_target_matrix(x, y)
         kpi = {}
-        for s in self.steps:
+        target_names = hat.columns.get_level_values(1).unique()
+        for s in target_names:
             hat_s = convert_multiindex_pandas_to_tensor(hat.loc[:, (slice(None), [s], slice(None))].droplevel(1, 1))
             y_mat_s = y_mat.loc[:, (slice(None), [s])].droplevel(1, 1)
             kpi[s] = metric(hat_s, y_mat_s, **metric_kwargs).T
