@@ -8,6 +8,51 @@ from sklearn.linear_model import LinearRegression
 from pyforecaster.forecaster import ScenarioGenerator
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+from tqdm import tqdm
+
+class BrutalRegressor:
+    def __init__(self, n_iter=10):
+        self.best_pars = []
+        self.n_iter = n_iter
+        self.target_cols = None
+    def fit_feature(self, x, y, n_bins=10):
+
+        cuts = np.quantile(x, np.linspace(0, 1, n_bins+1))
+        x_binned = np.digitize(x, cuts)-1
+        y_means = np.array([y[x_binned == i].mean() for i in range(n_bins+1)])
+        score = np.mean((y - y_means[x_binned, :])**2)**0.5
+        pars = {'cuts': cuts, 'y_means': y_means, 'score': score}
+
+        return pars
+
+    def one_level_fit(self, x, y):
+        with ProcessPoolExecutor(4) as executor:
+            pars = list(executor.map(partial(self.fit_feature, y=y), [x[:, i] for i in range(x.shape[1])]))
+        # find best feature
+        best_feature = np.argmin([s['score'] for s in pars])
+        best_pars = pars[best_feature]
+        return best_feature, best_pars
+    def fit(self, x, y):
+        if isinstance(x, pd.DataFrame):
+            x = x.values
+        self.target_cols = y.columns
+        err = y.copy()
+        for i in tqdm(range(self.n_iter)):
+            best_feature, best_pars = self.one_level_fit(x, err)
+            y_hat = best_pars['y_means'][np.digitize(x[:, best_feature], best_pars['cuts'])-1]
+            err = err - y_hat
+            print(np.abs(err).mean().mean())
+            self.best_pars.append(best_pars)
+        return self
+
+    def predict(self, x):
+
+        y_hat = np.zeros((x.shape[0], self.best_pars[0]['y_means'].shape[1]))
+        for i in range(self.n_iter):
+            y_hat += self.best_pars[i]['y_means'][np.digitize(x.iloc[:, i], self.best_pars[i]['cuts'])-1]
+        return pd.DataFrame(y_hat, index = x.index, columns=self.target_cols)
+
 
 
 def seed(seed):
@@ -114,7 +159,7 @@ class Base:
         """
         W = self.W if index is None else self.W[index]
         b = self.b if index is None else self.b[index]
-        return np.cos(x.values @ W + b)
+        return pd.DataFrame(np.cos(x.values @ W + b), index=x.index)
 
     def set_weight(self, dim_in):
         """
@@ -142,11 +187,11 @@ class Base:
 import sklearn
 
 
-class Regression(Base):
+class RandomFFRegressor(Base):
     """
     Regression with random matrix (RFF/ORF).
     """
-    def __init__(self, rand_type, reg_fun=LinearRegression, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
+    def __init__(self, rand_type, reg_fun=LinearRegression, dim_kernel=16, std_kernel=0.1, W=None, b=None):
         """
         Constractor. Save hyper parameters as member variables and create LinearRegression instance.
 
@@ -160,15 +205,16 @@ class Regression(Base):
         """
         Base.__init__(self, rand_type, dim_kernel, std_kernel, W, b)
         self.reg = reg_fun()
-        self.scaler = None
+        self.target_cols = None
+
 
     def fit(self, x, y, **args):
         """
         Trains the RFF regression model according to the given data.
 
         Args:
-            X    (np.ndarray): Input matrix with shape (n_samples, n_features_input).
-            y    (np.ndarray): Output vector with shape (n_samples,).
+            X    (pd.DataFrame): Input matrix with shape (n_samples, n_features_input).
+            y    (pd.DataFrame): Output vector with shape (n_samples,).
             args (dict)      : Extra arguments. This arguments will be passed to the sklearn's `fit` function.
 
         Returns:
@@ -176,7 +222,7 @@ class Regression(Base):
         """
         self.set_weight(x.shape[1])
         self.reg.fit(self.conv(x), y, **args)
-
+        self.target_cols = y.columns
         return self
 
     def predict(self, x, **args):
@@ -190,9 +236,8 @@ class Regression(Base):
         Returns:
             (np.ndarray): Predicted vector.
         """
-        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
         self.set_weight(x.shape[1])
-        return pd.DataFrame(self.reg.predict(self.conv(x)), index=x.index)
+        return pd.DataFrame(self.reg.predict(self.conv(x)), index=x.index, columns=self.target_cols)
 
     def score(self, X, y, **args):
         """
@@ -209,51 +254,79 @@ class Regression(Base):
         self.set_weight(X.shape[1])
         return self.reg.score(self.conv(X), y, **args)
 
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
-        preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
-        for h in np.unique(x.index.hour):
-            preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
-        return preds
 
 # The above functions/classes are not visible from users of this library, becasue the usage of
 # the function is a bit complicated. The following classes are simplified version of the above
 # classes. The following classes are visible from users.
 
 
-class RFFRegression(Regression, ScenarioGenerator):
+class RFFRegression(RandomFFRegressor, ScenarioGenerator):
     """
     Regression with RFF.
     """
-    def __init__(self, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
-        Regression.__init__(self, "rff", LinearRegression, dim_kernel, std_kernel, W, b, q_vect, nodes_at_step, val_ratio, logger, n_scen_fit, additional_node, **scengen_kwgs)
-        ScenarioGenerator.__init__(self, q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+    def __init__(self, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None,
+                 logger=None, n_scen_fit=100, additional_node=False, base_model=LinearRegression, **scengen_kwgs):
+        RandomFFRegressor.__init__(self, "rff", base_model, dim_kernel, std_kernel, W, b)
+        ScenarioGenerator.__init__(self, q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, logger=logger,
+                                   n_scen_fit=n_scen_fit, additional_node=additional_node, **scengen_kwgs)
+        self.scaler = None
 
     def fit(self, x, y, **args):
         self.scaler = sklearn.preprocessing.StandardScaler().fit(x)
         x, y, x_val, y_val = self.train_val_split(x, y)
         x = pd.DataFrame(self.scaler.transform(x), index=x.index)
-        Regression.fit(self, x, y, **args)
+        RandomFFRegressor.fit(self, x, y, **args)
         ScenarioGenerator.fit(self, x_val, y_val)
         return self
 
-
-
-class ORFRegression(Regression):
-    """
-    Regression with ORF.
-    """
-    def __init__(self, *pargs, **kwargs):
-        super().__init__("orf", *pargs, **kwargs)
+    def predict(self, x, **kwargs):
+        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
+        y_hat = RandomFFRegressor.predict(self, x, **kwargs)
+        y_hat = self.anti_transform(x, y_hat)
+        return y_hat
+    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+        preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
+        for h in np.unique(x.index.hour):
+            preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
+        return preds
 
 
 class AdditiveRFFRegression(ScenarioGenerator):
     """
     Regression with RFF.
     """
-    def __init__(self, n_models, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
+    def __init__(self, n_models, dim_kernel=16, std_kernel=0.1, W=None, b=None, q_vect=None, nodes_at_step=None,
+                 val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, base_model=LinearRegression, **scengen_kwgs):
         self.n_models = n_models
-        super().__init__("rff", LinearRegression, dim_kernel, std_kernel, W, b, q_vect, nodes_at_step, val_ratio, logger, n_scen_fit, additional_node, **scengen_kwgs)
+        self.models = [RandomFFRegressor("rff", base_model, dim_kernel, std_kernel, W, b) for _ in range(n_models)]
+        ScenarioGenerator.__init__(self, q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, logger=logger,
+                                   n_scen_fit=n_scen_fit, additional_node=additional_node, **scengen_kwgs)
+        self.scaler = None
 
     def fit(self, x, y, **args):
-        for i in range(self.n_models):
-            super().fit(x, y, **args)
+        """Boosting fit."""
+        self.scaler = sklearn.preprocessing.StandardScaler().fit(x)
+        x, y, x_val, y_val = self.train_val_split(x, y)
+        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
+        err = y.copy()
+        for m in self.models:
+            m.fit(x, err, **args)
+            y_hat = m.predict(x)
+            err = err - y_hat
+        ScenarioGenerator.fit(self, x_val, y_val)
+        return self
+
+    def predict(self, x, **kwargs):
+        """Boosting predict."""
+        x = pd.DataFrame(self.scaler.transform(x), index=x.index)
+        y_hat = pd.DataFrame(np.zeros((x.shape[0], len(self.models[0].target_cols))), index=x.index, columns=self.target_cols)
+        for m in self.models:
+            y_hat += m.predict(x)
+
+        y_hat = self.anti_transform(x, y_hat)
+        return y_hat
+    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+        preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
+        for h in np.unique(x.index.hour):
+            preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
+        return preds

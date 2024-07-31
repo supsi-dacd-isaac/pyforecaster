@@ -136,8 +136,9 @@ class LGBMHybrid(ScenarioGenerator):
         x_pd = x
         if self.n_multistep>0:
             preds.append(self.predict_parallel(x_pd))
-        preds = pd.DataFrame(np.hstack(preds), index=x.index)
-        return preds
+        preds = pd.DataFrame(np.hstack(preds), index=x.index, columns=self.target_cols)
+        y_hat = self.anti_transform(x, preds)
+        return y_hat
 
     def predict_single(self, i, x):
         x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i)], axis=1)
@@ -213,5 +214,6 @@ class LGBEnergyAware(LGBMHybrid):
             preds_i_no_ctrl = self.models[i].predict(x_i_no_ctrl)
 
             e_unbalance = pd.concat([e_unbalance, pd.Series(preds_i_no_ctrl-preds[i].ravel(), index=x_i.index)], axis=1)
-        preds = pd.DataFrame(np.hstack(preds), index=x.index)
-        return preds
+        preds = pd.DataFrame(np.hstack(preds), index=x.index, columns=self.target_cols)
+        y_hat = self.anti_transform(x, preds)
+        return y_hat

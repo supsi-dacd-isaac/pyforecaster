@@ -12,7 +12,8 @@ from inspect import signature
 
 
 class ScenarioGenerator(object):
-    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100, additional_node=False, **scengen_kwgs):
+    def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100,
+                 additional_node=False, formatter=None, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, additional_node=additional_node, **scengen_kwgs)
         self.val_ratio = val_ratio
@@ -20,6 +21,7 @@ class ScenarioGenerator(object):
         self.logger = get_logger(name='Forecaster', level='WARNING') if logger is None else logger
         self.n_scen_fit = n_scen_fit
         self.additional_node = additional_node
+        self.formatter = formatter
 
     @property
     def online_tree_reduction(self):
@@ -37,6 +39,8 @@ class ScenarioGenerator(object):
         return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
+        y = self.anti_transform(x, y)
+        self.target_cols = y.columns
         preds = self.predict(x)
         errs = pd.DataFrame(y.values-preds.values, index=x.index)
         self.scengen.fit(errs, x, n_scen=self.n_scen_fit)
@@ -54,6 +58,12 @@ class ScenarioGenerator(object):
     @abstractmethod
     def predict(self, x, **kwargs):
         pass
+
+    def anti_transform(self, x, y_hat):
+        if self.formatter is not None:
+            if self.formatter.target_transformers is not None:
+                y_hat = self.formatter.denormalize(x, y_hat)
+        return y_hat
 
     @abstractmethod
     def predict_quantiles(self, x, **kwargs):
@@ -128,8 +138,9 @@ class LinearForecaster(ScenarioGenerator):
         return self
 
     def predict(self, x:pd.DataFrame, **kwargs):
-        return pd.DataFrame(self.m.predict(x), index=x.index)
-
+        y_hat = pd.DataFrame(self.m.predict(x), index=x.index, columns=self.target_cols)
+        y_hat = self.anti_transform(x, y_hat)
+        return y_hat
     def predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
@@ -181,7 +192,9 @@ class LGBForecaster(ScenarioGenerator):
         preds = []
         for m in self.m:
             preds.append(m.predict(x).reshape(-1, 1))
-        return pd.DataFrame(np.hstack(preds), index=x.index)
+        y_hat = pd.DataFrame(np.hstack(preds), index=x.index, columns=self.target_cols)
+        y_hat = self.anti_transform(x, y_hat)
+        return y_hat
 
     def predict_quantiles(self, x, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))

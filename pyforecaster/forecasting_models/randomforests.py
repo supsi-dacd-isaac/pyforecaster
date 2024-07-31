@@ -9,7 +9,7 @@ from time import time
 from functools import partial
 
 class QRF(ScenarioGenerator):
-    def __init__(self, n_estimators=100, q_vect=None, val_ratio=None, nodes_at_step=None, formatter=None,
+    def __init__(self, n_estimators=100, q_vect=None, val_ratio=None, nodes_at_step=None,
                  metadata_features=None, n_single=1, red_frac_multistep=0.5, tol_period='1h',
                 keep_last_n_lags=0, keep_last_seconds=0, criterion="squared_error", max_depth=None, min_samples_split=2,
                  min_samples_leaf=1, max_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=1.0,
@@ -20,7 +20,7 @@ class QRF(ScenarioGenerator):
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
         :param red_frac_multistep: reduce the observations used for training the global model
-        :param formatter: the formatter used to produce the x,y df. Needed for step ahead feature pruning
+
         :param metadata_features: list of features that shouldn't be pruned
         :param learning_rate:
         :param tol_period:
@@ -40,7 +40,6 @@ class QRF(ScenarioGenerator):
         self.models = []
         self.multi_step_model = None
         self.n_multistep = None
-        self.formatter = formatter
         self.logger = get_logger()
         self.metadata_features = metadata_features if metadata_features is not None\
             else []
@@ -153,14 +152,15 @@ class QRF(ScenarioGenerator):
         preds = np.dstack(preds)
         if 'quantiles' in kwargs:
             if str(kwargs['quantiles']) == 'mean':
-                preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index)
+                preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index, columns=self.target_cols)
             else:
                 if len(preds.shape) == 2:
                     preds = np.expand_dims(preds, 0)
                 preds = np.swapaxes(preds, 1, 2)
         else:
-            preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index)
-        return preds
+            preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index, columns=self.target_cols)
+        y_hat = self.anti_transform(x, preds)
+        return y_hat
 
     def _predict(self, i, x, period, **kwargs):
         x_i = self.dataset_at_stepahead(x, i, self.metadata_features, formatter=self.formatter,

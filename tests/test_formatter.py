@@ -261,11 +261,11 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='a_movingstd')
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        #formatter.add_normalizing_fun(lambda df, t: (df[t] - df['a_movingavg'])/(df['a_movingstd']+1))
-        formatter.add_normalizing_fun("(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)")
+        formatter.add_normalizing_fun(expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)",
+                                      inv_expr="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
+        y_unnorm = formatter.denormalize(x, y_norm)
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -280,9 +280,9 @@ class TestFormatDataset(unittest.TestCase):
 
         x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
 
-        formatter.add_normalizing_fun("np.exp(df[t]+df['a']) + df['b']")
+        formatter.add_normalizing_fun(expr="np.exp(df[t]+df['a']) + df['b']", inv_expr="np.log(df[t]-df['b']) -df['a']")
         x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
-        y_unnorm = formatter.normalize(x, y_norm , normalizing_fun= "np.log(df[t]-df['b']) -df['a']")
+        y_unnorm = formatter.denormalize(x, y_norm)
 
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
@@ -309,7 +309,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['target'], 'std', agg_freq='5H', name='std')
 
         x, y = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
-        formatter.add_normalizing_fun("(df[t] - df['mean'])/(df['std']+1)")
+        formatter.add_normalizing_fun("(df[t] - df['mean'])/(df['std']+1)", "df[t]*(df['std']+1) + df['mean']")
         x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
 
         xs = formatter.global_form_preprocess(df_mi)

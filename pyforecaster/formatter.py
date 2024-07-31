@@ -36,6 +36,7 @@ class Formatter:
         self.dt = dt
         self.n_parallel = n_parallel if n_parallel is not None else cpu_count()
         self.normalizing_fun = None
+        self.denormalizing_fun = None
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -97,8 +98,15 @@ class Formatter:
         self.target_transformers.append(transformer)
         return self
 
-    def add_normalizing_fun(self, expr):
+    def add_normalizing_fun(self, expr, inv_expr):
+        """
+        When specifying a noramlization, an anti-transform expression must be provided
+        :param expr: type: str
+        :param inv_expr: type: str
+        :return:
+        """
         self.normalizing_fun = expr
+        self.denormalizing_fun = inv_expr
 
     def add_target_normalizer(self, target, function:str=None, agg_freq:str=None, lags:list=None, relative_lags=False, agg_bins=None, name='mean'):
         if isinstance(target, str):
@@ -198,12 +206,6 @@ class Formatter:
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
         target = pd.DataFrame(index=x.index)
-        if return_target:
-            for tr in self.target_transformers:
-                target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
-            # apply normalization if any
-            if len(self.target_normalizers)>0:
-                target = self.normalize(x, target)
 
         if len(self.transformers)>0:
             if parallel:
@@ -214,6 +216,13 @@ class Formatter:
                 for tr in self.transformers:
                     x = tr.transform(x)
         transformed_columns = [c for c in x.columns if c not in original_columns]
+        if return_target:
+            for tr in self.target_transformers:
+                target = pd.concat([target, tr.transform(x, augment=False)], axis=1)
+            # apply normalization if any
+            if len(self.target_normalizers)>0:
+                target, x = self.normalize(x, target)
+
         if return_target:
             # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
@@ -230,23 +239,42 @@ class Formatter:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
-    def normalize(self, x, y, normalizing_fun=None):
+    def normalize(self, x, y, normalizing_fun=None, antitransform=False):
+        """
+        Columns needed to compute the normaliztion factors are computed by the target transformers and returned in
+        the original x dataframe. The normalizing_fun is a string expression that must be evaluated to normalize the
+        target columns. The expression must contain the following variables:
+        - df[t]
+        - the name of the normalizing columns
+        e.g. "(df[t] - df['target_movingavg']) / df['target_movingstd'] "
+
+        :param x:
+        :param y:
+        :param normalizing_fun:
+        :return:
+        """
 
         normalizing_fun = self.normalizing_fun if normalizing_fun is None else normalizing_fun
         if self.normalizing_fun is None:
             self.logger.warning('You did not pass any normalization expression, ** no normalization will be applied **. '
                                 '\bYou can set a normalization expression by calling Formatter.add_normalizing_fun '
                                 '\bor by passing the noralizing_expr argument to this function')
-            return y
-        # compute normalizers if any
-        normalizers = pd.concat([nr.transform(x, augment=False) for nr in self.target_normalizers], axis = 1)
+            return y, x
 
+        if not antitransform:
+            # if we're doing the direct transform (normalization) we compute the normalizers and add them to the x df
+            # compute normalizers if any
+            normalizers = pd.concat([nr.transform(x, augment=False) for nr in self.target_normalizers], axis = 1)
+
+            # rename normalizers with tag names
+            normalizers.columns = [nr.name for nr in self.target_normalizers]
+            x = pd.concat([x, normalizers], axis=1)
+        else:
+            # if we're antitransform, we retrieve the normalizers from the x df
+            normalizers = x[[nr.name for nr in self.target_normalizers]]
         # get normalizers names
         target_to_norm_names = [nr.names for nr in self.target_normalizers]
         target_to_norm_names = [item for sublist in target_to_norm_names for item in sublist]
-
-        # rename normalizers with tag names
-        normalizers.columns = [nr.name for nr in self.target_normalizers]
 
         # join target and normalizers in a single df
         df_n = pd.concat([y, normalizers], axis=1)
@@ -257,10 +285,24 @@ class Formatter:
                 # find df_n columns to normalize
                 nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
                 for c in nr_columns:
-                    df_n[c] = self.normalizing_wrapper(normalizing_fun, df_n, c)
+                    df_n.loc[:, c] = self.normalizing_wrapper(normalizing_fun, df_n, c)
+            if not antitransform:
+                for tr in self.transformers:
+                    # find df_n columns to normalize
+                    nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
+                    for c in nr_columns:
+                        x.loc[:, c] = self.normalizing_wrapper(normalizing_fun, x, c)
 
         df_n = df_n[[c for c in y.columns]]
-        return df_n
+        return df_n, x
+
+    def denormalize(self, x, y):
+        if self.denormalizing_fun is None:
+            self.logger.warning('You did not pass any denormalization expression, ** no denormalization will be applied **. '
+                                '\bYou can set a denormalization expression by calling Formatter.add_normalizing_fun ')
+            return y
+        y, _ = self.normalize(x, y, normalizing_fun=self.denormalizing_fun, antitransform=True)
+        return y
 
     def normalizing_wrapper(self, normalizing_fun, df, t):
         return eval(normalizing_fun)

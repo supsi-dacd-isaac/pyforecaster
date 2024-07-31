@@ -15,7 +15,7 @@ from functools import partial
 from pyforecaster.big_data_utils import fdf_parallel
 
 class ScenGen:
-    def __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
+    def  __init__(self, copula_type: str = 'HourlyGaussianCopula', tree_type:str = 'ScenredTree',
                  online_tree_reduction=True, q_vect=None, nodes_at_step=None, max_iterations=100,
                  parallel_preds=False, additional_node=False, prefit_trees=False, **kwargs):
         self.logger = get_logger(level=WARNING)
@@ -35,6 +35,7 @@ class ScenGen:
         self.q_vect = np.hstack([0.01, np.linspace(0, 1, 11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.parallel_preds = parallel_preds
         self.additional_node = additional_node
+        self.target_cols = None
 
     def fit(self, y: pd.DataFrame, x: pd.DataFrame = None, n_scen=100, **copula_kwargs):
         """

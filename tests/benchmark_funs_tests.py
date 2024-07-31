@@ -3,11 +3,10 @@ import pandas as pd
 from opfunu.name_based import CamelThreeHump, CamelSixHump, CosineMixture, Ackley01
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from pyforecaster.forecasting_models.neural_models.ICNN import LatentStructuredPICNN, encode, decode, latent_pred
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
-from pyforecaster.forecasting_models.neural_forecasters import PICNN, PIQCNN, FFNN, PIQCNNSigmoid, LatentStructuredPICNN, predict_batch_latent_picnn
 import jax.numpy as jnp
 from os.path import join
-from pyforecaster.forecasting_models.neural_forecasters import latent_pred, encode, decode
 from jax import vmap
 import optax
 
