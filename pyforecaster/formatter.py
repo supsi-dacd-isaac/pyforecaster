@@ -228,9 +228,7 @@ class Formatter:
 
             # this is needed even if target is not returned, to normalize features correlated to the target
             target, x = self.normalize(x, target, return_target=return_target)
-
-        else:
-            normalizing_columns = []
+            transformed_columns = transformed_columns + normalizing_columns
 
         if return_target:
             # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
@@ -239,7 +237,7 @@ class Formatter:
         else:
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1)]
         if not self.augment:
-            x = x[transformed_columns + normalizing_columns]
+            x = x[transformed_columns]
         # adding time features
         if time_features:
             x = self.add_time_features(x)
@@ -317,7 +315,7 @@ class Formatter:
             self.logger.warning('You did not pass any denormalization expression, ** no denormalization will be applied **. '
                                 '\bYou can set a denormalization expression by calling Formatter.add_normalizing_fun ')
             return y
-        y, _ = self.normalize(x, y, normalizing_fun=self.denormalizing_fun)
+        y, _ = self.normalize(x.copy(), y, normalizing_fun=self.denormalizing_fun)
         return y
 
     def normalizing_wrapper(self, normalizing_fun, df, t):
