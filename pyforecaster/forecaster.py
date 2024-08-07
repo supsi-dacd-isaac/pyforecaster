@@ -60,9 +60,8 @@ class ScenarioGenerator(object):
         pass
 
     def anti_transform(self, x, y_hat):
-        if self.formatter is not None:
-            if self.formatter.target_transformers is not None:
-                y_hat = self.formatter.denormalize(x, y_hat)
+        if self.formatter is not None and self.formatter.denormalizing_fun is not None:
+            y_hat = self.formatter.denormalize(x, y_hat)
         return y_hat
 
     @abstractmethod
