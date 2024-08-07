@@ -273,7 +273,7 @@ class TestFormatDataset(unittest.TestCase):
 
     def test_normalizers_complex(self):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
-        formatter = pyf.Formatter().add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
+        formatter = pyf.Formatter(augment=False).add_transform(['a', 'b'], lags=np.arange(1, 5), agg_freq='20min')
         formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
         formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a_n')
         formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b_n')
@@ -285,7 +285,7 @@ class TestFormatDataset(unittest.TestCase):
         y_unnorm = formatter.denormalize(x, y_norm)
 
         # check if back-transform works
-        assert (y_unnorm-y).sum().sum() < 1e-6
+        assert (y_unnorm-y).abs().sum().sum() < 1e-6
 
 
     def test_normalizers_impossible(self):

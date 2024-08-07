@@ -8,6 +8,7 @@ from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWinters
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
 from pyforecaster.forecasting_models.random_fourier_features import RFFRegression, AdditiveRFFRegression
 from pyforecaster.forecasting_models.randomforests import QRF
+from pyforecaster.forecasting_models.gradientboosters import LGBMHybrid
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
@@ -204,13 +205,13 @@ class TestFormatDataset(unittest.TestCase):
 
 
     def test_antinormalize(self):
-        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
+        formatter = Formatter(logger=self.logger, augment=False).add_transform(['all'], lags=np.arange(144),
                                                                     relative_lags=True)
         formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
-        formatter.add_target_transform(['all'], lags=-np.arange(144))
+        formatter.add_target_transform(['all'], lags=-np.arange(1, 145))
 
-        formatter.add_target_normalizer(['all'], 'mean', agg_freq='7d', name='a_movingavg')
-        formatter.add_target_normalizer(['all'], 'std', agg_freq='7d', name='a_movingstd')
+        formatter.add_target_normalizer(['all'], 'mean', agg_freq='3d', name='a_movingavg')
+        formatter.add_target_normalizer(['all'], 'std', agg_freq='3d', name='a_movingstd')
 
         x, y = formatter.transform(self.data.iloc[:10000])
 
@@ -218,27 +219,22 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
-        m_lin = LinearForecaster(val_ratio=0.2, formatter=formatter).fit(x_tr, y_tr)
-        y_hat = m_lin.predict(x_te)
-        q = m_lin.predict_quantiles(x_te)
+        #m_lin = LinearForecaster(val_ratio=0.2, formatter=formatter).fit(x_tr, y_tr)
+        #y_hat_nonorm = m_lin.predict(x_te)
+        #q_nonorm = m_lin.predict_quantiles(x_te)
 
         #m_lgb = LGBForecaster(val_ratio=0.5, lgb_pars={'num_leaves':20}, formatter=formatter).fit(x_tr, y_tr)
         #y_hat_lgb = m_lgb.predict(x_te)
-        mae = lambda x, y: np.abs(x-y).mean().mean()
-        print('MAE lin:', mae(y_te, y_hat))
+        #mae = lambda x, y: np.abs(x-y).mean().mean()
+        #print('MAE lin:', mae(y_te, y_hat_nonorm))
 
-
-        plt.close('all')
-        plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat_lin'], n_rows=600)
-        plt.close('all')
 
         formatter.add_normalizing_fun(expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)",
                                       inv_expr="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
         x, y_norm = formatter.transform(self.data.iloc[:10000])
         y = formatter.denormalize(x, y_norm)
 
-        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y_norm.iloc[:n_tr].copy(),
-                                  y.iloc[n_tr:].copy()]
+        x_tr, x_te, y_tr = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y_norm.iloc[:n_tr].copy()]
         m_lin = LinearForecaster(val_ratio=0.2, formatter=formatter).fit(x_tr, y_tr)
         y_hat = m_lin.predict(x_te)
         q = m_lin.predict_quantiles(x_te)
