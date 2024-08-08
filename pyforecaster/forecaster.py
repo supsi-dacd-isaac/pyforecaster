@@ -133,6 +133,8 @@ class LinearForecaster(ScenarioGenerator):
             self.m = LinearRegression().fit(x, y)
         elif self.kind == 'ridge':
             self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x, y)
+        else:
+            raise ValueError('kind must be either linear or ridge')
         super().fit(x_val, y_val)
         return self
 
