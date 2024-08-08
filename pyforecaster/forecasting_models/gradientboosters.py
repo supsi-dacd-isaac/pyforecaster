@@ -145,8 +145,13 @@ class LGBMHybrid(ScenarioGenerator):
         return self.multi_step_model.predict(x,num_threads=1).reshape(-1, 1)
 
     def predict_parallel(self, x):
-        with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
-            y_hat = list(executor.map(partial(self.predict_single, x=x), np.arange(self.n_multistep)))
+        if self.parallel:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+                y_hat = list(executor.map(partial(self.predict_single, x=x), np.arange(self.n_multistep)))
+        else:
+            y_hat = []
+            for i in range(self.n_multistep):
+                y_hat.append(self.predict_single(i, x))
         return np.hstack(y_hat)
 
     @staticmethod

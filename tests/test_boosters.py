@@ -32,8 +32,19 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_lin = m_lin.predict(x_te)
         q = m_lin.predict_quantiles(x_te)
 
-        m_lgbhybrid = LGBMHybrid(red_frac_multistep=0.1,  val_ratio=0.3, lgb_pars={'num_leaves': 300, 'n_estimators': 10, 'learning_rate':0.05},
-                                 n_single=10, parallel=True, formatter=formatter, metadata_features=['minuteofday', 'utc_offset', 'dayofweek', 'hour'],tol_period='1h', keep_last_seconds=3600).fit(x_tr, y_tr)
+        m_lgbhybrid = LGBMHybrid(red_frac_multistep=0.1, val_ratio=0.3,
+                                 lgb_pars={'num_leaves': 300, 'n_estimators': 10, 'learning_rate': 0.05},
+                                 n_single=10, parallel=False, formatter=formatter,
+                                 metadata_features=['minuteofday', 'utc_offset', 'dayofweek', 'hour'], tol_period='1h',
+                                 keep_last_seconds=3600).fit(x_tr, y_tr)
+        y_hat_lgbh = m_lgbhybrid.predict(x_te)
+        q = m_lgbhybrid.predict_quantiles(x_te)
+
+        m_lgbhybrid = LGBMHybrid(red_frac_multistep=0.1, val_ratio=0.3,
+                                 lgb_pars={'num_leaves': 300, 'n_estimators': 10, 'learning_rate': 0.05},
+                                 n_single=10, parallel=True, formatter=formatter,
+                                 metadata_features=['minuteofday', 'utc_offset', 'dayofweek', 'hour'], tol_period='1h',
+                                 keep_last_seconds=3600).fit(x_tr, y_tr)
         y_hat_lgbh = m_lgbhybrid.predict(x_te)
         q = m_lgbhybrid.predict_quantiles(x_te)
 
