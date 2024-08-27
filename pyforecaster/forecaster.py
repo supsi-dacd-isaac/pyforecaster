@@ -6,9 +6,40 @@ from tqdm import tqdm
 from abc import abstractmethod
 from lightgbm import LGBMRegressor, Dataset, train
 from sklearn.linear_model import RidgeCV, LinearRegression
+from sklearn.preprocessing import LabelEncoder
 from pyforecaster.scenarios_generator import ScenGen
 from pyforecaster.utilities import get_logger
 from inspect import signature
+
+
+def encode_categorical(func):
+    def wrapper(self, x: pd.DataFrame, *args, **kwargs):
+        # Initialize a protected dictionary to store encoders if it doesn't exist yet
+        if not hasattr(self, '_le'):
+            self._le = {}
+
+        # Check if x contains columns that are not numbers and encode them
+        for column in x.select_dtypes(include=['object', 'category']).columns:
+            if column not in self._le:
+                # Create and fit a new encoder for the column if it's the first encounter
+                le = LabelEncoder()
+                x[column] = le.fit_transform(x[column].astype(str))
+                self._le[column] = le  # Store the encoder for future use
+            else:
+                # Use the existing encoder to transform the data
+                le = self._le[column]
+                # Check for unseen categories
+                unique_values = set(x[column].astype(str))
+                unseen_values = unique_values - set(le.classes_)
+                if unseen_values:
+                    raise ValueError(f"Unseen categories {unseen_values} encountered in column '{column}'.")
+                x[column] = le.transform(x[column].astype(str))
+
+        # Call the original function with preprocessed data
+        return func(self, x, *args, **kwargs)
+
+    return wrapper
+
 
 
 class ScenarioGenerator(object):
@@ -34,7 +65,6 @@ class ScenarioGenerator(object):
     def set_params(self, **kwargs):
         [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
 
-    @abstractmethod
     def get_params(self, **kwargs):
         return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
@@ -127,6 +157,7 @@ class LinearForecaster(ScenarioGenerator):
         self.m = None
         self.kind = kind
 
+    @encode_categorical
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         x, y, x_val, y_val = self.train_val_split(x, y)
         if self.kind == 'linear':
@@ -138,10 +169,12 @@ class LinearForecaster(ScenarioGenerator):
         super().fit(x_val, y_val)
         return self
 
+    @encode_categorical
     def predict(self, x:pd.DataFrame, **kwargs):
         y_hat = pd.DataFrame(self.m.predict(x), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
+
     def predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
