@@ -184,7 +184,7 @@ class LinearForecaster(ScenarioGenerator):
 
 class LGBForecaster(ScenarioGenerator):
     def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=4, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+                 n_jobs=4, n_jobs_predict=0, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
         self.device_type = device_type
@@ -199,6 +199,7 @@ class LGBForecaster(ScenarioGenerator):
         self.colsample_bytree=colsample_bytree
         self.colsample_bynode = colsample_bynode
         self.n_jobs = n_jobs
+        self.n_jobs_predict = n_jobs_predict
         self.lgb_pars = {"device_type": self.device_type,
                     "objective": self.objective,
                     "max_depth": self.max_depth,
@@ -225,7 +226,7 @@ class LGBForecaster(ScenarioGenerator):
     def predict(self, x, **kwargs):
         preds = []
         for m in self.m:
-            preds.append(m.predict(x).reshape(-1, 1))
+            preds.append(m.predict(x, num_threads=self.n_jobs_predict).reshape(-1, 1))
         y_hat = pd.DataFrame(np.hstack(preds), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
