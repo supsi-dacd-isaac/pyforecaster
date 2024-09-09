@@ -6,9 +6,40 @@ from tqdm import tqdm
 from abc import abstractmethod
 from lightgbm import LGBMRegressor, Dataset, train
 from sklearn.linear_model import RidgeCV, LinearRegression
+from sklearn.preprocessing import LabelEncoder
 from pyforecaster.scenarios_generator import ScenGen
 from pyforecaster.utilities import get_logger
 from inspect import signature
+
+
+def encode_categorical(func):
+    def wrapper(self, x: pd.DataFrame, *args, **kwargs):
+        # Initialize a protected dictionary to store encoders if it doesn't exist yet
+        if not hasattr(self, '_le'):
+            self._le = {}
+
+        # Check if x contains columns that are not numbers and encode them
+        for column in x.select_dtypes(include=['object', 'category']).columns:
+            if column not in self._le:
+                # Create and fit a new encoder for the column if it's the first encounter
+                le = LabelEncoder()
+                x[column] = le.fit_transform(x[column].astype(str))
+                self._le[column] = le  # Store the encoder for future use
+            else:
+                # Use the existing encoder to transform the data
+                le = self._le[column]
+                # Check for unseen categories
+                unique_values = set(x[column].astype(str))
+                unseen_values = unique_values - set(le.classes_)
+                if unseen_values:
+                    raise ValueError(f"Unseen categories {unseen_values} encountered in column '{column}'.")
+                x[column] = le.transform(x[column].astype(str))
+
+        # Call the original function with preprocessed data
+        return func(self, x, *args, **kwargs)
+
+    return wrapper
+
 
 
 class ScenarioGenerator(object):
@@ -35,7 +66,6 @@ class ScenarioGenerator(object):
     def set_params(self, **kwargs):
         [self.__setattr__(k, v) for k, v in kwargs.items() if k in self.__dict__.keys()]
 
-    @abstractmethod
     def get_params(self, **kwargs):
         return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
@@ -65,9 +95,8 @@ class ScenarioGenerator(object):
         pass
 
     def anti_transform(self, x, y_hat):
-        if self.formatter is not None:
-            if self.formatter.target_transformers is not None:
-                y_hat = self.formatter.denormalize(x, y_hat)
+        if self.formatter is not None and self.formatter.denormalizing_fun is not None:
+            y_hat = self.formatter.denormalize(x, y_hat)
         return y_hat
 
     @abstractmethod
@@ -147,19 +176,24 @@ class LinearForecaster(ScenarioGenerator):
         self.m = None
         self.kind = kind
 
+    @encode_categorical
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         x, y, x_val, y_val = self.train_val_split(x, y)
         if self.kind == 'linear':
             self.m = LinearRegression().fit(x, y)
         elif self.kind == 'ridge':
             self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x, y)
+        else:
+            raise ValueError('kind must be either linear or ridge')
         super().fit(x_val, y_val)
         return self
 
+    @encode_categorical
     def predict(self, x:pd.DataFrame, **kwargs):
         y_hat = pd.DataFrame(self.m.predict(x), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
+
     def predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
@@ -169,7 +203,7 @@ class LinearForecaster(ScenarioGenerator):
 
 class LGBForecaster(ScenarioGenerator):
     def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=4, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
+                 n_jobs=4, n_jobs_predict=0, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
         super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
         self.m = []
         self.device_type = device_type
@@ -184,6 +218,7 @@ class LGBForecaster(ScenarioGenerator):
         self.colsample_bytree=colsample_bytree
         self.colsample_bynode = colsample_bynode
         self.n_jobs = n_jobs
+        self.n_jobs_predict = n_jobs_predict
         self.lgb_pars = {"device_type": self.device_type,
                     "objective": self.objective,
                     "max_depth": self.max_depth,
@@ -210,7 +245,7 @@ class LGBForecaster(ScenarioGenerator):
     def predict(self, x, **kwargs):
         preds = []
         for m in self.m:
-            preds.append(m.predict(x).reshape(-1, 1))
+            preds.append(m.predict(x, num_threads=self.n_jobs_predict).reshape(-1, 1))
         y_hat = pd.DataFrame(np.hstack(preds), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
