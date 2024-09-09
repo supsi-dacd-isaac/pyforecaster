@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import logging
+
+from ray.tune import quniform
+
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
 from pyforecaster.forecasting_models.random_fourier_features import RFFRegression, AdditiveRFFRegression, BrutalRegressor
@@ -212,7 +215,8 @@ class TestFormatDataset(unittest.TestCase):
 
         qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4, n_single=2).fit(x_tr, y_tr)
         y_hat = qrf.predict(x_te)
-        q = qrf.predict_quantiles(x_te)
+        q = qrf.predict_quantiles(x_te, quantiles=[0.1, 0.9])
+        q = qrf.predict_quantiles(x_te, quantiles=[0.5])
 
         #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
 

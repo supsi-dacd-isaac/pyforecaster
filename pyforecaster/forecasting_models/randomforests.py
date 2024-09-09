@@ -59,7 +59,6 @@ class QRF(ScenarioGenerator):
         self.max_features = max_features
         self.max_leaf_nodes = max_leaf_nodes
         self.min_impurity_decrease = min_impurity_decrease
-        self.default_quantiles = q_vect
         self.criterion = criterion
         self.ccp_alpha = ccp_alpha
         self.parallel = parallel
@@ -81,7 +80,7 @@ class QRF(ScenarioGenerator):
             "max_features": max_features ,
             "max_leaf_nodes": max_leaf_nodes,
             "min_impurity_decrease": min_impurity_decrease,
-            "default_quantiles":q_vect,
+            "default_quantiles":q_vect if q_vect is not None else 'mean',
             "criterion":criterion,
              "ccp_alpha":ccp_alpha
         }
@@ -159,7 +158,7 @@ class QRF(ScenarioGenerator):
                 if len(preds.shape) == 2:
                     preds = np.expand_dims(preds, 0)
                 preds = np.swapaxes(preds, 1, 2)
-                preds = self.quantiles_to_df(preds, index=x.index)
+                preds = self.quantiles_to_df(preds, index=x.index, q_vect=kwargs['quantiles'])
         else:
             preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, preds)
@@ -171,12 +170,17 @@ class QRF(ScenarioGenerator):
                                         keep_last_seconds=self.keep_last_seconds,
                                         tol_period=self.tol_period, period=period)
         p = self.models[i].predict(x_i, quantiles=list(kwargs['quantiles']) if 'quantiles' in kwargs else 'mean')
+        if len(p.shape) == 1:
+            p = np.expand_dims(p, 1)
         return p
 
     def predict_single(self, i, x, quantiles='mean', add_step=True):
         if add_step:
             x = pd.concat([x.reset_index(drop=True), pd.Series(np.ones(len(x)) * i, name='sa')], axis=1)
-        return self.multi_step_model.predict(x, quantiles)
+        preds = self.multi_step_model.predict(x, quantiles)
+        if len(preds.shape) == 1:
+            preds = np.expand_dims(preds, 1)
+        return preds
 
     def predict_parallel(self, x, quantiles='mean', add_step=True):
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallel_workers) as executor:
