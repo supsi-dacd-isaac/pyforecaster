@@ -5,8 +5,6 @@ import pandas as pd
 import numpy as np
 import logging
 
-from ray.tune import quniform
-
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
 from pyforecaster.forecasting_models.random_fourier_features import RFFRegression, AdditiveRFFRegression, BrutalRegressor
