@@ -52,7 +52,7 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_lgb = m_lgb.predict(x_te)
 
         # plot_quantiles([y_hat_lgbh.iloc[:100, :]], q[:100, :, :], ['y_hat_lgb'], n_rows=100, repeat=True)
-        plot_quantiles([y_hat_lin.iloc[:100, :]], q[:100, :, :], ['y_hat_lgb'], n_rows=100, repeat=False)
+        plot_quantiles([y_hat_lin.iloc[:100, :]], q.iloc[:100, :], ['y_hat_lgb'], n_rows=100, repeat=False)
 
 
     def do_not_test_linear_val_split(self):

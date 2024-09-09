@@ -38,12 +38,12 @@ class StatsModelsWrapper(ScenarioGenerator):
         hw_target = hankel(y_present[1:], self.n_sa)
         resid = hw_target - preds
         self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
-
+        self.target_cols = [f'{self.target_name}_t+{i}' for i in range(1, self.n_sa+1)]
 
     def predict(self, x_pd:pd.DataFrame, **kwargs):
         pass
 
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)

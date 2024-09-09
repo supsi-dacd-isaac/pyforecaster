@@ -2,6 +2,8 @@
 # Author: Tetsuya Ishikawa
 
 import functools
+
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats
 from sklearn.linear_model import LinearRegression
@@ -10,47 +12,112 @@ import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from tqdm import tqdm
+from numba import njit, prange, typed, types
+
+
+@njit(fastmath=True)
+def compute_coeffs(y, x, x_binned, n_bins):
+    n_features = y.shape[1]
+    y_means = np.empty((n_bins, n_features))
+    x_means = np.zeros(n_bins)
+    coeffs = np.zeros((n_bins, n_features))
+
+    for j in range(n_bins):
+        mask = x_binned == j
+        selected_y = y[mask]
+        selected_x = x[mask]
+
+        if selected_y.shape[0] > 0:
+            # Use vectorized operation to calculate the mean
+            y_means[j, :] = np.sum(selected_y, axis=0) / selected_y.shape[0]
+
+            # Vectorized computation for x_means[j]
+            #x_means[j] = np.sum(selected_x) / selected_x.shape[0]
+
+            # Vectorized computation for coeffs[j, :]
+            #x_diff = selected_x - x_means[j]
+            #y_diff = selected_y - y_means[j, :]
+            #coeffs[j, :] = y_diff.T @ x_diff / (np.sum(x_diff ** 2) + 1e-12)
+        else:
+            y_means[j, :] = np.nan  # or 0 if you prefer
+
+    return y_means, x_means, coeffs
+
+@njit(fastmath=True)
+def linear_response(x, x_binned, x_means, y_means, slopes):
+    return y_means[x_binned] #+ slopes[x_binned]*(x - x_means[x_binned]).reshape(-1, 1)
+
+@njit(fastmath=True)
+def fit_feature(x, x_binned, cuts, y):
+    y_means, x_means, coeffs = compute_coeffs(y, x, x_binned, len(cuts)-1)
+    y_hat = linear_response(x, x_binned, x_means, y_means, coeffs)
+    #y_means = np.array([np.array([y[x_binned == j, c].mean() for c in range(y.shape[1])]) for j in range(n_bins + 1)])
+    score = np.mean((y - y_hat) ** 2) ** 0.5
+    return cuts, y_means, x_means, coeffs, score
+
+
+@njit
+def fit_features(x, y, cuts):
+    pars = []
+    for i in range(x.shape[1]):
+        x_binned = np.digitize(x[:, i], cuts[i]) - 1
+        pars.append(fit_feature(x[:, i], x_binned, cuts[i], y))
+    return pars
 
 class BrutalRegressor:
-    def __init__(self, n_iter=10):
+    def __init__(self, n_iter=10, n_bins=11, learning_rate=0.1, bootstrap_fraction=0.2):
         self.best_pars = []
         self.n_iter = n_iter
         self.target_cols = None
-    def fit_feature(self, x, y, n_bins=10):
+        self.bootstrap_fraction = bootstrap_fraction
+        self.n_bins = n_bins
+        self.learning_rate = learning_rate
 
-        cuts = np.quantile(x, np.linspace(0, 1, n_bins+1))
-        x_binned = np.digitize(x, cuts)-1
-        y_means = np.array([y[x_binned == i].mean() for i in range(n_bins+1)])
-        score = np.mean((y - y_means[x_binned, :])**2)**0.5
-        pars = {'cuts': cuts, 'y_means': y_means, 'score': score}
-
-        return pars
 
     def one_level_fit(self, x, y):
-        with ProcessPoolExecutor(4) as executor:
-            pars = list(executor.map(partial(self.fit_feature, y=y), [x[:, i] for i in range(x.shape[1])]))
-        # find best feature
-        best_feature = np.argmin([s['score'] for s in pars])
-        best_pars = pars[best_feature]
-        return best_feature, best_pars
-    def fit(self, x, y):
+        #pars = fit_feature(x[:11, 0], y.values[:11], n_bins=self.n_bins)
+        #with ProcessPoolExecutor() as executor:
+        #    pars = list(tqdm(executor.map(partial(fit_feature, y=y.values), x.T), total=x.shape[1]) )
+        cuts = np.vstack([np.quantile(x_i,  np.linspace(0, 1, self.n_bins+2)) for x_i in x.T])
+        cuts[:, 0] = -np.inf
+        cuts[:, -1] = np.inf
+        pars = fit_features(x, y, cuts)
+        best_feature = np.argmin([s[-1] for s in pars])
+        best_pars = {'cuts':pars[best_feature][0], 'y_means':pars[best_feature][1], 'x_means':pars[best_feature][2],
+                     'coeffs':pars[best_feature][3], 'best_feature':best_feature}
+
+        return best_pars
+    def fit(self, x, y, plot=False):
         if isinstance(x, pd.DataFrame):
             x = x.values
         self.target_cols = y.columns
-        err = y.copy()
+        if plot:
+            plt.figure()
+        err = y.copy().values
         for i in tqdm(range(self.n_iter)):
-            best_feature, best_pars = self.one_level_fit(x, err)
-            y_hat = best_pars['y_means'][np.digitize(x[:, best_feature], best_pars['cuts'])-1]
+            rand_idx = np.random.choice(x.shape[0], int(self.bootstrap_fraction*x.shape[0]), replace=True)
+            best_pars = self.one_level_fit(x[rand_idx], err[rand_idx])
+            #y_hat = self.learning_rate*best_pars['y_means'][np.digitize(x[:, best_pars['best_feature']], best_pars['cuts'])-1]
+            x_binned = np.digitize(x[:, best_pars['best_feature']], best_pars['cuts']) - 1
+            y_hat = self.learning_rate*linear_response(x[:, best_pars['best_feature']], x_binned, best_pars['x_means'], best_pars['y_means'], best_pars['coeffs'])
             err = err - y_hat
-            print(np.abs(err).mean().mean())
             self.best_pars.append(best_pars)
+            print(np.mean(np.abs(err)))
+            if np.any(np.isnan(err)):
+                print('asdasdsad')
+            if plot:
+                plt.cla()
+                plt.scatter(y.iloc[:, 0], err[:, 0], s=1)
+                plt.pause(0.01)
         return self
 
     def predict(self, x):
 
         y_hat = np.zeros((x.shape[0], self.best_pars[0]['y_means'].shape[1]))
         for i in range(self.n_iter):
-            y_hat += self.best_pars[i]['y_means'][np.digitize(x.iloc[:, i], self.best_pars[i]['cuts'])-1]
+            #y_hat += self.learning_rate*self.best_pars[i]['y_means'][np.digitize(x.iloc[:, self.best_pars[i]['best_feature']], self.best_pars[i]['cuts'])-1]
+            x_binned = np.digitize(x.iloc[:, self.best_pars[i]['best_feature']], self.best_pars[i]['cuts']) - 1
+            y_hat += self.learning_rate*linear_response(x.iloc[:, self.best_pars[i]['best_feature']].values, x_binned, self.best_pars[i]['x_means'], self.best_pars[i]['y_means'], self.best_pars[i]['coeffs'])
         return pd.DataFrame(y_hat, index = x.index, columns=self.target_cols)
 
 
@@ -284,7 +351,7 @@ class RFFRegression(RandomFFRegressor, ScenarioGenerator):
         y_hat = RandomFFRegressor.predict(self, x, **kwargs)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
@@ -325,7 +392,7 @@ class AdditiveRFFRegression(ScenarioGenerator):
 
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)

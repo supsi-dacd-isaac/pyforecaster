@@ -159,6 +159,7 @@ class QRF(ScenarioGenerator):
                 if len(preds.shape) == 2:
                     preds = np.expand_dims(preds, 0)
                 preds = np.swapaxes(preds, 1, 2)
+                preds = self.quantiles_to_df(preds, index=x.index)
         else:
             preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, preds)

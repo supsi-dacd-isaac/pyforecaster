@@ -21,7 +21,7 @@ class Persistent(ScenarioGenerator):
         y_hat = x[self.target_col].values.reshape(-1, 1) * np.ones((1, self.n_sa))
         return pd.DataFrame(y_hat, index=x.index)
 
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         if self.conditional_to_hour:
             for h in np.unique(x.index.hour):
@@ -54,7 +54,7 @@ class SeasonalPersistent(ScenarioGenerator):
         y_hat = hankel(values, self.n_sa)
         return pd.DataFrame(y_hat[:len(x), :], index=x.index)
 
-    def predict_quantiles(self, x: pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x: pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         if self.conditional_to_hour:
             for h in np.unique(x.index.hour):

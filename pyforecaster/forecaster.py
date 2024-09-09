@@ -54,6 +54,7 @@ class ScenarioGenerator(object):
         self.additional_node = additional_node
         self.formatter = formatter
         self.conditional_to_hour = conditional_to_hour
+        self.target_cols = None
 
     @property
     def online_tree_reduction(self):
@@ -100,8 +101,35 @@ class ScenarioGenerator(object):
         return y_hat
 
     @abstractmethod
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         pass
+
+    def quantiles_to_df(self, q_hat:np.ndarray, index):
+        level_0_labels = self.target_cols
+        level_1_labels = self.q_vect
+        q_hat = np.swapaxes(q_hat, 1, 2)
+        q_hat = np.reshape(q_hat, (q_hat.shape[0], q_hat.shape[1] * q_hat.shape[2]))
+        q_hat = pd.DataFrame(q_hat, index=index, columns=pd.MultiIndex.from_product([level_0_labels, level_1_labels]))
+        q_hat.columns.names = ['target', 'quantile']
+        return q_hat
+
+    @staticmethod
+    def quantiles_to_numpy(q_hat:pd.DataFrame):
+        n_taus = len(q_hat.columns.get_level_values(1).unique())
+        q_hat = q_hat.values
+        q_hat = np.reshape(q_hat, (q_hat.shape[0], n_taus, -1))
+        q_hat = np.swapaxes(q_hat, 1, 2)
+        return q_hat
+
+    def predict_quantiles(self, x, dataframe=True, **kwargs):
+        q_hat = self._predict_quantiles(x, **kwargs)
+        if isinstance(q_hat, np.ndarray) and dataframe:
+            # create multiindex dataframe
+            q_hat = self.quantiles_to_df(q_hat, x.index)
+        if isinstance(q_hat, pd.DataFrame) and not dataframe:
+            q_hat = self.quantiles_to_numpy(q_hat)
+
+        return q_hat
 
     def predict_pmf(self, x, discrete_prob_space, **predict_q_kwargs):
         """
@@ -110,7 +138,7 @@ class ScenarioGenerator(object):
         :param predict_q_kwargs:
         :return:
         """
-        quantiles = self.predict_quantiles(x, **predict_q_kwargs)
+        quantiles = self.predict_quantiles(x, dataframe=False, **predict_q_kwargs)
         pmf = np.zeros((quantiles.shape[0], quantiles.shape[1], len(discrete_prob_space)-1))
         for i in range(quantiles.shape[0]):
             for j in range(quantiles.shape[1]):
@@ -120,7 +148,7 @@ class ScenarioGenerator(object):
     def predict_scenarios(self, x, n_scen=None, random_state=None, **predict_q_kwargs):
         n_scen = self.n_scen_fit if n_scen is None else n_scen
         # retrieve quantiles from child class
-        quantiles = self.predict_quantiles(x, **predict_q_kwargs)
+        quantiles = self.predict_quantiles(x, dataframe=False, **predict_q_kwargs)
         scenarios = self.scengen.predict_scenarios(quantiles, n_scen=n_scen, x=x, random_state=random_state)
         q_from_scens = np.rollaxis(np.quantile(scenarios, self.q_vect, axis=-1), 0, 3)
         mean_abs_dev = np.abs(q_from_scens - quantiles).mean(axis=0).mean(axis=0)
@@ -142,7 +170,7 @@ class ScenarioGenerator(object):
 
         if self.online_tree_reduction:
             # retrieve quantiles from child class
-            quantiles = self.predict_quantiles(x, **predict_q_kwargs)
+            quantiles = self.predict_quantiles(x, dataframe=False, **predict_q_kwargs)
 
             trees = self.scengen.predict_trees(quantiles=quantiles, n_scen=n_scen, x=x,
                                          nodes_at_step=nodes_at_step, init_obs=init_obs,
@@ -194,7 +222,7 @@ class LinearForecaster(ScenarioGenerator):
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
 
-    def predict_quantiles(self, x:pd.DataFrame, **kwargs):
+    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
@@ -250,7 +278,7 @@ class LGBForecaster(ScenarioGenerator):
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)

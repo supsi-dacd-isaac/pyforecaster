@@ -9,6 +9,7 @@ import matplotlib.colors as colors
 from matplotlib.gridspec import GridSpec
 import networkx as nx
 from pyforecaster.scenred import plot_from_graph
+from pyforecaster.forecaster import ScenarioGenerator
 
 def basic_setup(subplots_tuple, width, height, b=0.15, l=0.15, w=0.22, r=None, style ='seaborn', **kwargs):
     plt.style.use(style)
@@ -280,7 +281,7 @@ def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=Fa
                    remove_spines=True, savepath=None, **kwargs):
     n_max = np.minimum(signals[0].shape[0], int(n_rows*step))
     n_rows = np.minimum(int(np.floor(signals[0].shape[0]/step)), n_rows)
-    qs = qs.values if isinstance(qs, pd.DataFrame) else qs
+    qs = ScenarioGenerator().quantiles_to_numpy(qs) if isinstance(qs, pd.DataFrame) else qs
     fig, ax = plt.subplots(1, **kwargs)
     signals = signals if isinstance(signals, list) else [signals]
     t = np.arange(signals[0].shape[1])

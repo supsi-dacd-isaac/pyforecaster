@@ -165,7 +165,7 @@ class LGBMHybrid(ScenarioGenerator):
                                                         period=period, keep_last_n_lags=keep_last_n_lags, keep_last_seconds=keep_last_seconds,
                                                         tol_period=tol_period)
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
         for h in np.unique(x.index.hour):
             preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)

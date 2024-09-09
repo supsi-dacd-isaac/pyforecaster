@@ -185,18 +185,29 @@ class TestFormatDataset(unittest.TestCase):
                                                                     relative_lags=True)
         formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
         formatter.add_target_transform(['all'], lags=-np.arange(6))
+        formatter.add_target_normalizer(['all'], 'mean', agg_freq='3d', name='a_movingavg')
+        formatter.add_target_normalizer(['all'], 'std', agg_freq='3d', name='a_movingstd')
 
-        x, y = formatter.transform(self.data.iloc[:1000])
-        x.columns = x.columns.astype(str)
-        y.columns = y.columns.astype(str)
-        n_tr = int(len(x) * 0.99)
-        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
-                                  y.iloc[n_tr:].copy()]
+        #m_lin = LinearForecaster(val_ratio=0.2, formatter=formatter).fit(x_tr, y_tr)
+        #y_hat_nonorm = m_lin.predict(x_te)
+        #q_nonorm = m_lin.predict_quantiles(x_te)
+
+        #m_lgb = LGBForecaster(val_ratio=0.5, lgb_pars={'num_leaves':20}, formatter=formatter).fit(x_tr, y_tr)
+        #y_hat_lgb = m_lgb.predict(x_te)
+        #mae = lambda x, y: np.abs(x-y).mean().mean()
+        #print('MAE lin:', mae(y_te, y_hat_nonorm))
+
+
+        formatter.add_normalizing_fun(expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)",
+                                      inv_expr="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
+        x, y_norm = formatter.transform(self.data.iloc[:1000])
+        n_tr = int(len(x) * 0.9)
+        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y_norm.iloc[:n_tr].copy(), y_norm.iloc[n_tr:].copy()]
 
         qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4, n_single=6).fit(x_tr, y_tr)
         y_hat = qrf.predict(x_te)
         q = qrf.predict_quantiles(x_te)
-
+        y_te = formatter.denormalize(x_te, y_te)
          #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
 
         qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4, n_single=2).fit(x_tr, y_tr)
@@ -255,7 +266,7 @@ class TestFormatDataset(unittest.TestCase):
         m = ExponentialSmoothing(target_name='all', q_vect=np.arange(31)/30, nodes_at_step=None, val_ratio=0.8, n_sa=24,
                                  seasonal=24).fit(data_tr)
         y_hat = m.predict(data_te)
-        q_hat = m.predict_quantiles(data_te)
+        q_hat = m.predict_quantiles(data_te, dataframe=False)
         y_plot = pd.concat({'y_{:02d}'.format(i): data_te['all'].shift(-i) for i in range(24)}, axis=1)
         #plot_quantiles([y_plot, y_hat], q_hat, ['y_te', 'y_hat'], n_rows=300)
 

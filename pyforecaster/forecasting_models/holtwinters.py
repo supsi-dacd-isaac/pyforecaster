@@ -198,6 +198,7 @@ class HoltWinters(ScenarioGenerator):
         # concat past inputs and last row of target
         self.reinit(y)
         self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
+        self.target_cols = ['{}_{}'.format(self.target_name, t) for t in np.arange(self.n_sa)]
         return self
 
     def predict(self, x_pd, **kwargs):
@@ -231,7 +232,7 @@ class HoltWinters(ScenarioGenerator):
 
         return y_hat
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
@@ -448,7 +449,7 @@ class HoltWintersMulti(ScenarioGenerator):
         for i,m in enumerate(self.models):
             m.reinit(x)
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 

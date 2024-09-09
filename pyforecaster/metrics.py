@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from itertools import permutations
-
+from pyforecaster.forecaster import ScenarioGenerator
 
 def chose_axis(x, agg_index):
     return 0 if len(x) == len(agg_index) else 1
@@ -58,7 +58,7 @@ def quantile_scores(q_hat, t, alphas=None, agg_index=None, **kwargs):
     :return:
     """
     agg_index = np.ones_like(t.index) if agg_index is None else agg_index
-
+    q_hat = ScenarioGenerator().quantiles_to_numpy(q_hat) if isinstance(q_hat, pd.DataFrame) else q_hat
     quantile_axis = 2 if q_hat.shape[1] == t.shape[1] else 1
     n_quantiles = q_hat.shape[quantile_axis]
     if alphas is None:

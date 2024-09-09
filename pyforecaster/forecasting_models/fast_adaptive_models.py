@@ -135,6 +135,7 @@ class StatefulForecaster(ScenarioGenerator):
         hw_target = hankel(y_present[1:], self.n_sa)
         resid = hw_target - preds
         self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
+        self.target_cols = [f'{self.target_name}_t+{i}' for i in range(1, self.n_sa + 1)]
         return self
 
     @abstractmethod
@@ -238,7 +239,7 @@ class Fourier_es(StatefulForecaster):
             return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
         return np.vstack(preds[1:])
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
@@ -397,7 +398,7 @@ class FK(StatefulForecaster):
             return np.vstack(preds[1:]), coeffs_t_history.T
         return np.vstack(preds[1:])
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
@@ -503,6 +504,7 @@ class FK_multi(StatefulForecaster):
         hw_target = hankel(x_pd[self.target_name].values[1:], self.n_sa)
         resid = hw_target - preds
         self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
+        self.target_cols = ['{}_{}'.format(self.target_name, t) for t in np.arange(self.n_sa)]
         return self
 
     def predict(self, x_pd, **kwargs):
@@ -563,7 +565,7 @@ class FK_multi(StatefulForecaster):
             return np.vstack(preds[1:]), np.vstack(coeffs_t_history)
         return np.vstack(preds[1:])
 
-    def predict_quantiles(self, x, **kwargs):
+    def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
         return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 

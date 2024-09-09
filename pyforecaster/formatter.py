@@ -289,15 +289,15 @@ class Formatter:
 
         # normalize the target if any
         if return_target:
-            # join target and normalizers in a single df
-            df_n = pd.concat([y, normalizers], axis=1)
-
-            for target_to_norm in np.unique(target_to_norm_names):
-                for tr in self.target_transformers:
-                    nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
-                    for c in nr_columns:
-                        df_n.loc[:, c] = self.normalizing_wrapper(normalizing_fun, df_n, c)
-            y = df_n[[c for c in y.columns]]
+            if isinstance(y.columns, pd.MultiIndex):
+                # we are normalizing a Multiindex Dataframe containing quantiles, indicated in level=1
+                for tau in y.columns.get_level_values(1).unique():
+                    y_tau = y.loc[:, (slice(None), tau)]
+                    y_tau = y_tau.droplevel(1, 1)
+                    y.loc[:, (slice(None), tau)] =  self.normalize_target_inner(y_tau, normalizers, target_to_norm_names,
+                                                normalizing_fun).values
+            else:
+                y = self.normalize_target_inner(y, normalizers, target_to_norm_names, normalizing_fun)
 
         # normalize the features related to the target
         for target_to_norm in np.unique(target_to_norm_names):
@@ -309,6 +309,18 @@ class Formatter:
 
 
         return y, x
+
+    def normalize_target_inner(self, y, normalizers, target_to_norm_names, normalizing_fun):
+        # join target and normalizers in a single df
+        df_n = pd.concat([y, normalizers], axis=1)
+
+        for target_to_norm in np.unique(target_to_norm_names):
+            for tr in self.target_transformers:
+                nr_columns = (tr.metadata['name'].isin([target_to_norm])).index
+                for c in nr_columns:
+                    df_n.loc[:, c] = self.normalizing_wrapper(normalizing_fun, df_n, c)
+        y = df_n[[c for c in y.columns]]
+        return y
 
     def denormalize(self, x, y):
         if self.denormalizing_fun is None:
