@@ -188,17 +188,6 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_transform(['all'], lags=-np.arange(6))
         formatter.add_target_normalizer(['all'], 'mean', agg_freq='3d', name='a_movingavg')
         formatter.add_target_normalizer(['all'], 'std', agg_freq='3d', name='a_movingstd')
-
-        #m_lin = LinearForecaster(val_ratio=0.2, formatter=formatter).fit(x_tr, y_tr)
-        #y_hat_nonorm = m_lin.predict(x_te)
-        #q_nonorm = m_lin.predict_quantiles(x_te)
-
-        #m_lgb = LGBForecaster(val_ratio=0.5, lgb_pars={'num_leaves':20}, formatter=formatter).fit(x_tr, y_tr)
-        #y_hat_lgb = m_lgb.predict(x_te)
-        #mae = lambda x, y: np.abs(x-y).mean().mean()
-        #print('MAE lin:', mae(y_te, y_hat_nonorm))
-
-
         formatter.add_normalizing_fun(expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)",
                                       inv_expr="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
         x, y_norm = formatter.transform(self.data.iloc[:1000])

@@ -157,7 +157,6 @@ class QRF(ScenarioGenerator):
             else:
                 if len(preds.shape) == 2:
                     preds = np.expand_dims(preds, 0)
-                preds = np.swapaxes(preds, 1, 2)
                 preds = self.quantiles_to_df(preds, index=x.index, q_vect=kwargs['quantiles'])
         else:
             preds = pd.DataFrame(np.atleast_2d(np.squeeze(preds)), index=x.index, columns=self.target_cols)
