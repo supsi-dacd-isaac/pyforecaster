@@ -6,14 +6,17 @@ import numpy as np
 import logging
 from pyforecaster.forecasting_models.holtwinters import HoltWinters, HoltWintersMulti
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es, FK, FK_multi
-from pyforecaster.forecasting_models.random_fourier_features import RFFRegression, AdditiveRFFRegression
+from pyforecaster.forecasting_models.random_fourier_features import RFFRegression, AdditiveRFFRegression, BrutalRegressor
 from pyforecaster.forecasting_models.randomforests import QRF
 from pyforecaster.forecasting_models.gradientboosters import LGBMHybrid
+from pyforecaster.forecasting_models.statsmodels_wrapper import ExponentialSmoothing
 from pyforecaster.forecaster import LinearForecaster, LGBForecaster
 from pyforecaster.plot_utils import plot_quantiles
 from pyforecaster.formatter import Formatter
 from pyforecaster.forecasting_models.neural_models.base_nn import FFNN
 from pyforecaster.plot_utils import ts_animation
+from pyforecaster.forecasting_models.benchmarks import Persistent, SeasonalPersistent
+
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.t = 10000
@@ -185,23 +188,6 @@ class TestFormatDataset(unittest.TestCase):
         y_hat = qrf.predict(x_te.iloc[[0], :])
         q = qrf.predict(x_te.iloc[[0], :])
 
-    def test_rffr(self):
-        formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
-                                                                    relative_lags=True)
-        formatter.add_target_transform(['all'], lags=-np.arange(144))
-
-        x, y = formatter.transform(self.data.iloc[:10000])
-        x.columns = x.columns.astype(str)
-        y.columns = y.columns.astype(str)
-        n_tr = int(len(x) * 0.7)
-        x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
-                                  y.iloc[n_tr:].copy()]
-        m = RFFRegression(std_kernel=0.001, dim_kernel=30).fit(x_tr, y_tr)
-        y_hat = m.predict(x_te)
-        q = m.predict_quantiles(x_te)
-
-        m = LinearForecaster(val_ratio=0.2).fit(x_tr, y_tr)
-        y_hat_lin = m.predict(x_te)
 
 
     def test_antinormalize(self):
@@ -242,7 +228,48 @@ class TestFormatDataset(unittest.TestCase):
         mae = lambda x, y: np.abs(x-y).mean().mean()
         print('MAE lin:', mae(y_te, y_hat))
 
+    def test_statsmodels_wrappers(self):
+        self.data = self.data.resample('1h').mean()
+        data_tr = self.data.iloc[:100]
+        data_te = self.data.iloc[100:300]
+        m = ExponentialSmoothing(target_name='all', q_vect=np.arange(31)/30, nodes_at_step=None, val_ratio=0.8, n_sa=24,
+                                 seasonal=24).fit(data_tr)
+        y_hat = m.predict(data_te)
+        q_hat = m.predict_quantiles(data_te)
+        y_plot = pd.concat({'y_{:02d}'.format(i): data_te['all'].shift(-i) for i in range(24)}, axis=1)
+        #plot_quantiles([y_plot, y_hat], q_hat, ['y_te', 'y_hat'], n_rows=300)
 
+        discr_prob = m.predict_pmf(data_te, discrete_prob_space=np.linspace(500, 1200, 10))
+        plt.matshow(discr_prob[2].T )
+        import seaborn as sb
+
+        i = 1
+        plt.figure(figsize=(10, 6))
+        x_bins = np.arange(24)
+        y_bins = np.linspace(500, 1200, 10)
+        extent = [x_bins.min(), x_bins.max(), y_bins.min(), y_bins.max()]
+        plt.imshow(discr_prob[i].T, aspect='auto', extent=extent, origin='lower', cmap='plasma')
+
+        # Overlay the time series on top
+        plt.plot(x_bins, y_plot.values[i, :], color='black', linewidth=2, label="Time Series")
+        plt.plot(x_bins, q_hat[i, :, :], color='black', linewidth=2, label="Time Series")
+
+    def test_persistence(self):
+        self.data = self.data.resample('1h').mean()
+        data_tr = self.data.iloc[:2100]
+        data_te = self.data.iloc[2100:2400]
+        m = Persistent(target_col='all', n_sa=24, q_vect=np.arange(11)/10, val_ratio=0.8, conditional_to_hour=False).fit(data_tr)
+        y_hat = m.predict(data_te)
+        q_hat = m.predict_quantiles(data_te)
+        y_plot = pd.concat({'y_{:02d}'.format(i): data_te['all'].shift(-i) for i in range(24)}, axis=1)
+        plot_quantiles([y_plot, y_hat], q_hat, ['y_te', 'y_hat'], n_rows=300)
+
+        m = SeasonalPersistent(target_col='all', seasonality=24, n_sa=24, q_vect=np.arange(11) / 10, val_ratio=0.8,
+                       conditional_to_hour=True).fit(data_tr)
+        y_hat = m.predict(data_te)
+        q_hat = m.predict_quantiles(data_te)
+        y_plot = pd.concat({'y_{:02d}'.format(i): data_te['all'].shift(-i) for i in range(24)}, axis=1)
+        plot_quantiles([y_plot, y_hat], q_hat, ['y_te', 'y_hat'], n_rows=300)
 
 
 if __name__ == '__main__':

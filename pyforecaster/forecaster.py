@@ -13,7 +13,7 @@ from inspect import signature
 
 class ScenarioGenerator(object):
     def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100,
-                 additional_node=False, formatter=None, **scengen_kwgs):
+                 additional_node=False, formatter=None, conditional_to_hour=True, **scengen_kwgs):
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, additional_node=additional_node, **scengen_kwgs)
         self.val_ratio = val_ratio
@@ -22,6 +22,7 @@ class ScenarioGenerator(object):
         self.n_scen_fit = n_scen_fit
         self.additional_node = additional_node
         self.formatter = formatter
+        self.conditional_to_hour = conditional_to_hour
 
     @property
     def online_tree_reduction(self):
@@ -46,14 +47,18 @@ class ScenarioGenerator(object):
         self.scengen.fit(errs, x, n_scen=self.n_scen_fit)
 
         self.err_distr = {}
-        hours = np.arange(24)
-        if len(np.unique(x.index.hour)) != 24:
-            print('not all hours are there in the training set, building unconditional confidence intervals')
-            for h in hours:
-                self.err_distr[h] = np.quantile(errs, self.q_vect, axis=0).T
+        if self.conditional_to_hour:
+            self.err_distr = {}
+            hours = np.arange(24)
+            if len(np.unique(x.index.hour)) != 24:
+                print('not all hours are there in the training set, building unconditional confidence intervals')
+                for h in hours:
+                    self.err_distr[h] = np.quantile(errs, self.q_vect, axis=0).T
+            else:
+                for h in hours:
+                    self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
         else:
-            for h in hours:
-                self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
+            self.err_distr = np.quantile(errs, self.q_vect, axis=0).T
 
     @abstractmethod
     def predict(self, x, **kwargs):
@@ -68,6 +73,20 @@ class ScenarioGenerator(object):
     @abstractmethod
     def predict_quantiles(self, x, **kwargs):
         pass
+
+    def predict_pmf(self, x, discrete_prob_space, **predict_q_kwargs):
+        """
+        Return probability mass function of the target variable, obtained from quantile predictions
+        :param x:
+        :param predict_q_kwargs:
+        :return:
+        """
+        quantiles = self.predict_quantiles(x, **predict_q_kwargs)
+        pmf = np.zeros((quantiles.shape[0], quantiles.shape[1], len(discrete_prob_space)-1))
+        for i in range(quantiles.shape[0]):
+            for j in range(quantiles.shape[1]):
+                pmf[i, j, :] = np.histogram(quantiles[i, j, :], bins=discrete_prob_space)[0]/len(self.q_vect)
+        return pmf
 
     def predict_scenarios(self, x, n_scen=None, random_state=None, **predict_q_kwargs):
         n_scen = self.n_scen_fit if n_scen is None else n_scen
