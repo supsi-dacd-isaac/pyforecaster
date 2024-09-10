@@ -202,10 +202,11 @@ class TestFormatDataset(unittest.TestCase):
 
         qrf = QRF(val_ratio=0.2, formatter=formatter, n_jobs=4, n_single=2).fit(x_tr, y_tr)
         y_hat = qrf.predict(x_te)
-        q = qrf.predict_quantiles(x_te, quantiles=[0.1, 0.9])
+        q = qrf.predict_quantiles(x_te, quantiles=[0.1, 0.5, 0.9])
+        #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
         q = qrf.predict_quantiles(x_te, quantiles=[0.5])
 
-        #plot_quantiles([y_te, y_hat], q, ['y_te', 'y_hat', 'y_hat_qrf'])
+
 
         y_hat = qrf.predict(x_te.iloc[[0], :])
         q = qrf.predict(x_te.iloc[[0], :])
