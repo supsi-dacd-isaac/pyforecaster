@@ -294,36 +294,34 @@ class TestFormatDataset(unittest.TestCase):
         y_plot = pd.concat({'y_{:02d}'.format(i): data_te['all'].shift(-i) for i in range(24)}, axis=1)
         plot_quantiles([y_plot, y_hat], q_hat, ['y_te', 'y_hat'], n_rows=300)
 
-    """
+
     def test_discrete_distr(self):
         self.data = self.data.resample('1h').mean()
         self.data = self.data.round(-1)
         formatter = Formatter(logger=self.logger, augment=False)
         formatter.add_target_transform(['all'], lags=-np.arange(1, 24))
         x, y = formatter.transform(self.data)
-        n_tr = 6000
-        n_te = 2000
+        n_tr = 500
+        n_te = 500
         x_tr, y_tr, x_te, y_te = x.iloc[:n_tr], y.iloc[:n_tr], x.iloc[n_tr:n_tr+n_te], y.iloc[n_tr:n_tr+n_te]
 
         m = DiscreteDistr(target_name='all', q_vect=np.arange(31)/30, nodes_at_step=None, val_ratio=0.8, n_sa=24,
                                     period='1d').fit(x_tr, y_tr)
         y_hat = m.predict(x_te)
-        y_hat = m.predict_probabilities(x_te)
+        q_hat = m.predict_probabilities(x_te)
+
         from pyforecaster.forecaster import ScenarioGenerator
 
-        plt.matshow(ScenarioGenerator().quantiles_to_numpy(y_hat)[0].T)
+        x_bins = np.arange(23)
+        y_bins = m.support
 
-        n_taus = len(y_hat.columns.get_level_values(1).unique())
-        q_hat = y_hat.values
-        q_hat = np.reshape(q_hat, (q_hat.shape[0], -1, n_taus))
-        plt.matshow(q_hat[0].T)
-
-
-        n_taus = len(y_hat.columns.get_level_values(1).unique())
-        q_hat = y_hat.values
-        q_hat = np.reshape(q_hat, (q_hat.shape[0], n_taus, -1))
-        q_hat = np.swapaxes(q_hat, 1, 2)
-    """
+        extent = [x_bins.min(), x_bins.max(), y_bins.min(), y_bins.max()]
+        for i in range(10):
+            plt.figure()
+            plt.imshow(ScenarioGenerator().quantiles_to_numpy(q_hat)[i].T, aspect='auto', extent=extent, origin='lower', cmap='plasma')
+            plt.plot(y_te.iloc[i, :].values)
+            plt.plot(y_hat.iloc[i, :].values)
+            plt.pause(0.1)
 
 if __name__ == '__main__':
     unittest.main()

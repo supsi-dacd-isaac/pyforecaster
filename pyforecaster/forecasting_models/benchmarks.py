@@ -66,17 +66,18 @@ class SeasonalPersistent(ScenarioGenerator):
 
 
 class DiscreteDistr(ScenarioGenerator):
-    def __init__(self, period='1d', n_sa=1, q_vect=None, val_ratio=None, nodes_at_step=None,
+    def __init__(self, period='1d', q_vect=None, val_ratio=None, nodes_at_step=None,
                  conditional_to_hour=False, **scengen_kwgs):
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio,
                          conditional_to_hour=conditional_to_hour, **scengen_kwgs)
-        self.n_sa = n_sa
+        self.n_sa = None
         self.period = period
         self.target_names = None
         self.y_distributions = None
         self.support = None
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
+        self.n_sa = y.shape[1]
         # infer sampling time
         sampling_time = pd.infer_freq(x.index)
 
@@ -108,7 +109,7 @@ class DiscreteDistr(ScenarioGenerator):
         return self
 
     def predict(self, x, **kwargs):
-        return np.mean(self.predict_probabilities(x) * self.support.reshape(1, -1), axis=1)
+        return (self.predict_probabilities(x) * np.tile(self.support.reshape(1, -1), self.n_sa)).groupby(level=0, axis=1).sum()
 
     def predict_probabilities(self, x, **kwargs):
         # infer sampling time
