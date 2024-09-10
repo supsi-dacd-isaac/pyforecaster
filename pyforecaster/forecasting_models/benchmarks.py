@@ -72,8 +72,56 @@ class DiscreteDistr(ScenarioGenerator):
                          conditional_to_hour=conditional_to_hour, **scengen_kwgs)
         self.n_sa = n_sa
         self.period = period
+        self.target_names = None
+        self.y_distributions = None
+        self.support = None
 
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         # infer sampling time
         sampling_time = pd.infer_freq(x.index)
-        # aggregate by
+
+        # retrieve support of target distribution
+        support = np.unique(y.values)
+        self.support = support
+        print('support of target distribution:', support)
+
+        # Create a new column for the time within a day (hours and minutes)
+        time_of_day = y.index.floor(sampling_time).time
+
+        # Group by this time of day and calculate the mean across all days
+        mean_by_time_of_day = {}
+        for v in support:
+            mean_by_time_of_day[v] = y.groupby(time_of_day).agg(lambda x: np.sum(x==v))
+
+        y_distrib = pd.concat(mean_by_time_of_day, axis=1)
+        # swap levels of the multiindex
+        y_distrib = y_distrib.swaplevel(0, 1, axis=1).sort_index(axis=1)
+
+        # normalize the distribution for each variable in level 0
+        for t in y_distrib.columns.levels[0]:
+            y_distrib[t] = y_distrib[t] / (y_distrib[t].sum(axis=1).values.reshape(-1, 1)+1e-12)
+
+        # store the distribution
+        self.y_distributions = y_distrib
+        self.target_names = list(y_distrib.columns.levels[0])
+        self.target_cols = [f'{t}_t+{i}' for t in self.target_names for i in range(1, self.n_sa+1)]
+        return self
+
+    def predict(self, x, **kwargs):
+        return np.mean(self.predict_probabilities(x) * self.support.reshape(1, -1), axis=1)
+
+    def predict_probabilities(self, x, **kwargs):
+        # infer sampling time
+        sampling_time = pd.infer_freq(x.index)
+        # Create a new column for the time within a day (hours and minutes)
+        time_of_day = pd.Series(x.index.floor(sampling_time).time)
+
+        # retrieve the distribution for the time of day
+        y_hat = {}
+        for t in self.target_names:
+            pres_t = [time_of_day.map(self.y_distributions[t].loc[:, i]).rename(f'{i}') for i in
+                      self.y_distributions[t].columns]
+            y_hat[t] = pd.concat(pres_t, axis=1)
+
+        return pd.concat(y_hat, axis=1)
+

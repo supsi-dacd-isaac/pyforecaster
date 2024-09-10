@@ -107,7 +107,6 @@ class ScenarioGenerator(object):
     def quantiles_to_df(self, q_hat:np.ndarray, index, q_vect=None):
         level_0_labels = self.target_cols
         level_1_labels = self.q_vect if q_vect is None else q_vect
-        q_hat = np.swapaxes(q_hat, 1, 2)
         q_hat = np.reshape(q_hat, (q_hat.shape[0], q_hat.shape[1] * q_hat.shape[2]))
         q_hat = pd.DataFrame(q_hat, index=index, columns=pd.MultiIndex.from_product([level_0_labels, level_1_labels]))
         q_hat.columns.names = ['target', 'quantile']
@@ -117,8 +116,7 @@ class ScenarioGenerator(object):
     def quantiles_to_numpy(q_hat:pd.DataFrame):
         n_taus = len(q_hat.columns.get_level_values(1).unique())
         q_hat = q_hat.values
-        q_hat = np.reshape(q_hat, (q_hat.shape[0], n_taus, -1))
-        q_hat = np.swapaxes(q_hat, 1, 2)
+        q_hat = np.reshape(q_hat, (q_hat.shape[0], -1, n_taus))
         return q_hat
 
     def predict_quantiles(self, x, dataframe=True, **kwargs):

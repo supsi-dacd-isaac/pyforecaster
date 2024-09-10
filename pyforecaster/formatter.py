@@ -47,7 +47,11 @@ class Formatter:
                 col_names = ['hour', 'dayofweek', 'minuteofday']
                 self.timezone = False
             else:
-                utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
+                if x.shape[1] == 0:
+                    utc_offset = pd.DataFrame(index=x.index, columns=[0]).apply(lambda x: x.name.utcoffset().
+                                                                                total_seconds() / 3600, axis=1)
+                else:
+                    utc_offset = x.apply(lambda x: x.name.utcoffset().total_seconds()/3600, axis=1)
                 time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute, utc_offset]
                 col_names = ['hour', 'dayofweek', 'minuteofday', 'utc_offset']
                 self.timezone = True
