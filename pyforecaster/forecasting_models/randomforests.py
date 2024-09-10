@@ -90,7 +90,7 @@ class QRF(ScenarioGenerator):
                                         logger=self.logger, method='periodic', keep_last_n_lags=self.keep_last_n_lags,
                                         keep_last_seconds=self.keep_last_seconds,
                                         tol_period=self.tol_period)
-        model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i], sparse_pickle=True)
+        model = RandomForestQuantileRegressor(**self.qrf_pars).fit(x_i, y.iloc[:, i])
         return model
 
     @encode_categorical
@@ -111,7 +111,7 @@ class QRF(ScenarioGenerator):
             qrf_pars_global = self.qrf_pars.copy()
             if 'n_jobs' in qrf_pars_global and qrf_pars_global['n_jobs'] is not None and qrf_pars_global['n_jobs'] > 0:
                 qrf_pars_global['n_jobs'] *= self.max_parallel_workers
-            self.multi_step_model = RandomForestQuantileRegressor(**qrf_pars_global).fit(x, y.iloc[:, -self.n_multistep:], sparse_pickle=True)
+            self.multi_step_model = RandomForestQuantileRegressor(**qrf_pars_global).fit(x, y.iloc[:, -self.n_multistep:])
             self.logger.info('QRF multistep fitted in {:0.2e} s, x shape: [{}, {}]'.format(time() - t_0,
                                                                                                      x.shape[0],
                                                                                                      x.shape[1]))
