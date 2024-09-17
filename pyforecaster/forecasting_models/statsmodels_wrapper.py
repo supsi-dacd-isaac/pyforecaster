@@ -43,11 +43,9 @@ class StatsModelsWrapper(ScenarioGenerator):
     def predict(self, x_pd:pd.DataFrame, **kwargs):
         pass
 
-    def _predict_quantiles(self, x:pd.DataFrame, **kwargs):
-        preds = np.expand_dims(self.predict(x), -1) * np.ones((1, 1, len(self.q_vect)))
-        for h in np.unique(x.index.hour):
-            preds[x.index.hour == h, :, :] += np.expand_dims(self.err_distr[h], 0)
-        return preds
+    def _predict_quantiles(self, x, **kwargs):
+        preds = self.predict(x)
+        return np.expand_dims(preds, -1) + np.expand_dims(self.err_distr, 0)
 
 
 class ExponentialSmoothing(StatsModelsWrapper):
