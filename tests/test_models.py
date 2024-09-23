@@ -48,7 +48,7 @@ class TestFormatDataset(unittest.TestCase):
         #hw.reinit(x_tr['target'])
         y_hat = hw.predict(pd.concat([x_te,y_te], axis=1))
 
-        ts_animation([y_hat], names=['y_hat', 'target'], target=y_te.values, frames=100, repeat=False)
+        ts_animation([y_hat.values], names=['y_hat', 'target'], target=y_te.values, frames=100, repeat=False)
 
     def test_fast_linreg(self):
 
@@ -120,7 +120,7 @@ class TestFormatDataset(unittest.TestCase):
                          target_name='target', models_periods=np.array([1,2,3,5, 10, 24]), constraints=[0, np.inf]).fit(y_tr,y_tr)
         y_hat_multi = hw_multi.predict(y_te)
 
-        ts_animation([y_hat, y_hat_multi], names=['y_hat', 'y_hat_multi', 'target'], target=y_te.values, frames=100, repeat=False)
+        ts_animation([y_hat.values, y_hat_multi.values], names=['y_hat', 'y_hat_multi', 'target'], target=y_te.values, frames=100, repeat=False)
 
 
     def test_hw_multi(self):
@@ -155,7 +155,7 @@ class TestFormatDataset(unittest.TestCase):
         y_hat_fks_multi = fks_multi.predict(df_te)
         y_hat_fks_multi_q = fks_multi.predict_quantiles(df_te)
 
-        ys = [y_hat, y_hat_multi, y_hat_fes, y_hat_fks, y_hat_fks_multi]
+        ys = [y_hat.values, y_hat_multi.values, y_hat_fes.values, y_hat_fks.values, y_hat_fks_multi.values]
         ts_animation(ys, target = df_te['all'].values, names = ['hw', 'hw_multi', 'fes', 'fks', 'fks_multi', 'target'], frames = 120, interval = 1, step = 1, repeat = False)
 
     def test_linear_val_split(self):

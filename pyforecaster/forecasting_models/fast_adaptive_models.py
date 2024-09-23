@@ -192,7 +192,7 @@ class Fourier_es(StatefulForecaster):
     def predict(self, x_pd, **kwargs):
         x = x_pd.values
         y = x_pd[self.target_name].values
-        return self.run(x, y, start_from=0, fit=False)
+        return pd.DataFrame(self.run(x, y, start_from=0, fit=False), index=x_pd.index, columns=[f'{self.target_name}_t+{i}' for i in range(1, self.n_sa+1)])
 
 
     def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
@@ -360,7 +360,7 @@ class FK(StatefulForecaster):
     def predict(self, x_pd, **kwargs):
         x = x_pd.values
         y = x_pd[self.target_name].values
-        return self.run(x, y, start_from=0, fit=False)
+        return pd.DataFrame(self.run(x, y, start_from=0, fit=False), index=x_pd.index, columns=[f'{self.target_name}_t+{i}' for i in range(1, self.n_sa+1)])
 
 
     def run(self, x, y, return_coeffs=False, start_from=0, fit=True):
@@ -508,7 +508,7 @@ class FK_multi(StatefulForecaster):
         return self
 
     def predict(self, x_pd, **kwargs):
-        return self.run(x_pd, fit=False, return_coeffs=True)[0]
+        return pd.DataFrame(self.run(x_pd, fit=False, return_coeffs=True)[0], index=x_pd.index, columns=[f'{self.target_name}_t+{i}' for i in range(1, self.n_sa+1)])
 
 
     def run(self, x_pd, return_coeffs=True, fit=True):

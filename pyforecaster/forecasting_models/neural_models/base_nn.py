@@ -88,6 +88,7 @@ class FeedForwardModule(nn.Module):
     n_layers: Union[int, np.array, list]
     n_out: int=None
     n_neurons: int=None
+    split_heads: bool = False
     @nn.compact
     def __call__(self, x):
         if isinstance(self.n_layers, int):
@@ -97,9 +98,31 @@ class FeedForwardModule(nn.Module):
         else:
             layers = self.n_layers
         for i, n in enumerate(layers):
-            x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
+
             if i < len(layers)-1:
+                x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
                 x = nn.relu(x)
+            else:
+                if self.split_heads:
+                    n_out = self.n_out if self.n_out is not None else layers[-1]
+                    # split into n_out heads to predict the output independently
+                    subnets = [nn.relu(nn.Dense(features=layers[np.maximum(-2, -len(layers))], name='subnet_in_{}'.format(k))(x)) for k in range(n_out)]
+                    out = [nn.Dense(features=1, name='subnet_out_{}'.format(k))(subnets[k]) for k in range(n_out)]
+                    x = jnp.hstack(out)
+                    """
+                    # Combine the outputs in a single dense layer
+                    n_last = layers[np.maximum(-2, -len(layers))]
+                    x = nn.Dense(features=self.n_out * n_last, name='combined_dense')(x)
+                    x = nn.relu(x)
+                    # Reshape into separate heads
+                    x = x.reshape((-1, self.n_out, n_last))
+                    x = nn.relu(x)
+                    # Final layer to predict the output for each head
+                    x = nn.Dense(features=1, name='final_out')(x).squeeze(-1)
+                    """
+                else:
+                    x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
+
         return x
 
 class NN(ScenarioGenerator):
@@ -384,3 +407,12 @@ class FFNN(NN):
                        scengen_dict={}, batch_size=None, **model_kwargs):
         super().__init__(n_out=n_out, q_vect=q_vect, n_epochs=n_epochs, val_ratio=val_ratio, nodes_at_step=nodes_at_step, learning_rate=learning_rate,
                  nn_module=FeedForwardModule, scengen_dict=scengen_dict, batch_size=batch_size,  **model_kwargs)
+
+    def set_arch(self):
+        self.optimizer = optax.adamw(learning_rate=self.learning_rate)
+        self.model = FeedForwardModule(n_layers=self.n_layers, n_neurons=self.n_hidden_x,
+                              n_out=self.n_out, split_heads=True)
+        self.predict_batch = vmap(jitting_wrapper(predict_batch, self.model), in_axes=(None, 0))
+        self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
+            jitting_wrapper(loss_fn, self.predict_batch))
+        self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)

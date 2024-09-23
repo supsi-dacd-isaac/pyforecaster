@@ -121,7 +121,7 @@ def score_autoregressive(model, x, tr_ratio=0.7, target_name=None, n_sa=1):
     model.fit(x_tr, x_tr)
     y_hat = model.predict(x_te)
 
-    return np.mean((y_hat[:len(target), :] - target) ** 2)
+    return np.mean((y_hat.values[:len(target), :] - target) ** 2)
 
 class HoltWinters(ScenarioGenerator):
     def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800, n_sa=1, constraints=None,
@@ -230,7 +230,7 @@ class HoltWinters(ScenarioGenerator):
 
         self.y_hat_te = y_hat
 
-        return y_hat
+        return pd.DataFrame(y_hat, index=x_pd.index, columns=self.target_cols)
 
     def _predict_quantiles(self, x, **kwargs):
         preds = self.predict(x)
@@ -441,9 +441,9 @@ class HoltWintersMulti(ScenarioGenerator):
         for i,m in enumerate(self.models):
             y_hat_m = m.predict(x)
             selection = np.arange(k, y_hat_m.shape[1])
-            y_hat[:, selection] = y_hat_m[:, selection]
+            y_hat[:, selection] = y_hat_m.iloc[:, selection]
             k = y_hat_m.shape[1]
-        return y_hat
+        return pd.DataFrame(y_hat, index=x.index, columns=['{}_{}'.format(self.target_name, t) for t in np.arange(self.n_sa)])
 
     def reinit(self, x):
         for i,m in enumerate(self.models):
