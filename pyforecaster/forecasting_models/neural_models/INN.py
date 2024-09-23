@@ -80,7 +80,7 @@ class EndToEndCausalInvertibleModule(nn.Module):
     activation: callable = nn.relu
     def setup(self):
         self.embedder = CausalInvertibleModule(num_layers=self.num_embedding_layers, features=self.features_embedding)
-        self.predictor = FeedForwardModule(n_layers=np.hstack([(np.ones(self.num_prediction_layers-1)*self.features_prediction).astype(int), self.n_out]))
+        self.predictor = FeedForwardModule(n_layers=np.hstack([(np.ones(self.num_prediction_layers-1)*self.features_prediction).astype(int), self.n_out]), split_heads=True)
         self.invert_fun = jax.jit(partial(self.inverter, embedder=self.embedder))
     def __call__(self, x):
         x = x.copy()

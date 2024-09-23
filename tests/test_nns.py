@@ -437,9 +437,10 @@ class TestFormatDataset(unittest.TestCase):
         # if not there, create directory savepath_tr_plots
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
-
-        m_lin = LinearForecaster().fit(e_tr.iloc[:, :184], e_tr.iloc[:, -120:])
-        y_hat_lin = m_lin.predict(e_te.iloc[:, :184])
+        n_in = 145
+        n_out = 10
+        m_lin = LinearForecaster().fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
+        y_hat_lin = m_lin.predict(e_te.iloc[:, :n_in])
         """
 
         m = CausalInvertibleNN(learning_rate=1e-2,  batch_size=1000, load_path=None, n_hidden_x=e_tr.shape[1],
@@ -497,24 +498,24 @@ class TestFormatDataset(unittest.TestCase):
             ax.plot(y_invert.iloc[i, 144:].values, linestyle='--')
             plt.pause(1e-6)
         """
-        m = FFNN(n_hidden_x=50, n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=143, rel_tol=-1, stopping_rounds=20,n_epochs=1).fit(e_tr.iloc[:, :145], e_tr.iloc[:, -143:])
-        y_hat = m.predict(e_te.iloc[:, :145])
+        m = FFNN(n_hidden_x=50, n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=n_out, rel_tol=-1, stopping_rounds=20,n_epochs=1).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
+        y_hat = m.predict(e_te.iloc[:, :n_in])
 
-        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=300, load_path=None, n_in=145,
+        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=300, load_path=None, n_in=n_in,
                                n_layers=2, normalize_target=False, n_epochs=5, stopping_rounds=30, rel_tol=-1,
-                               end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=143,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :145], e_tr.iloc[:, -143:])
+                               end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=n_out,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
 
-        z_hat_ete = m.predict(e_te.iloc[:, :145])
+        z_hat_ete = m.predict(e_te.iloc[:, :n_in])
 
-        np.mean((z_hat_ete.values- e_te.iloc[:, -143:].values)**2)
-        np.mean((y_hat.values- e_te.iloc[:, -143:].values)**2)
-        np.mean((y_hat_lin.values- e_te.iloc[:, -143:].values)**2)
+        np.mean((z_hat_ete.values- e_te.iloc[:, -n_out:].values)**2)
+        np.mean((y_hat.values- e_te.iloc[:, -n_out:].values)**2)
+        np.mean((y_hat_lin.values- e_te.iloc[:, -n_out:].values)**2)
 
         fig, ax = plt.subplots(1, 1, figsize=(4, 3))
         for i in range(100):
             if i%5 == 0:
                 plt.cla()
-                ax.plot(e_te.iloc[i, -143:].values)
+                ax.plot(e_te.iloc[i, -n_out:].values)
                 ax.plot(y_hat_lin.iloc[i, :].values, linewidth=1)
                 ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
                 plt.pause(1e-6)
