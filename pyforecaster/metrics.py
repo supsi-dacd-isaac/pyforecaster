@@ -140,7 +140,11 @@ def make_scorer(metric):
 
 def summary_score(x, t, score=rmse, agg_index=None):
     if len(x.shape) < 3:
-        if isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
+        # if x is a pd.DataFrame and its columns are multiindex, just make sure t is a df
+        if isinstance(x, pd.DataFrame) and x.columns.nlevels > 1:
+            if not isinstance(t, pd.DataFrame):
+                t = pd.DataFrame(t, index=x.index)
+        elif isinstance(x, pd.DataFrame) and isinstance(t, pd.DataFrame):
             x.columns = t.columns
         elif isinstance(x, pd.DataFrame):
             t = pd.DataFrame(t, index=x.index, columns=x.columns)
