@@ -437,8 +437,10 @@ class TestFormatDataset(unittest.TestCase):
         # if not there, create directory savepath_tr_plots
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
-        n_in = 145
+
         n_out = 10
+        n_in = e_tr.shape[1]  - n_out
+
         m_lin = LinearForecaster().fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
         y_hat_lin = m_lin.predict(e_te.iloc[:, :n_in])
         """
@@ -498,8 +500,20 @@ class TestFormatDataset(unittest.TestCase):
             ax.plot(y_invert.iloc[i, 144:].values, linestyle='--')
             plt.pause(1e-6)
         """
-        m = FFNN(n_hidden_x=50, n_layers=1, learning_rate=1e-3, batch_size=100, load_path=None, n_out=n_out, rel_tol=-1, stopping_rounds=20,n_epochs=1).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
+        m = FFNN(n_hidden_x=20, n_layers=2, learning_rate=1e-3, batch_size=500,
+                 load_path=None, n_out=n_out, rel_tol=-1, stopping_rounds=10, n_epochs=10).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
         y_hat = m.predict(e_te.iloc[:, :n_in])
+
+        from pyforecaster.metrics import summary_scores, nmae
+
+        maes_nn = summary_scores(y_hat, e_te.iloc[:, -n_out:], metrics=[nmae],idxs=pd.DataFrame(e_te.index.hour, index=e_te.index))
+        maes_lin = summary_scores(y_hat_lin, e_te.iloc[:, -n_out:], metrics=[nmae],idxs=pd.DataFrame(e_te.index.hour, index=e_te.index))
+
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(maes_lin['nmae'].mean(axis=0))
+        ax.plot(maes_nn['nmae'].mean(axis=0))
+
+
 
         m = CausalInvertibleNN(learning_rate=1e-2, batch_size=300, load_path=None, n_in=n_in,
                                n_layers=2, normalize_target=False, n_epochs=5, stopping_rounds=30, rel_tol=-1,
