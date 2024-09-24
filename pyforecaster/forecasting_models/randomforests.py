@@ -10,7 +10,7 @@ from functools import partial
 
 class QRF(ScenarioGenerator):
     def __init__(self, n_estimators=100, q_vect=None, val_ratio=None, nodes_at_step=None,
-                 metadata_features=None, n_single=1, red_frac_multistep=0.5, tol_period='1h',
+                 metadata_features=None, n_single=0, red_frac_multistep=0.5, tol_period='1h',
                 keep_last_n_lags=0, keep_last_seconds=0, criterion="squared_error", max_depth=None, min_samples_split=2,
                  min_samples_leaf=1, max_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=1.0,
                  max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, n_jobs=None,
@@ -159,6 +159,8 @@ class QRF(ScenarioGenerator):
 
     def predict_multi_step(self, x, quantiles='mean'):
         preds = self.multi_step_model.predict(x, quantiles)
+        if len(preds.shape) == 1:
+            preds = np.expand_dims(preds, 1)
         if len(preds.shape) == 2:
             preds = np.expand_dims(preds, 1)
         else:
