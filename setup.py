@@ -21,7 +21,6 @@ setuptools.setup(
     extras = {'graphviz':'pygraphviz>=1.10'},
     install_requires=['numpy>=1.20.2',
                       'optuna>=2.10.0',
-                      'ptitprince>=0.2.5',
                       'networkx>=2.6.3',
                       'pandas>=1.2.3',
                       'seaborn>=0.11.1',
