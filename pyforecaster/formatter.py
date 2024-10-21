@@ -804,7 +804,6 @@ class Transformer:
 
                 metadata_n['start_time'] = - spacing_time * lags_aux - agg_steps * dt + dt
                 metadata_n['end_time'] = - spacing_time * lags_aux + dt
-                print(metadata_n)
             else:
                 lags_expanded = np.outer(lag_steps, np.ones(len(self.agg_bins) - 1)).ravel()
                 lags_and_fun =product(function_names, lags_expanded)
