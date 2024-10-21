@@ -817,6 +817,7 @@ class Transformer:
                     metadata_n['end_time'] = [-dt * (self.original_agg_bins[i+1]+l) + dt for name, i, l in
                                               product(function_names, np.arange(len(self.agg_bins) - 1), lag_steps)]
             metadata_n['name'] = name
+            metadata_n['relative_lags'] = self.relative_lags
 
             self.metadata = pd.concat([self.metadata, metadata_n])
         if not simulate:
