@@ -794,12 +794,17 @@ class Transformer:
                 self.logger.info('Added {} to the dataframe'.format(trans_names))
 
             if self.agg_bins is None:
-                lags_and_fun = product([0] if self.lags is None else self.lags, function_names)
+                lags_and_fun = product([None] if self.lags is None else self.lags, function_names)
+                lags_aux = np.array([lf[0] for lf in product([0] if self.lags is None else self.lags, function_names)])
+
                 metadata_n = pd.DataFrame(lags_and_fun, columns=['lag', 'function'], index=trans_names)
+
                 metadata_n['aggregation_time'] = self.agg_freq
                 metadata_n['spacing_time'] = pd.Timedelta(spacing_time)
-                metadata_n['start_time'] = - spacing_time * metadata_n['lag'] - agg_steps * dt + dt
-                metadata_n['end_time'] = - spacing_time * metadata_n['lag'] + dt
+
+                metadata_n['start_time'] = - spacing_time * lags_aux - agg_steps * dt + dt
+                metadata_n['end_time'] = - spacing_time * lags_aux + dt
+                print(metadata_n)
             else:
                 lags_expanded = np.outer(lag_steps, np.ones(len(self.agg_bins) - 1)).ravel()
                 lags_and_fun =product(function_names, lags_expanded)
