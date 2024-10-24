@@ -76,7 +76,7 @@ class Formatter:
     def add_holidays(self, x, state_code='CH', **kwargs):
         self.logger.info('Adding holidays')
         holidays = holidays_api.country_holidays(country=state_code, years=x.index.year.unique(), **kwargs)
-        bridges, long_weekends = spot_holiday_bridges(start=x.index[0]-pd.Timedelta('2D'), end=x.index[-1]+pd.Timedelta('2D'), holidays=holidays)
+        bridges, long_weekends = spot_holiday_bridges(start=x.index[0]-pd.Timedelta('2D'), end=x.index[-1]+pd.Timedelta('2D'), holidays=pd.DatetimeIndex(holidays.keys()))
         bridges = np.array([b.date() for b in bridges])
         long_weekends = np.array([b.date() for b in long_weekends])
 
