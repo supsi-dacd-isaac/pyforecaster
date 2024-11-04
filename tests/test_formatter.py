@@ -220,7 +220,7 @@ class TestFormatDataset(unittest.TestCase):
         formatter = pyf.Formatter().add_transform([0], lags=np.arange(10), agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_transform([0], ['min', 'max'], agg_bins=[-10, -15, -20])
-        df = formatter.transform(self.x2, time_features=True, holidays=True, prov='ZH')
+        df = formatter.transform(self.x2, time_features=True, holidays=True, subdiv='ZH')
 
 
 
@@ -236,7 +236,7 @@ class TestFormatDataset(unittest.TestCase):
                                                                     agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_target_transform(['target'], ['mean'], agg_bins=[-10, -15, -20])
-        df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True, parallel=False)
+        df = formatter.transform(df_mi, time_features=True, holidays=True, subdiv='ZH',global_form=True, parallel=False)
 
     def test_global_multiindex_with_col_reordering(self):
         x_private = pd.DataFrame(np.random.randn(500, 15), index=pd.date_range('01-01-2020', '01-05-2020', 500, tz='Europe/Zurich'), columns=pd.MultiIndex.from_product([['b1', 'b2', 'b3'], ['a', 'b', 'c', 'd', 'e']]))
@@ -250,7 +250,7 @@ class TestFormatDataset(unittest.TestCase):
                                                                     agg_freq='20min',
                                                                     relative_lags=True)
         formatter.add_target_transform(['target'], ['mean'], agg_bins=[-10, -15, -20])
-        df = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True, corr_reorder=True, parallel=False ,reduce_memory=False)
+        df = formatter.transform(df_mi, time_features=True, holidays=True, subdiv='ZH',global_form=True, corr_reorder=True, parallel=False ,reduce_memory=False)
 
 
     def test_normalizers(self):
@@ -259,11 +259,11 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_transform(['a'], lags=-np.arange(1, 5), agg_freq='20min')
         formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a_movingavg')
         formatter.add_target_normalizer(['a'], 'std', agg_freq='10H', name='a_movingstd')
-        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        x, y = formatter.transform(df, time_features=True, holidays=True, subdiv='ZH')
 
         formatter.add_normalizing_fun(expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1)",
                                       inv_expr="df[t]*(df['a_movingstd']+1) + df['a_movingavg']")
-        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        x, y_norm = formatter.transform(df, time_features=True, holidays=True, subdiv='ZH')
 
         y_unnorm = formatter.denormalize(x, y_norm)
 
@@ -278,10 +278,10 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['a'], 'mean', agg_freq='10H', name='a_n')
         formatter.add_target_normalizer(['a'], 'std', agg_freq='5H', name='b_n')
 
-        x, y = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        x, y = formatter.transform(df, time_features=True, holidays=True, subdiv='ZH')
 
         formatter.add_normalizing_fun(expr="np.exp(df[t]+df['a_n']) + df['b_n']", inv_expr="np.log(df[t]-df['b_n']) -df['a_n']")
-        x, y_norm = formatter.transform(df, time_features=True, holidays=True, prov='ZH')
+        x, y_norm = formatter.transform(df, time_features=True, holidays=True, subdiv='ZH')
         y_unnorm = formatter.denormalize(x, y_norm)
 
         # check if back-transform works
@@ -308,9 +308,9 @@ class TestFormatDataset(unittest.TestCase):
         formatter.add_target_normalizer(['target'], 'mean', agg_freq='10H', name='mean')
         formatter.add_target_normalizer(['target'], 'std', agg_freq='5H', name='std')
 
-        x, y = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+        x, y = formatter.transform(df_mi, time_features=True, holidays=True, subdiv='ZH',global_form=True)
         formatter.add_normalizing_fun("(df[t] - df['mean'])/(df['std']+1)", "df[t]*(df['std']+1) + df['mean']")
-        x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, prov='ZH',global_form=True)
+        x, y_norm = formatter.transform(df_mi, time_features=True, holidays=True, subdiv='ZH',global_form=True)
 
         xs = formatter.global_form_preprocess(df_mi)
 
