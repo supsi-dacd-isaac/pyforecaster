@@ -109,7 +109,7 @@ class DiscreteDistr(ScenarioGenerator):
         return self
 
     def predict(self, x, **kwargs):
-        return (self.predict_probabilities(x) * np.tile(self.support.reshape(1, -1), self.n_sa)).T.groupby(level=0).sum()
+        return (self.predict_probabilities(x) * np.tile(self.support.reshape(1, -1), self.n_sa)).T.groupby(level=0).sum().T
 
     def predict_probabilities(self, x, **kwargs):
         # infer sampling time
