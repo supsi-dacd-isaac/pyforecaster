@@ -13,7 +13,7 @@ from jax import vmap
 from pyforecaster.forecasting_models.neural_models.ICNN import PICNN, RecStablePICNN, PIQCNN, PIQCNNSigmoid, \
     StructuredPICNN, LatentStructuredPICNN, latent_pred
 from pyforecaster.forecasting_models.neural_models.INN import CausalInvertibleNN
-from pyforecaster.forecasting_models.neural_models.base_nn import NN, FFNN
+from pyforecaster.forecasting_models.neural_models.base_nn import NN, FFNN, LSTMNN
 from pyforecaster.formatter import Formatter
 from pyforecaster.trainer import hyperpar_optimizer
 
@@ -48,6 +48,9 @@ class TestFormatDataset(unittest.TestCase):
         x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
                                   y.iloc[n_tr:].copy()]
 
+        x_tr = x_tr[np.flip(x_tr.columns)]
+        x_te = x_te[np.flip(x_te.columns)]
+
         savepath_tr_plots = 'tests/results/ffnn_tr_plots'
 
         # if not there, create directory savepath_tr_plots
@@ -55,9 +58,32 @@ class TestFormatDataset(unittest.TestCase):
             makedirs(savepath_tr_plots)
 
         m = NN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
-               n_out=y_tr.shape[1], n_layers=3).fit(x_tr,y_tr, n_epochs=1, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+               n_out=y_tr.shape[1], n_layers=3).fit(x_tr,y_tr, n_epochs=3, savepath_tr_plots=savepath_tr_plots, stats_step=40)
 
         y_hat_1 = m.predict(x_te.iloc[:100, :])
+
+    # def test_lstmnn(self):
+    #     # normalize inputs
+    #     x = (self.x - self.x.mean(axis=0)) / (self.x.std(axis=0) + 0.01)
+    #     y = (self.y - self.y.mean(axis=0)) / (self.y.std(axis=0) + 0.01)
+    #
+    #     n_tr = int(len(x) * 0.8)
+    #     x_tr, x_te, y_tr, y_te = [x.iloc[:n_tr, :].copy(), x.iloc[n_tr:, :].copy(), y.iloc[:n_tr].copy(),
+    #                               y.iloc[n_tr:].copy()]
+    #
+    #     x_tr = x_tr[np.flip(x_tr.columns)]
+    #     x_te = x_te[np.flip(x_te.columns)]
+    #
+    #     savepath_tr_plots = 'tests/results/ffnn_tr_plots'
+    #
+    #     # if not there, create directory savepath_tr_plots
+    #     if not exists(savepath_tr_plots):
+    #         makedirs(savepath_tr_plots)
+    #
+    #     m = LSTMNN(learning_rate=1e-3,  batch_size=100, load_path=None, n_hidden_x=20,
+    #            n_out=y_tr.shape[1], n_layers=2).fit(x_tr,y_tr, n_epochs=5, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+    #
+    #     y_hat_1 = m.predict(x_te.iloc[:100, :])
 
 
     def test_picnn(self):
@@ -516,7 +542,7 @@ class TestFormatDataset(unittest.TestCase):
 
 
         m = CausalInvertibleNN(learning_rate=1e-2, batch_size=300, load_path=None, n_in=n_in,
-                               n_layers=2, normalize_target=False, n_epochs=5, stopping_rounds=30, rel_tol=-1,
+                               n_layers=2, normalize_target=False, n_epochs=2, stopping_rounds=30, rel_tol=-1,
                                end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=n_out,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
 
         z_hat_ete = m.predict(e_te.iloc[:, :n_in])
@@ -531,6 +557,7 @@ class TestFormatDataset(unittest.TestCase):
                 plt.cla()
                 ax.plot(e_te.iloc[i, -n_out:].values)
                 ax.plot(y_hat_lin.iloc[i, :].values, linewidth=1)
+                ax.plot(y_hat.iloc[i, :].values, linestyle='--')
                 ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
                 plt.pause(1e-6)
 

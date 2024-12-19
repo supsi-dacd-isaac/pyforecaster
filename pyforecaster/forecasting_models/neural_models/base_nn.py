@@ -3,7 +3,7 @@ import pickle as pk
 from inspect import getmro
 from os.path import join
 from typing import Union
-
+from time import time
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -22,6 +22,13 @@ from tqdm import tqdm
 from pyforecaster.forecaster import ScenarioGenerator
 from pyforecaster.forecasting_models.neural_models.neural_utils import jitting_wrapper, reproject_weights
 
+
+@jax.jit
+def compute_mean_losses(te_loss_i, tr_loss_i):
+    """Compute mean training and validation losses."""
+    mean_te = jnp.mean(te_loss_i)
+    mean_tr = jnp.mean(tr_loss_i)
+    return mean_te, mean_tr
 
 def train_step(params, optimizer_state, inputs_batch, targets_batch, model=None, loss_fn=None, **kwargs):
     values, grads = value_and_grad(loss_fn)(params, inputs_batch, targets_batch, **kwargs)
@@ -127,6 +134,51 @@ class FeedForwardModule(nn.Module):
                     x = nn.Dense(features=n, name='dense_{}'.format(i))(x)
 
         return x + y
+
+class LSTMModule(nn.Module):
+    n_layers: int
+    n_neurons: int
+    n_out: int
+    @nn.compact
+    def __call__(self, x):
+
+        if isinstance(self.n_layers, int):
+            layers = np.ones(self.n_layers) * self.n_neurons
+            layers[-1] = self.n_out
+            layers = layers
+        else:
+            layers = np.array(self.n_layers)
+
+        layers = layers.astype(int).tolist()
+        ScanLSTM = nn.scan(
+            nn.LSTMCell,
+            variable_broadcast="params",
+            split_rngs={"params": False},
+            in_axes=0,  # scan over first axis of x (time)
+            out_axes=0  # produce outputs with time on the first axis
+        )
+
+        for i, n in enumerate(layers):
+            if i < len(layers) - 1:
+                # Define a scanned LSTM cell that scans over time dimension:
+
+                # Create the LSTM cell
+                lstm = ScanLSTM(n)
+                # the carry is the state of the LSTM cell, contains c and h states
+                carry = lstm.initialize_carry(random.key(0), (x.shape[-1],))
+                _, x  = lstm(carry, x) # return sequence, trow away the state
+
+            else:
+                # Create the LSTM cell
+                lstm = ScanLSTM(n)
+                carry = lstm.initialize_carry(random.key(0), (x.shape[-1],))
+                _, x = lstm(carry, x)
+                x = nn.Dense(features=n)(x[-1]) # take the last temporal step, trow away the state
+
+        return x
+
+
+
 
 class NN(ScenarioGenerator):
     input_scaler: StandardScaler = None
@@ -245,6 +297,8 @@ class NN(ScenarioGenerator):
             jitting_wrapper(loss_fn, self.predict_batch))
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
 
+    def check_inputs(self, x, y):
+        return x, y
 
     def fit(self, inputs, targets, n_epochs=None, savepath_tr_plots=None, stats_step=None, rel_tol=None):
         self.to_be_normalized = [c for c in inputs.columns if
@@ -269,11 +323,19 @@ class NN(ScenarioGenerator):
         num_batches = inputs.shape[0] // batch_size
 
         inputs, targets = self.get_normalized_inputs(inputs, targets)
+
+        inputs, targets = self.check_inputs(inputs, targets)
+
         inputs_val, targets_val = self.get_normalized_inputs(inputs_val_0, targets_val_0)
-        inputs_len = [i.shape[1] for i in inputs] if isinstance(inputs, tuple) else inputs.shape[1]
+        #inputs_len = [i.shape[1] for i in inputs] if isinstance(inputs, tuple) else inputs.shape[1]
+
+        inputs_val, targets_val = self.check_inputs(inputs_val, targets_val)
+        inputs_len = [np.squeeze(i.shape[1:]) for i in inputs] if isinstance(inputs, tuple) else inputs.shape[1:]
 
         pars = self.init_arch(self.model, *np.atleast_1d(inputs_len))
         opt_state = self.optimizer.init(pars)
+
+
 
         tr_loss, val_loss = [np.inf], [np.inf]
         k = 0
@@ -283,7 +345,7 @@ class NN(ScenarioGenerator):
             for i in tqdm(range(num_batches),
                           desc='epoch {}/{}, val loss={:0.3e}'.format(epoch, n_epochs, val_loss[-1] if val_loss[-1] is not np.inf else np.nan)):
                 rand_idx = rand_idx_all[i * batch_size:(i + 1) * batch_size]
-                inputs_batch = [i[rand_idx, :] for i in inputs] if isinstance(inputs, tuple) else inputs[rand_idx, :]
+                inputs_batch = [i[rand_idx, :] for i in inputs] if isinstance(inputs, tuple) else inputs[rand_idx]
                 targets_batch = targets[rand_idx, :]
 
                 pars, opt_state, values = self.train_step(pars, opt_state, inputs_batch, targets_batch)
@@ -291,23 +353,38 @@ class NN(ScenarioGenerator):
                     pars = reproject_weights(pars, rec_stable=self.rec_stable, monotone=self.monotone)
 
                 if k % stats_step == 0 and k > 0:
+
                     old_pars = self.pars
                     self.pars = pars
                     rand_idx_val = np.random.choice(validation_len, np.minimum(batch_size, validation_len), replace=False)
-                    inputs_val_sampled = [i[rand_idx_val, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_val, :]
-                    te_loss_i = self.loss_fn(pars, inputs_val_sampled, targets_val[rand_idx_val, :])
+                    inputs_val_sampled = [i[rand_idx_val] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_val]
+                    t_0 = time()
+                    te_loss_i = self.loss_fn(pars, inputs_val_sampled, targets_val[rand_idx_val])
                     tr_loss_i = self.loss_fn(pars, inputs_batch, targets_batch)
-                    val_loss.append(np.array(jnp.mean(te_loss_i)))
-                    tr_loss.append(np.array(jnp.mean(tr_loss_i)))
+                    t_1 = time()
+                    mean_te, mean_tr = compute_mean_losses(te_loss_i, tr_loss_i)
 
-                    self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}'.format(tr_loss[-1], val_loss[-1]))
+                    # Ensure computations are complete before transferring to host
+                    mean_te = mean_te.block_until_ready()
+                    mean_tr = mean_tr.block_until_ready()
+
+                    # Convert to Python scalars
+                    val_loss.append(float(mean_te))
+                    tr_loss.append(float(mean_tr))
+
+                    print(f'tr loss: {tr_loss[-1]:.2e}, te loss: {val_loss[-1]:.2e}, eval took: {t_1-t_0:.2e} s , averaging took: {time() - t_0:.2e} s')
+
+                    # val_loss.append(np.array(jnp.mean(te_loss_i)))
+                    # tr_loss.append(np.array(jnp.mean(tr_loss_i)))
+                    #print('tr loss: {:0.2e}, te loss: {:0.2e}, eval took:{:0.2e} s'.format(tr_loss[-1], val_loss[-1], time()-t_0))
+                    #self.logger.info('tr loss: {:0.2e}, te loss: {:0.2e}, eval took:{:0.2e} s'.format(tr_loss[-1], val_loss[-1], time()-t_0))
                     if len(tr_loss) > 2:
                         if savepath_tr_plots is not None or self.savepath_tr_plots is not None:
                             savepath_tr_plots = savepath_tr_plots if savepath_tr_plots is not None else self.savepath_tr_plots
 
                             rand_idx_plt = np.random.choice(validation_len, 9)
-                            self.training_plots([i[rand_idx_plt, :] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_plt, :],
-                                                targets_val[rand_idx_plt, :], tr_loss[1:], val_loss[1:], savepath_tr_plots, k)
+                            self.training_plots([i[rand_idx_plt] for i in inputs_val] if isinstance(inputs_val, tuple) else inputs_val[rand_idx_plt],
+                                                targets_val[rand_idx_plt], tr_loss[1:], val_loss[1:], savepath_tr_plots, k)
                             plt.close("all")
                         rel_te_err = (val_loss[-2] - val_loss[-1]) / np.abs(val_loss[-2] + 1e-6)
                         last_improvement = k // stats_step - np.argwhere(np.array(val_loss) == np.min(val_loss)).ravel()[-1]
@@ -350,6 +427,7 @@ class NN(ScenarioGenerator):
 
     def predict(self, inputs, return_sigma=False, **kwargs):
         x, _ = self.get_normalized_inputs(inputs)
+        x, _ = self.check_inputs(x, None)
         y_hat = self.predict_batch(self.pars, x)
         y_hat = np.array(y_hat)
         if self.normalize_target:
@@ -369,6 +447,7 @@ class NN(ScenarioGenerator):
             return pd.DataFrame(y_hat, index=inputs.index, columns=self.target_columns)
 
     def predict_quantiles(self, inputs, normalize=True, **kwargs):
+        inputs, _ = self.check_inputs(inputs, None)
         if self.probabilistic:
             if normalize:
                 mu_hat, sigma_hat = self.predict(inputs, return_sigma=True)
@@ -420,3 +499,31 @@ class FFNN(NN):
         self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
             jitting_wrapper(loss_fn, self.predict_batch))
         self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
+
+class LSTMNN(NN):
+    def __init__(self, n_out=None, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
+                       scengen_dict={}, batch_size=None, **model_kwargs):
+        super().__init__(n_out=n_out, q_vect=q_vect, n_epochs=n_epochs, val_ratio=val_ratio, nodes_at_step=nodes_at_step, learning_rate=learning_rate,
+                 nn_module=FeedForwardModule, scengen_dict=scengen_dict, batch_size=batch_size,  **model_kwargs)
+
+    def set_arch(self):
+        self.optimizer = optax.adamw(learning_rate=self.learning_rate)
+        self.model = LSTMModule(n_layers=self.n_layers, n_neurons=self.n_hidden_x,
+                              n_out=self.n_out)
+        self.predict_batch = vmap(jitting_wrapper(predict_batch, self.model), in_axes=(None, 0))
+        self.loss_fn = jitting_wrapper(probabilistic_loss_fn, self.predict_batch) if self.probabilistic else (
+            jitting_wrapper(loss_fn, self.predict_batch))
+        self.train_step = jitting_wrapper(partial(train_step, loss_fn=self.loss_fn), self.optimizer)
+
+
+    def check_inputs(self, x, y):
+        x = np.atleast_3d(x)
+        return x, y
+
+    @staticmethod
+    def init_arch(nn_init, *n_inputs_x):
+        "divides data into training and test sets "
+        key1, key2 = random.split(random.key(0))
+        x = random.normal(key1, (*n_inputs_x,))  # Dummy input data (for the first input)
+        init_params = nn_init.init(key2, x)  # Initialization call
+        return init_params
