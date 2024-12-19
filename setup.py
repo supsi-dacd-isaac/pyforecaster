@@ -37,8 +37,8 @@ setuptools.setup(
                       'jaxlib>=0.4.1',
                       'quantile-forest>=1.2.0',
                       "optax>=0.1.7",
-                      "flax>=0.7.4",
+                      "flax>=0.10",
                       "statsmodels>=0.14.2",
                       ],
-    python_requires='>=3.8',
+    python_requires='>=3.11',
 )
