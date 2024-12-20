@@ -5,6 +5,7 @@ from os.path import exists, join
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+
 import numpy as np
 import optax
 import pandas as pd
@@ -13,11 +14,12 @@ from jax import vmap
 from pyforecaster.forecasting_models.neural_models.ICNN import PICNN, RecStablePICNN, PIQCNN, PIQCNNSigmoid, \
     StructuredPICNN, LatentStructuredPICNN, latent_pred
 from pyforecaster.forecasting_models.neural_models.INN import CausalInvertibleNN
-from pyforecaster.forecasting_models.neural_models.base_nn import NN, FFNN, LSTMNN
+from pyforecaster.forecasting_models.neural_models.base_nn import FFNN
 from pyforecaster.formatter import Formatter
 from pyforecaster.trainer import hyperpar_optimizer
 
 from pyforecaster.forecaster import LinearForecaster
+
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
         self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
@@ -26,7 +28,7 @@ class TestFormatDataset(unittest.TestCase):
                             filename=None)
         formatter = Formatter(logger=self.logger).add_transform(['all'], lags=np.arange(144),
                                                                     relative_lags=True)
-        formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
+        #formatter.add_transform(['all'], ['min', 'max'], agg_bins=[1, 2, 15, 20])
         formatter.add_target_transform(['all'], lags=-np.arange(144))
 
         self.x, self.y = formatter.transform(self.data.iloc[:40000])
@@ -57,10 +59,52 @@ class TestFormatDataset(unittest.TestCase):
         if not exists(savepath_tr_plots):
             makedirs(savepath_tr_plots)
 
-        m = NN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
-               n_out=y_tr.shape[1], n_layers=3).fit(x_tr,y_tr, n_epochs=3, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+        # m = NN(learning_rate=1e-3,  batch_size=1000, load_path=None, n_hidden_x=200,
+        #        n_out=y_tr.shape[1], n_layers=3).fit(x_tr,y_tr, n_epochs=3, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+        #
+        # y_hat_1 = m.predict(x_te.iloc[:100, :])
 
-        y_hat_1 = m.predict(x_te.iloc[:100, :])
+        m_lin = LinearForecaster().fit(x_tr, y_tr)
+        y_hat_lin = m_lin.predict(x_te.iloc[:1000, :])
+
+        n_epochs=10
+        pars = {'learning_rate': 1e-3, 'batch_size': 1000, 'n_hidden_x': 200, 'n_out': y_tr.shape[1]}
+        m = FFNN(**pars).fit(x_tr,y_tr, n_epochs=n_epochs, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+        y_hat = m.predict(x_te.iloc[:1000, :])
+
+        pars.update({'skip_connection': True})
+        m_skip = FFNN(**pars).fit(x_tr,y_tr, n_epochs=n_epochs, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+        y_hat_skip = m_skip.predict(x_te.iloc[:1000, :])
+
+        selector = np.tile(np.argwhere(x_tr.columns=='all').ravel(), y_tr.shape[1])
+        pars.update({'selector': selector})
+        m_sel = FFNN(**pars).fit(x_tr, y_tr, n_epochs=n_epochs, savepath_tr_plots=savepath_tr_plots, stats_step=40)
+        y_hat_sel = m_sel.predict(x_te.iloc[:1000, :])
+
+        from pyforecaster.metrics import summary_scores, nmae
+        maes_nn = summary_scores(y_hat, y_te.iloc[:1000], metrics=[nmae], idxs=pd.DataFrame(y_hat.index.hour, index=y_hat.index))
+        maes_nn_skip = summary_scores(y_hat_skip, y_te.iloc[:1000], metrics=[nmae], idxs=pd.DataFrame(y_hat.index.hour, index=y_hat.index))
+        maes_nn_sel = summary_scores(y_hat_sel, y_te.iloc[:1000], metrics=[nmae], idxs=pd.DataFrame(y_hat.index.hour, index=y_hat.index))
+        maes_lin = summary_scores(y_hat_lin, y_te.iloc[:1000], metrics=[nmae], idxs=pd.DataFrame(y_hat.index.hour, index=y_hat.index))
+
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(maes_nn['nmae'].mean(axis=0), label='nn')
+        ax.plot(maes_nn_skip['nmae'].mean(axis=0), label='nn skip')
+        ax.plot(maes_nn_sel['nmae'].mean(axis=0), label='nn sel')
+        ax.plot(maes_lin['nmae'].mean(axis=0), label='lin')
+        plt.legend()
+        plt.show()
+
+        for i in range(100):
+            if i % 5 == 0:
+                fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+                ax.plot(y_te.iloc[i, :].values, linestyle='--', linewidth=2)
+                ax.plot(y_hat.iloc[i, :].values, linewidth=1)
+                ax.plot(y_hat_skip.iloc[i, :].values, linewidth=1)
+                ax.plot(y_hat_sel.iloc[i, :].values, linewidth=1)
+                plt.pause(1e-6)
+                plt.show()
+
 
     # def test_lstmnn(self):
     #     # normalize inputs
@@ -527,40 +571,42 @@ class TestFormatDataset(unittest.TestCase):
             plt.pause(1e-6)
         """
         m = FFNN(n_hidden_x=20, n_layers=2, learning_rate=1e-3, batch_size=500,
-                 load_path=None, n_out=n_out, rel_tol=-1, stopping_rounds=10, n_epochs=10).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
+                 load_path=None, n_out=n_out, rel_tol=-1, stopping_rounds=10, n_epochs=2, skip_connection=True).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
         y_hat = m.predict(e_te.iloc[:, :n_in])
+
+
+        m = CausalInvertibleNN(learning_rate=1e-3, batch_size=300, load_path=None, n_in=n_in,
+                               n_layers=2, normalize_target=False, n_epochs=2, stopping_rounds=30, rel_tol=-1,
+                               end_to_end='full', n_hidden_y=20, n_prediction_layers=3, n_out=n_out,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
+        z_hat_ete = m.predict(e_te.iloc[:, :n_in])
 
         from pyforecaster.metrics import summary_scores, nmae
 
         maes_nn = summary_scores(y_hat, e_te.iloc[:, -n_out:], metrics=[nmae],idxs=pd.DataFrame(e_te.index.hour, index=e_te.index))
         maes_lin = summary_scores(y_hat_lin, e_te.iloc[:, -n_out:], metrics=[nmae],idxs=pd.DataFrame(e_te.index.hour, index=e_te.index))
+        maes_ete = summary_scores(z_hat_ete, e_te.iloc[:, -n_out:], metrics=[nmae],idxs=pd.DataFrame(e_te.index.hour, index=e_te.index))
 
         fig, ax = plt.subplots(1, 1)
-        ax.plot(maes_lin['nmae'].mean(axis=0))
-        ax.plot(maes_nn['nmae'].mean(axis=0))
-
-
-
-        m = CausalInvertibleNN(learning_rate=1e-2, batch_size=300, load_path=None, n_in=n_in,
-                               n_layers=2, normalize_target=False, n_epochs=2, stopping_rounds=30, rel_tol=-1,
-                               end_to_end='full', n_hidden_y=300, n_prediction_layers=3, n_out=n_out,names_exogenous=['all_lag_000']).fit(e_tr.iloc[:, :n_in], e_tr.iloc[:, -n_out:])
-
-        z_hat_ete = m.predict(e_te.iloc[:, :n_in])
+        ax.plot(maes_lin['nmae'].mean(axis=0), label='lin')
+        ax.plot(maes_nn['nmae'].mean(axis=0), label='nn')
+        ax.plot(maes_ete['nmae'].mean(axis=0), label='ete')
+        plt.legend()
+        plt.show()
 
         np.mean((z_hat_ete.values- e_te.iloc[:, -n_out:].values)**2)
         np.mean((y_hat.values- e_te.iloc[:, -n_out:].values)**2)
         np.mean((y_hat_lin.values- e_te.iloc[:, -n_out:].values)**2)
 
-        fig, ax = plt.subplots(1, 1, figsize=(4, 3))
         for i in range(100):
             if i%5 == 0:
-                plt.cla()
+                fig, ax = plt.subplots(1, 1, figsize=(4, 3))
+
                 ax.plot(e_te.iloc[i, -n_out:].values)
                 ax.plot(y_hat_lin.iloc[i, :].values, linewidth=1)
                 ax.plot(y_hat.iloc[i, :].values, linestyle='--')
                 ax.plot(z_hat_ete.iloc[i, :].values, linestyle='--')
                 plt.pause(1e-6)
-
+                plt.show()
 
 
 def boxconstr(x, ub, lb):
