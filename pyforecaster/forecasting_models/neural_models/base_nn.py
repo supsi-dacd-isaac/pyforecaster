@@ -217,6 +217,8 @@ class NN(ScenarioGenerator):
     monotone: bool = False
     probabilistic: bool = False
     probabilistic_loss_kind: str = 'maximum_likelihood'
+    val_ratio: float = None
+    nodes_at_step: list = None
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_hidden_x: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
@@ -244,7 +246,9 @@ class NN(ScenarioGenerator):
                        "subtract_mean_when_normalizing":subtract_mean_when_normalizing,
                        "causal_df":causal_df,
                        "probabilistic":probabilistic,
-                       "probabilistic_loss_kind":probabilistic_loss_kind
+                       "probabilistic_loss_kind":probabilistic_loss_kind,
+                       "val_ratio":val_ratio,
+                       "nodes_at_step":nodes_at_step
                        })
 
         if self.load_path is not None:
@@ -495,6 +499,9 @@ class NN(ScenarioGenerator):
 
 
 class FFNN(NN):
+    split_heads: bool = False
+    selector: Union[np.array, None] = None
+    skip_connection: bool = False
     def __init__(self, n_out=None, q_vect=None, n_epochs=10, val_ratio=None, nodes_at_step=None, learning_rate=1e-3,
                        scengen_dict={}, batch_size=None, split_heads=False, selector=None, skip_connection=False,
                  **model_kwargs):

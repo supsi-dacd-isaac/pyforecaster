@@ -40,6 +40,17 @@ class TestFormatDataset(unittest.TestCase):
         self.e, _ = formatter.transform(self.data.iloc[:40000],time_features=False)
         self.e = (self.e - self.e.mean(axis=0)) / (self.e.std(axis=0)+0.01)
 
+    def test_ffnn_load(self):
+        pars = {"n_out":10, "n_epochs":30, "val_ratio":0.3, "nodes_at_step":20,
+                "learning_rate":1e-5,  "batch_size":20, "split_heads":True, "selector":None,
+                "skip_connection":True}
+
+        m = FFNN(**pars)
+        m.save('tests/results/ffnn_model.pk')
+        m_loaded = FFNN(load_path='tests/results/ffnn_model.pk')
+        m_loaded.get_params()
+        l = [k for k, v in pars.items() if v != m_loaded.get_params()[k]]
+        assert len(l) == 0
 
     def test_ffnn(self):
         # normalize inputs
@@ -95,7 +106,7 @@ class TestFormatDataset(unittest.TestCase):
         plt.legend()
         plt.show()
 
-        for i in range(100):
+        for i in range(10):
             if i % 5 == 0:
                 fig, ax = plt.subplots(1, 1, figsize=(4, 3))
                 ax.plot(y_te.iloc[i, :].values, linestyle='--', linewidth=2)
