@@ -40,5 +40,5 @@ setuptools.setup(
                       "flax>=0.10",
                       "statsmodels>=0.14.2",
                       ],
-    python_requires='>=3.11',
+    python_requires='>=3.10',
 )
