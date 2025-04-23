@@ -39,6 +39,7 @@ setuptools.setup(
                       "optax>=0.1.7",
                       "flax>=0.10",
                       "statsmodels>=0.14.2",
+                      "keras>=3.9.2"
                       ],
     python_requires='>=3.10',
 )
