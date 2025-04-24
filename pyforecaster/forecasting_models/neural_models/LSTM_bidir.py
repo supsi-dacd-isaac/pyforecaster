@@ -46,7 +46,7 @@ class LSTM_Forecaster(ScenarioGenerator):
 
         return model
 
-    def fit(self, df, epochs=10, batch_size=32, val_split=0.2, patience=5, **kwargs):
+    def fit(self, df, y=None, epochs=10, batch_size=32, val_split=0.2, patience=5, **kwargs):
         assert len(df) >= self.lstm_history + self.pred_horizon, "Dataframe too short"
 
         target_series = df[self.target_name].values.reshape(-1, 1)
@@ -98,7 +98,7 @@ class LSTM_Forecaster(ScenarioGenerator):
             **kwargs
         )
 
-    def predict(self, df):
+    def predict(self, df, **kwargs):
         assert len(df) >= self.lstm_history, "Dataframe too short for LSTM history"
 
         target_series = df[self.target_name].values.reshape(-1, 1)
@@ -116,5 +116,10 @@ class LSTM_Forecaster(ScenarioGenerator):
 
         preds_scaled = self.model.predict([X_seq, X_exog[:total_samples]])
         preds = self.target_scaler.inverse_transform(preds_scaled)
+
+        # encapsulate predictions in a DataFrame with the same index as the input DataFrame
+        columns = np.array([self.target_name + f'_{i+1}' for i in range(self.pred_horizon)])
+        preds = pd.DataFrame(preds, index=df.index[self.lstm_history:], columns=columns)
+
 
         return preds
