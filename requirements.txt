@@ -9,7 +9,7 @@ scikit_learn>=1.0.1
 lightgbm>=3.3.2
 pygraphviz>=1.10
 ray>=2.0.0
-sharedmem==0.3.8
+sharedmem>=0.3.8
 numba>=0.57.1
 holidays>=0.16
 python-long-weekends>=0.1.1
