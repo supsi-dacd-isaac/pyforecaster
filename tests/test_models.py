@@ -323,5 +323,34 @@ class TestFormatDataset(unittest.TestCase):
             plt.plot(y_hat.iloc[i, :].values)
             plt.pause(0.1)
 
+    def test_binary_distr(self):
+        self.data = self.data.resample('1h').mean()
+        self.data = (self.data>self.data.mean()).astype(int)
+
+        formatter = Formatter(logger=self.logger, augment=False)
+        formatter.add_target_transform(['all'], lags=-np.arange(1, 24))
+        x, y = formatter.transform(self.data)
+        n_tr = 500
+        n_te = 500
+        x_tr, y_tr, x_te, y_te = x.iloc[:n_tr], y.iloc[:n_tr], x.iloc[n_tr:n_tr+n_te], y.iloc[n_tr:n_tr+n_te]
+
+        m = DiscreteDistr(target_name='all', q_vect=np.arange(31)/30, nodes_at_step=None, val_ratio=0.8, n_sa=24,
+                                    period='1d').fit(x_tr, y_tr)
+        y_hat = m.predict(x_te)
+        q_hat = m.predict_probabilities(x_te)
+
+        from pyforecaster.forecaster import ScenarioGenerator
+
+        x_bins = np.arange(23)
+        y_bins = m.support
+
+        extent = [x_bins.min(), x_bins.max(), y_bins.min(), y_bins.max()]
+        for i in range(10):
+            plt.figure()
+            plt.imshow(ScenarioGenerator().quantiles_to_numpy(q_hat)[i].T, aspect='auto', extent=extent, origin='lower', cmap='plasma')
+            plt.plot(y_te.iloc[i, :].values)
+            plt.plot(y_hat.iloc[i, :].values)
+            plt.pause(0.1)
+
 if __name__ == '__main__':
     unittest.main()

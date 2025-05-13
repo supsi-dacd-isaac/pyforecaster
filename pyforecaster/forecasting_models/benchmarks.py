@@ -79,7 +79,7 @@ class DiscreteDistr(ScenarioGenerator):
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         self.n_sa = y.shape[1]
         # infer sampling time
-        sampling_time = pd.infer_freq(x.index)
+        sampling_time = x.index.drop_duplicates().diff().median()
 
         # retrieve support of target distribution
         support = np.unique(y.values)
@@ -109,11 +109,11 @@ class DiscreteDistr(ScenarioGenerator):
         return self
 
     def predict(self, x, **kwargs):
-        return (self.predict_probabilities(x) * np.tile(self.support.reshape(1, -1), self.n_sa)).groupby(level=0, axis=1).sum()
+        return (self.predict_probabilities(x) * np.tile(self.support.reshape(1, -1), self.n_sa)).T.groupby(level=0).sum().T
 
     def predict_probabilities(self, x, **kwargs):
         # infer sampling time
-        sampling_time = pd.infer_freq(x.index)
+        sampling_time = x.index.drop_duplicates().diff().median()
         # Create a new column for the time within a day (hours and minutes)
         time_of_day = pd.Series(x.index.floor(sampling_time).time)
 

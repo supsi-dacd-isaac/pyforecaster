@@ -22,7 +22,7 @@ setuptools.setup(
     install_requires=['numpy>=1.20.2',
                       'optuna>=2.10.0',
                       'networkx>=2.6.3',
-                      'pandas>=1.2.3',
+                      'pandas>=2.2.3',
                       'seaborn>=0.11.1',
                       'matplotlib>=3.4.1',
                       'scipy>=1.7.1',
@@ -37,8 +37,9 @@ setuptools.setup(
                       'jaxlib>=0.4.1',
                       'quantile-forest>=1.2.0',
                       "optax>=0.1.7",
-                      "flax>=0.7.4",
+                      "flax>=0.10",
                       "statsmodels>=0.14.2",
+                      "keras>=3.9.2"
                       ],
-    python_requires='>=3.8',
+    python_requires='>=3.10',
 )

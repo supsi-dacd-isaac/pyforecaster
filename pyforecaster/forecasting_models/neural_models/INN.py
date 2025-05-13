@@ -9,6 +9,7 @@ from jax import vmap
 from pyforecaster.forecasting_models.neural_models.neural_utils import jitting_wrapper
 from functools import partial
 import numpy as np
+import matplotlib.pyplot as plt
 
 def identity(params, err):
     return err
@@ -52,9 +53,10 @@ def full_end_to_end_loss_fn(params, inputs, targets, model=None, embedder=None, 
 class CausalInvertibleModule(nn.Module):
     num_layers: int = 3
     features: int = 32
+    scaling_factor:float = 0.1
 
     def setup(self):
-        self.layers = [CausalInvertibleLayer(prediction_layer=l==self.num_layers-1, features=self.features) for l in range(self.num_layers)]
+        self.layers = [CausalInvertibleLayer(prediction_layer=l==self.num_layers-1, features=self.features, scaling_factor=self.scaling_factor) for l in range(self.num_layers)]
     def __call__(self, x):
         for i in range(self.num_layers):
             x = self.layers[i](x)
@@ -78,9 +80,12 @@ class EndToEndCausalInvertibleModule(nn.Module):
     n_exogenous_features: int = 32
     n_out: int = 32
     activation: callable = nn.relu
+    scaling_factor: float = 0.1
+
     def setup(self):
-        self.embedder = CausalInvertibleModule(num_layers=self.num_embedding_layers, features=self.features_embedding)
-        self.predictor = FeedForwardModule(n_layers=np.hstack([(np.ones(self.num_prediction_layers-1)*self.features_prediction).astype(int), self.n_out]), split_heads=False)
+        self.embedder = CausalInvertibleModule(num_layers=self.num_embedding_layers, features=self.features_embedding, scaling_factor=self.scaling_factor)
+        self.predictor = FeedForwardModule(n_layers=np.hstack([(np.ones(self.num_prediction_layers-1)*self.features_prediction).astype(int), self.n_out]),
+                                           skip_connection=True, split_heads=False)
         self.invert_fun = jax.jit(partial(self.inverter, embedder=self.embedder))
     def __call__(self, x):
         x = x.copy()
@@ -112,20 +117,22 @@ class CausalInvertibleNN(NN):
     n_hidden_y = 200
     names_exogenous = None
     n_exogenous = 0
+    scaling_factor = 0.1
     def __init__(self, learning_rate: float = 0.01, batch_size: int = None, load_path: str = None,
                  n_in: int = 100, n_out: int = None, n_layers: int = 3, pars: dict = None, q_vect=None,
                  val_ratio=None, nodes_at_step=None, n_epochs: int = 10, savepath_tr_plots: str = None,
                  stats_step: int = 50, rel_tol: float = 1e-4, unnormalized_inputs=None, normalize_target=False,
                  stopping_rounds=5, subtract_mean_when_normalizing=False, causal_df=None, probabilistic=False,
                  probabilistic_loss_kind='maximum_likelihood', end_to_end='none', n_prediction_layers=3,
-                 n_hidden_y=200, names_exogenous=None,
+                 n_hidden_y=200, names_exogenous=None, scaling_factor=0.1,
                  **scengen_kwgs):
 
         self.set_attr({"names_exogenous": names_exogenous,
                        "end_to_end": end_to_end,
                        "n_prediction_layers": n_prediction_layers,
                        "num_embedding_layers": n_hidden_y,
-                       "n_exogenous":len(names_exogenous) if names_exogenous is not None else 0})
+                       "n_exogenous":len(names_exogenous) if names_exogenous is not None else 0,
+                       "scaling_factor": scaling_factor})
         assert n_in - self.n_exogenous >= n_out, ('the history length must be greater than the forecast horizon to '
                                                       'learn an efficiently invertible causal transformation')
         super().__init__(learning_rate, batch_size, load_path, n_in, n_out, n_layers, pars, q_vect, val_ratio,
@@ -140,7 +147,7 @@ class CausalInvertibleNN(NN):
                                                     features_prediction=self.n_hidden_y,
                                                     features_embedding=self.n_hidden_x - self.n_exogenous,
                                                     n_exogenous_features=self.n_exogenous,
-                                                    n_out=self.n_out) if (self.end_to_end in ['full', 'quasi']) \
+                                                    n_out=self.n_out, scaling_factor=self.scaling_factor) if (self.end_to_end in ['full', 'quasi']) \
             else CausalInvertibleModule(num_layers=self.n_layers, features=self.n_hidden_x)
 
         self.predict_batch = vmap(jitting_wrapper(predict_batch, self.model), in_axes=(None, 0))
@@ -194,7 +201,7 @@ class CausalInvertibleNN(NN):
             y_hat = invert(self.pars, e_future, self.model)[:, -embeddings_hat.shape[1]:]
 
             # embedding-predicted embedding distributions
-            import matplotlib.pyplot as plt
+
             fig, ax = plt.subplots(2, 1, figsize = (10, 6))
             ax[0].hist(np.array(embeddings.ravel()), bins=100, alpha=0.5, density=True, label='past embedding')
             ax[0].hist(np.array(embeddings_hat.ravel()), bins=100, alpha=0.5, density=True, label='forecasted embedding')
