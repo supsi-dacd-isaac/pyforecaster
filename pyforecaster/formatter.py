@@ -40,7 +40,7 @@ class Formatter:
 
     def add_time_features(self, x):
         tz = x.index[0].tz
-        self.logger.info('Adding time features. Time zone for the df: {}'.format(tz))
+        self.logger.debug('Adding time features. Time zone for the df: {}'.format(tz))
         if self.timezone is None:
             if tz is None:
                 time_features = [x.index.hour, x.index.dayofweek, x.index.hour * 60 + x.index.minute]
@@ -74,7 +74,7 @@ class Formatter:
         return x
 
     def add_holidays(self, x, state_code='CH', **kwargs):
-        self.logger.info('Adding holidays')
+        self.logger.debug('Adding holidays')
         holidays = holidays_api.country_holidays(country=state_code, years=x.index.year.unique(), **kwargs)
         bridges, long_weekends = spot_holiday_bridges(start=x.index[0]-pd.Timedelta('2D'), end=x.index[-1]+pd.Timedelta('2D'), holidays=pd.DatetimeIndex(holidays.keys()))
         bridges = np.array([b.date() for b in bridges])
@@ -372,10 +372,10 @@ class Formatter:
 
     def cat_encoding(self, df_train, df_test, target, encoder=None, cat_features=None):
         if cat_features is None:
-            self.logger.info('auto encoding categorical features')
+            self.logger.debug('auto encoding categorical features')
             cat_features = self.auto_cat_feature_selection(df_train)
 
-        self.logger.info('encoding {} as categorical features'.format(cat_features))
+        self.logger.debug('encoding {} as categorical features'.format(cat_features))
         df_train[cat_features] = pd.Categorical(df_train[cat_features])
         df_test[cat_features] = pd.Categorical(df_test[cat_features])
 
@@ -439,18 +439,18 @@ class Formatter:
             self._simulate_transform(x)
 
         deadband_time = np.max(np.hstack([t.metadata['start_time'].abs().max() for t in self.transformers]))
-        self.logger.info('deadband time: {}'.format(deadband_time))
+        self.logger.debug('deadband time: {}'.format(deadband_time))
         if deadband_time > split_times[1]-split_times[0]:
             self.logger.error('deadband time: {} is bigger than test fold timespan: {}. Try '
                               'lowering k'.format(deadband_time, split_times[1]-split_times[0]))
             raise
-        self.logger.info('adding {} test folds with length {}'.format(n_k*multiplier_factor, time_window))
+        self.logger.debug('adding {} test folds with length {}'.format(n_k*multiplier_factor, time_window))
         folds = {}
         for i, t_i in enumerate(shift_times):
             test_window = [t_i, time_window + t_i]
             tr_idxs = (time_index < test_window[0] - deadband_time) | (time_index > test_window[1] + deadband_time)
             te_idx = (time_index >= test_window[0]) & (time_index <= test_window[1])
-            # self.logger.info(self.print_fold(tr_idxs, te_idx))
+            # self.logger.debug(self.print_fold(tr_idxs, te_idx))
             yield tr_idxs, te_idx
             #folds['fold_{:>02d}'.format(i)] = pd.DataFrame({'tr':tr_idxs,  'te': te_idx}, index=time_index)
         #return pd.concat(folds, axis=1)
@@ -791,7 +791,7 @@ class Transformer:
                 lag_steps = np.array([0])
             if not simulate:
                 data = pd.concat([data, d], axis=1)
-                self.logger.info('Added {} to the dataframe'.format(trans_names))
+                self.logger.debug('Added {} to the dataframe'.format(trans_names))
 
             if self.agg_bins is None:
                 lags_and_fun = product([None] if self.lags is None else self.lags, function_names)
