@@ -179,7 +179,19 @@ class ScenarioGenerator(BaseEstimator):
         seed = self._get_scengen_subsample_seed()
         rng = np.random.default_rng(seed)
         if isinstance(x.index, pd.DatetimeIndex):
+            self.logger.info(
+                'Reducing post-fit rows for scenario generation from %s to %s using stratified-by-hour sampling (seed=%s).',
+                n,
+                m,
+                seed,
+            )
             return self._subsample_stratified_by_hour(x, y, m, rng)
+        self.logger.info(
+            'Reducing post-fit rows for scenario generation from %s to %s using uniform sampling (seed=%s).',
+            n,
+            m,
+            seed,
+        )
         return self._subsample_uniform(x, y, m, rng)
 
     def _estimate_err_distr(self, errs: pd.DataFrame, x: pd.DataFrame):
