@@ -8,6 +8,14 @@ from functools import partial
 import matplotlib.pyplot as plt
 from copy import deepcopy
 
+
+def _reject_postfit_row_cap_kwargs(scengen_kwgs):
+    unsupported = {'max_scengen_rows', 'scengen_random_state'} & set(scengen_kwgs)
+    if unsupported:
+        names = ', '.join(sorted(unsupported))
+        raise TypeError(f'Unsupported keyword argument(s) for HoltWinters custom-fit models: {names}')
+
+
 def hankel(x, n, generate_me=None):
     if generate_me is None:
         generate_me = np.arange(n)
@@ -133,6 +141,7 @@ class HoltWinters(ScenarioGenerator):
         :param n_sa: number of steps ahead to be predicted
         :param q_vect: vector of quantiles
         """
+        _reject_postfit_row_cap_kwargs(scengen_kwgs)
         self.init_pars = {'periods': periods, 'target_name': target_name, 'q_vect': q_vect, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                             'optimization_budget': optimization_budget, 'n_sa': n_sa, 'constraints': constraints, 'optimize_hyperpars': optimize_hyperpars,
                           'verbose':verbose, 'alpha': alpha, 'beta': beta, 'gamma_1': gamma_1, 'gamma_2': gamma_2}
@@ -197,8 +206,9 @@ class HoltWinters(ScenarioGenerator):
         # reinit HW
         # concat past inputs and last row of target
         self.reinit(y)
-        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         self.target_cols = ['{}_{}'.format(self.target_name, t) for t in np.arange(self.n_sa)]
+        resid = pd.DataFrame(resid, index=x_pd.index[:-self.n_sa], columns=self.target_cols)
+        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         return self
 
     def predict(self, x_pd, **kwargs):
@@ -375,14 +385,15 @@ def constrainify(x, constraints):
 class HoltWintersMulti(ScenarioGenerator):
     def __init__(self, periods, target_name, targets_names=None, q_vect=None, val_ratio=None, nodes_at_step=None, optimization_budget=800,
                  optimize_hyperpars = True, optimize_submodels_hyperpars=True, n_sa=1, constraints=None,
-                 models_periods=None, verbose=True, alphas=None, gammas_1=None, gammas_2=None, **scengen_kwgs):
+                 models_periods=None, verbose=True, alphas=None, gammas_1=None, gammas_2=None,
+                 **scengen_kwgs):
         """
         :param periods: vector of two seasonalities' periods e.g. [24, 7*24]
         :param optimization_budget: number of test point to optimize the parameters
         :param n_sa: number of steps ahead to be predicted
         :param q_vect: vector of quantiles
         """
-
+        _reject_postfit_row_cap_kwargs(scengen_kwgs)
         super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
         self.init_pars = {'periods': periods, 'target_name': target_name, 'q_vect': q_vect, 'val_ratio': val_ratio, 'nodes_at_step': nodes_at_step,
                             'optimization_budget': optimization_budget, 'n_sa': n_sa, 'constraints': constraints, 'optimize_hyperpars': optimize_hyperpars,

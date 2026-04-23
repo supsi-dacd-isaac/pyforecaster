@@ -19,6 +19,23 @@ from pyforecaster.plot_utils import ts_animation_bars
 from pyforecaster.utilities import get_logger
 
 
+def _normalize_timedelta_freq(freq):
+    if not isinstance(freq, str):
+        return freq
+    replacements = {
+        'H': 'h',
+        'T': 'min',
+        'S': 's',
+        'L': 'ms',
+        'U': 'us',
+        'N': 'ns',
+    }
+    normalized = freq
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+    return normalized
+
+
 class Formatter:
     """
     :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
@@ -661,7 +678,7 @@ class Transformer:
         self.name = name
         self.names = names
         self.functions = functions
-        self.agg_freq = agg_freq
+        self.agg_freq = _normalize_timedelta_freq(agg_freq)
         self.lags = lags if lags is None else np.atleast_1d(np.array(lags))
         self.relative_lags = relative_lags
         self.logger = get_logger() if logger is None else logger

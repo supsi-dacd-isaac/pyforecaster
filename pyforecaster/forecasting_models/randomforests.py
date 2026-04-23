@@ -15,7 +15,7 @@ class QRF(ScenarioGenerator):
                  min_samples_leaf=1, max_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=1.0,
                  max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, n_jobs=None,
                  random_state=None, verbose=0, warm_start=False, ccp_alpha=0.0, max_samples=None, parallel=True,
-                 max_parallel_workers=8, **scengen_kwgs):
+                 max_parallel_workers=8, max_scengen_rows=None, scengen_random_state=None, **scengen_kwgs):
         """
         :param n_single: number of single models, should be less than number of step ahead predictions. The rest of the
                          steps ahead are forecasted by a global model
@@ -25,10 +25,15 @@ class QRF(ScenarioGenerator):
         :param learning_rate:
         :param tol_period:
         :param q_vect:
+        :param max_scengen_rows: cap rows used only for post-fit scenario generation (``self.scengen`` / ``err_distr``);
+            the quantile random forest is still trained on the full (train) data.
+        :param scengen_random_state: optional seed for subsampling used when ``max_scengen_rows`` is set; if omitted,
+            ``random_state`` is used when it is an integer, else 0.
         :param scengen_kwgs:
         """
 
-        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, max_scengen_rows=max_scengen_rows,
+                         scengen_random_state=scengen_random_state, **scengen_kwgs)
 
         self.n_estimators = n_estimators
         self.max_depth = max_depth

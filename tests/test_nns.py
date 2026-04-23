@@ -22,7 +22,7 @@ from pyforecaster.forecaster import LinearForecaster
 
 class TestFormatDataset(unittest.TestCase):
     def setUp(self) -> None:
-        self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
+        self.data = pd.read_parquet('tests/data/test_data.parquet').droplevel(0, 1)
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)

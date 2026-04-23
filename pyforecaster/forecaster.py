@@ -1,15 +1,26 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from typing import Optional, Union
 
 from tqdm import tqdm
 from abc import abstractmethod
 from lightgbm import LGBMRegressor, Dataset, train
+from sklearn.base import BaseEstimator
 from sklearn.linear_model import RidgeCV, LinearRegression
 from sklearn.preprocessing import LabelEncoder
 from pyforecaster.scenarios_generator import ScenGen
 from pyforecaster.utilities import get_logger
 from inspect import signature
+
+
+def _validate_max_scengen_rows(value: Optional[Union[int, np.integer]]):
+    if value is None:
+        return
+    if not isinstance(value, (int, np.integer)):
+        raise TypeError('max_scengen_rows must be None or a positive int, got %r' % (value,))
+    if int(value) <= 0:
+        raise ValueError('max_scengen_rows must be a positive int or None, got %s' % (value,))
 
 
 def encode_categorical(func):
@@ -42,9 +53,21 @@ def encode_categorical(func):
 
 
 
-class ScenarioGenerator(object):
+class ScenarioGenerator(BaseEstimator):
     def __init__(self, q_vect=None, nodes_at_step=None, val_ratio=None, logger=None, n_scen_fit=100,
-                 additional_node=False, formatter=None, conditional_to_hour=True, **scengen_kwgs):
+                 additional_node=False, formatter=None, conditional_to_hour=True,
+                 max_scengen_rows: Optional[Union[int, np.integer]] = None,
+                 scengen_random_state: Optional[Union[int, np.integer]] = None, **scengen_kwgs):
+        """
+        :param max_scengen_rows: If set, at most this many rows (after ``anti_transform``) are used for the
+            post-fit phase: ``predict`` on that subset, ``scengen.fit``, and ``err_distr``. Model-specific
+            training in subclasses is unchanged. None disables the cap (default, backward compatible).
+        :param scengen_random_state: Seed for row subsampling when ``max_scengen_rows`` is active.
+            If None, uses ``self.random_state`` when it is an int (e.g. on QRF), else 0.
+        """
+        _validate_max_scengen_rows(max_scengen_rows)
+        self.max_scengen_rows = int(max_scengen_rows) if max_scengen_rows is not None else None
+        self.scengen_random_state = int(scengen_random_state) if scengen_random_state is not None else None
         self.q_vect = np.hstack([0.01, np.linspace(0,1,11)[1:-1], 0.99]) if q_vect is None else q_vect
         self.scengen = ScenGen(q_vect=self.q_vect, nodes_at_step=nodes_at_step, additional_node=additional_node, **scengen_kwgs)
         self.val_ratio = val_ratio
@@ -70,26 +93,117 @@ class ScenarioGenerator(object):
     def get_params(self, **kwargs):
         return {k: getattr(self, k) for k in signature(self.__class__).parameters.keys() if k in self.__dict__.keys()}
 
-    def fit(self, x:pd.DataFrame, y:pd.DataFrame):
-        y = self.anti_transform(x, y)
-        self.target_cols = y.columns
-        preds = self.predict(x)
-        errs = pd.DataFrame(y.values-preds.values, index=x.index)
-        self.scengen.fit(errs, x, n_scen=self.n_scen_fit)
+    def _get_scengen_subsample_seed(self) -> int:
+        if self.scengen_random_state is not None:
+            return self.scengen_random_state
+        rs = getattr(self, 'random_state', None)
+        if rs is not None and isinstance(rs, (int, np.integer)):
+            return int(rs)
+        return 0
 
-        self.err_distr = {}
+    @staticmethod
+    def _order_rows_by_index_order(x, y, positions: np.ndarray):
+        """Return ``x``/``y`` rows at ``positions`` (0..n-1), stably ordered by time index value."""
+        if len(positions) == 0:
+            return x.iloc[0:0], y.iloc[0:0]
+        idx = x.index.to_numpy()
+        if len(np.unique(np.asarray(positions))) < len(np.asarray(positions).ravel()):
+            # Should not happen if caller passes unique positions
+            positions = np.unique(np.asarray(positions, dtype=int))
+        idx_vals = idx[positions]
+        order = np.argsort(idx_vals, kind='mergesort')
+        pos2 = np.asarray(positions, dtype=int)[order]
+        return x.iloc[pos2], y.iloc[pos2]
+
+    def _subsample_uniform(self, x, y, m: int, rng: np.random.Generator):
+        pos = rng.choice(len(x), size=m, replace=False)
+        return self._order_rows_by_index_order(x, y, pos)
+
+    def _subsample_stratified_by_hour(self, x, y, m: int, rng: np.random.Generator):
+        """Proportional allocation by ``index.hour`` (multinomial), then random choice without replacement
+        within each stratum. Index must be a ``DatetimeIndex``."""
+        n = len(x)
+        hours = x.index.hour.to_numpy()
+        u, inv = np.unique(hours, return_inverse=True)
+        counts = np.bincount(inv, minlength=len(u))
+        if m >= n or len(u) == 0:
+            return x, y
+        # If there are more strata than rows to draw, use uniform (cannot place one row per stratum)
+        if m < len(u):
+            return self._subsample_uniform(x, y, m, rng)
+        p = (counts / counts.sum()).astype(float)
+        alloc = rng.multinomial(m, p)
+        alloc = np.minimum(alloc, counts)
+        # Fill any shortfall (after capping) by spreading across strata with capacity
+        deficit = m - int(alloc.sum())
+        while deficit > 0:
+            spare = counts - alloc
+            if spare.max() == 0:
+                return self._subsample_uniform(x, y, m, rng)
+            j = int(np.argmax(spare))
+            alloc[j] += 1
+            deficit -= 1
+        # Trim on rare over-count after deficit loop
+        while int(alloc.sum()) > m and alloc.max() > 0:
+            j = int(np.argmax(alloc))
+            if alloc[j] == 0:
+                break
+            alloc[j] -= 1
+        selected = []
+        for k, c_take in enumerate(alloc):
+            c_take = int(c_take)
+            if c_take == 0:
+                continue
+            h = u[k]
+            pos = np.flatnonzero(hours == h)
+            c_take = min(c_take, len(pos))
+            if c_take == 0:
+                continue
+            ch = rng.choice(pos, size=c_take, replace=False)
+            selected.append(ch)
+        if not selected:
+            return self._subsample_uniform(x, y, m, rng)
+        pos = np.concatenate(selected)
+        if len(pos) > m:
+            pos = np.sort(rng.choice(pos, size=m, replace=False))
+        return self._order_rows_by_index_order(x, y, pos)
+
+    def _maybe_subsample_for_scengen(self, x: pd.DataFrame, y: pd.DataFrame):
+        """Reduce rows for post-fit only. Returns views or sliced frames; x and y stay index-aligned."""
+        m = self.max_scengen_rows
+        n = len(x)
+        if m is None or n <= m:
+            return x, y
+        if not x.index.equals(y.index):
+            raise ValueError('x and y must share the same index for post-fit / scenario generation.')
+        seed = self._get_scengen_subsample_seed()
+        rng = np.random.default_rng(seed)
+        if isinstance(x.index, pd.DatetimeIndex):
+            return self._subsample_stratified_by_hour(x, y, m, rng)
+        return self._subsample_uniform(x, y, m, rng)
+
+    def _estimate_err_distr(self, errs: pd.DataFrame, x: pd.DataFrame):
         if self.conditional_to_hour:
-            self.err_distr = {}
+            err_distr = {}
             hours = np.arange(24)
             if len(np.unique(x.index.hour)) != 24:
                 print('not all hours are there in the training set, building unconditional confidence intervals')
                 for h in hours:
-                    self.err_distr[h] = np.quantile(errs, self.q_vect, axis=0).T
+                    err_distr[h] = np.quantile(errs, self.q_vect, axis=0).T
             else:
                 for h in hours:
-                    self.err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
-        else:
-            self.err_distr = np.quantile(errs, self.q_vect, axis=0).T
+                    err_distr[h] = np.quantile(errs.loc[errs.index.hour == h, :], self.q_vect, axis=0).T
+            return err_distr
+        return np.quantile(errs, self.q_vect, axis=0).T
+
+    def fit(self, x:pd.DataFrame, y:pd.DataFrame):
+        y = self.anti_transform(x, y)
+        self.target_cols = y.columns
+        x, y = self._maybe_subsample_for_scengen(x, y)
+        preds = self.predict(x)
+        errs = pd.DataFrame(y.values-preds.values, index=x.index)
+        self.scengen.fit(errs, x, n_scen=self.n_scen_fit)
+        self.err_distr = self._estimate_err_distr(errs, x)
 
     @abstractmethod
     def predict(self, x, **kwargs):
@@ -197,8 +311,10 @@ class ScenarioGenerator(object):
 
 
 class LinearForecaster(ScenarioGenerator):
-    def __init__(self, q_vect=None, val_ratio=None, nodes_at_step=None, kind='linear', **scengen_kwgs):
-        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, **scengen_kwgs)
+    def __init__(self, q_vect=None, val_ratio=None, nodes_at_step=None, kind='linear', max_scengen_rows=None,
+                 scengen_random_state=None, **scengen_kwgs):
+        super().__init__(q_vect, nodes_at_step=nodes_at_step, val_ratio=val_ratio, max_scengen_rows=max_scengen_rows,
+                         scengen_random_state=scengen_random_state, **scengen_kwgs)
         self.m = None
         self.kind = kind
 
@@ -229,8 +345,10 @@ class LinearForecaster(ScenarioGenerator):
 
 class LGBForecaster(ScenarioGenerator):
     def __init__(self, device_type='cpu', max_depth=20, n_estimators=100, num_leaves=100, learning_rate=0.1, min_child_samples=20,
-                 n_jobs=4, n_jobs_predict=0, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, **scengen_kwgs):
-        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, **scengen_kwgs)
+                 n_jobs=4, n_jobs_predict=0, objective='regression', verbose=-1, metric='l2', colsample_bytree=1, colsample_bynode=1, q_vect=None, val_ratio=None, nodes_at_step=None, max_scengen_rows=None,
+                 scengen_random_state=None, **scengen_kwgs):
+        super().__init__(q_vect, val_ratio=val_ratio, nodes_at_step=nodes_at_step, max_scengen_rows=max_scengen_rows,
+                         scengen_random_state=scengen_random_state, **scengen_kwgs)
         self.m = []
         self.device_type = device_type
         self.objective = objective

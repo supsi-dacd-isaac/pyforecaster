@@ -10,7 +10,7 @@ from numba.typed import List
 from pyforecaster.forecasting_models.fast_adaptive_models import Fourier_es as FES
 from pyforecaster.forecasting_models.fast_adaptive_models import FK_multi, FK
 
-data = pd.read_pickle('tests/data/test_data.zip')['y'][['all']]
+data = pd.read_parquet('tests/data/test_data.parquet')['y'][['all']]
 data /= data.std()
 
 def ts_animation(y_te, y_hat, n_rows=50, labels=None):

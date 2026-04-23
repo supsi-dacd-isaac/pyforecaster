@@ -277,8 +277,32 @@ class NN(ScenarioGenerator):
     def get_class_properties(self):
         return {k: getattr(self, k) for k in self.get_class_properties_names()}
 
+    @staticmethod
+    def _runtime_serialization_excludes():
+        return {
+            'optimizer',
+            'inverter_optimizer',
+            'model',
+            'loss_fn',
+            'train_step',
+            'predict_batch',
+            'predict_batch_training',
+        }
+
+    def get_serializable_properties(self):
+        attrs = {}
+        for key, value in self.get_class_properties().items():
+            if key in self._runtime_serialization_excludes():
+                continue
+            try:
+                pk.dumps(value, protocol=pk.HIGHEST_PROTOCOL)
+            except Exception:
+                continue
+            attrs[key] = value
+        return attrs
+
     def save(self, save_path):
-        attrdict = self.get_class_properties()
+        attrdict = self.get_serializable_properties()
         with open(save_path, 'wb') as f:
             pk.dump(attrdict, f, protocol=pk.HIGHEST_PROTOCOL)
 

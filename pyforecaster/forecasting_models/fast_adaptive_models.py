@@ -6,6 +6,14 @@ from pyforecaster.forecasting_models.holtwinters import tune_hyperpars, hankel
 from copy import deepcopy
 from abc import abstractmethod
 
+
+def _reject_postfit_row_cap_kwargs(scengen_kwgs):
+    unsupported = {'max_scengen_rows', 'scengen_random_state'} & set(scengen_kwgs)
+    if unsupported:
+        names = ', '.join(sorted(unsupported))
+        raise TypeError(f'Unsupported keyword argument(s) for StatefulForecaster custom-fit models: {names}')
+
+
 def get_basis(t, l, n_h, frequencies=None):
   """
   Get the first n_h sine and cosine basis functions and the projection
@@ -70,6 +78,7 @@ class StatefulForecaster(ScenarioGenerator):
         """
 
         assert m>0, 'm must be positive'
+        _reject_postfit_row_cap_kwargs(scengen_kwgs)
         self.targets_names = [target_name] if targets_names is None else targets_names
         self.init_pars = {'target_name': target_name, 'targets_names': self.targets_names, 'n_sa': n_sa, 'm': m,
                           'val_ratio': val_ratio, 'optimize_hyperpars': optimize_hyperpars,
@@ -134,8 +143,9 @@ class StatefulForecaster(ScenarioGenerator):
         # hankelize the target
         hw_target = hankel(y_present[1:], self.n_sa)
         resid = hw_target - preds
-        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         self.target_cols = [f'{self.target_name}_t+{i}' for i in range(1, self.n_sa + 1)]
+        resid = pd.DataFrame(resid, index=x_pd.index[:-self.n_sa], columns=self.target_cols)
+        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         return self
 
     @abstractmethod
@@ -503,8 +513,9 @@ class FK_multi(StatefulForecaster):
         # hankelize the target
         hw_target = hankel(x_pd[self.target_name].values[1:], self.n_sa)
         resid = hw_target - preds
-        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         self.target_cols = ['{}_{}'.format(self.target_name, t) for t in np.arange(self.n_sa)]
+        resid = pd.DataFrame(resid, index=x_pd.index[:-self.n_sa], columns=self.target_cols)
+        self.err_distr = np.quantile(resid, self.q_vect, axis=0).T
         return self
 
     def predict(self, x_pd, **kwargs):

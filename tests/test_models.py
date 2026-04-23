@@ -31,9 +31,9 @@ class TestFormatDataset(unittest.TestCase):
 
         randpeak = np.random.rand(self.t) > 0.98
         randpeak = randpeak + np.roll(randpeak, 1) + np.roll(randpeak, 2)
-        self.y_difficult = self.y.abs() + (randpeak.astype(int) * (self.y.abs().max()[0]-self.y.abs().mean()[0])*2 ).reshape(-1,1)
+        self.y_difficult = self.y.abs() + (randpeak.astype(int) * (self.y.abs().max().iloc[0] - self.y.abs().mean().iloc[0]) * 2).reshape(-1, 1)
 
-        self.data = pd.read_pickle('tests/data/test_data.zip').droplevel(0, 1)
+        self.data = pd.read_parquet('tests/data/test_data.parquet').droplevel(0, 1)
         self.logger =logging.getLogger()
         logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO,
                             filename=None)

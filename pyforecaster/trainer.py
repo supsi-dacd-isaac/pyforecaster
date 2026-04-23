@@ -61,7 +61,7 @@ def cross_validate(x: pd.DataFrame, y: pd.DataFrame, model, cv_folds, scoring=No
         y_hat = model.predict(x_te)
         cv_results = {k:np.atleast_1d(s(model, x_te, y_te)) for k, s in scoring.items()} if isinstance(scoring, dict) else {'test_score': np.atleast_1d(scoring(model, x_te, y_te))}
         score_key = get_score_key(cv_results, scoring, score_key=score_key)
-        score = cv_results[score_key]
+        score = float(np.mean(cv_results[score_key]))
 
         if storage_fun:
             cv_results['y_te'] = y_te
@@ -170,5 +170,5 @@ def retrieve_cv_results(study):
     if len(usr_attr_cols) > 0:
         trials_df['cv_test_score_std'] = np.vstack(trials_df[usr_attr_cols[0]]).std(axis=1)
 
-    trials_df['rank'] = trials_df['value'].rank().astype(int)
+    trials_df['rank'] = trials_df['value'].rank(method='dense').astype('Int64')
     return trials_df
