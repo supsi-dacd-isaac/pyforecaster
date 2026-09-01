@@ -333,10 +333,11 @@ class LinearForecaster(ScenarioGenerator):
     @encode_categorical
     def fit(self, x:pd.DataFrame, y:pd.DataFrame):
         x, y, x_val, y_val = self.train_val_split(x, y)
+        x_fit = x.to_numpy() if isinstance(x, pd.DataFrame) else x
         if self.kind == 'linear':
-            self.m = LinearRegression().fit(x, y)
+            self.m = LinearRegression().fit(x_fit, y)
         elif self.kind == 'ridge':
-            self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x, y)
+            self.m = RidgeCV(alphas=10 ** np.linspace(-2, 8, 9)).fit(x_fit, y)
         else:
             raise ValueError('kind must be either linear or ridge')
         super().fit(x_val, y_val)
@@ -344,7 +345,8 @@ class LinearForecaster(ScenarioGenerator):
 
     @encode_categorical
     def predict(self, x:pd.DataFrame, **kwargs):
-        y_hat = pd.DataFrame(self.m.predict(x), index=x.index, columns=self.target_cols)
+        x_predict = x.to_numpy() if isinstance(x, pd.DataFrame) else x
+        y_hat = pd.DataFrame(self.m.predict(x_predict), index=x.index, columns=self.target_cols)
         y_hat = self.anti_transform(x, y_hat)
         return y_hat
 

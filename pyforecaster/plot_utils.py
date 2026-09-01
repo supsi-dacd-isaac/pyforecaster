@@ -190,7 +190,16 @@ def ts_animation(ys:list,  ts=None, names=None, frames=150, interval=1, step=1, 
         return lines
 
 
-    ani = animation.FuncAnimation(fig, animate, init_func=init,  blit=False, frames=np.minimum(ys[0].shape[0]-1, frames), interval=interval, repeat=repeat)
+    frame_count = int(np.minimum(ys[0].shape[0] - 1, frames))
+    ani = animation.FuncAnimation(
+        fig,
+        animate,
+        init_func=init,
+        blit=False,
+        frames=frame_count,
+        interval=interval,
+        repeat=repeat,
+    )
 
     return ani
 
@@ -230,10 +239,10 @@ def plot_trees(ys:list, y_gt=None, times=None, frames=150, ax_labels=None, legen
         return
     if savepath is not None:
         writervideo = animation.FFMpegWriter(fps=60)
-        animation.FuncAnimation(fig, animate, blit=False, frames=np.minimum(len(ys) - 1, frames), interval=100,
+        animation.FuncAnimation(fig, animate, blit=False, frames=int(np.minimum(len(ys) - 1, frames)), interval=100,
                                 repeat=False).save(savepath, writer=writervideo)
     else:
-        return animation.FuncAnimation(fig, animate,  blit=False, frames=np.minimum(len(ys)-1, frames), interval=100,
+        return animation.FuncAnimation(fig, animate,  blit=False, frames=int(np.minimum(len(ys)-1, frames)), interval=100,
                                        repeat=False)
 
 
@@ -271,16 +280,16 @@ def ts_animation_bars(ys:list, start_t:list, end_t:list, frames=150, ax_labels=N
 
     if savepath is not None:
         writervideo = animation.FFMpegWriter(fps=60)
-        animation.FuncAnimation(fig, animate, init_func=init, blit=False, frames=np.minimum(ys[0].shape[0] - 1, frames),
+        animation.FuncAnimation(fig, animate, init_func=init, blit=False, frames=int(np.minimum(ys[0].shape[0] - 1, frames)),
                                 interval=100, repeat=False).save(savepath, writer=writervideo)
     else:
         return animation.FuncAnimation(fig, animate, init_func=init, blit=False,
-                                       frames=np.minimum(ys[0].shape[0] - 1, frames), interval=100, repeat=False)
+                                       frames=int(np.minimum(ys[0].shape[0] - 1, frames)), interval=100, repeat=False)
 
 def plot_quantiles(signals, qs, labels, n_rows=50, interval=1, step=1, repeat=False, ax_labels=None, legend_kwargs={},
                    remove_spines=True, savepath=None, **kwargs):
-    n_max = np.minimum(signals[0].shape[0], int(n_rows*step))
-    n_rows = np.minimum(int(np.floor(signals[0].shape[0]/step)), n_rows)
+    n_max = int(np.minimum(signals[0].shape[0], int(n_rows*step)))
+    n_rows = int(np.minimum(int(np.floor(signals[0].shape[0]/step)), n_rows))
     qs = ScenarioGenerator().quantiles_to_numpy(qs) if isinstance(qs, pd.DataFrame) else qs
     fig, ax = plt.subplots(1, **kwargs)
     signals = signals if isinstance(signals, list) else [signals]
