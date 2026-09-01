@@ -54,6 +54,8 @@ class Formatter:
         self.n_parallel = n_parallel if n_parallel is not None else cpu_count()
         self.normalizing_fun = None
         self.denormalizing_fun = None
+        self.normalizer_floor_profiles = {}
+        self.normalizer_floor_fallback = {}
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -153,8 +155,78 @@ class Formatter:
 
         self.target_normalizers.append(transformer)
 
+    def set_normalizer_floor_profile(self, floors_by_key=None, fallback=None):
+        """
+        Configure optional lower bounds for computed target normalizers.
+
+        ``floors_by_key`` maps an arbitrary series key to a mapping of
+        ``normalizer_name -> non-negative floor``. ``fallback`` is used when a
+        key is absent, and is also merged with partial keyed profiles.
+
+        The profile is stored on the formatter so it survives pickle/unpickle.
+        Existing formatters and calls that do not configure a profile retain
+        the previous behaviour.
+        """
+        known_normalizers = {normalizer.name for normalizer in self.target_normalizers}
+
+        def validate_floors(floors, label):
+            if floors is None:
+                return {}
+            if not isinstance(floors, dict):
+                raise TypeError(f"{label} must be a mapping of normalizer names to floors.")
+
+            validated = {}
+            for name, value in floors.items():
+                if name not in known_normalizers:
+                    raise KeyError(
+                        f"Unknown target normalizer {name!r}. "
+                        f"Available normalizers: {sorted(known_normalizers)}"
+                    )
+                if not np.isscalar(value) or not np.isfinite(value) or float(value) < 0:
+                    raise ValueError(
+                        f"Floor for target normalizer {name!r} must be a finite, non-negative scalar."
+                    )
+                validated[name] = float(value)
+            return validated
+
+        if floors_by_key is None:
+            floors_by_key = {}
+        if not isinstance(floors_by_key, dict):
+            raise TypeError("floors_by_key must be a mapping of series keys to floor mappings.")
+
+        self.normalizer_floor_profiles = {
+            str(key): validate_floors(floors, f"floors_by_key[{key!r}]")
+            for key, floors in floors_by_key.items()
+        }
+        self.normalizer_floor_fallback = validate_floors(fallback, "fallback")
+        return self
+
+    def _resolve_normalizer_floors(self, floor_key=None, normalizer_floors=None):
+        fallback = getattr(self, "normalizer_floor_fallback", {}) or {}
+        profiles = getattr(self, "normalizer_floor_profiles", {}) or {}
+        resolved = dict(fallback)
+        if floor_key is not None:
+            resolved.update(profiles.get(str(floor_key), {}))
+        if normalizer_floors is not None:
+            if not isinstance(normalizer_floors, dict):
+                raise TypeError("normalizer_floors must be a mapping of normalizer names to floors.")
+            known_normalizers = {normalizer.name for normalizer in self.target_normalizers}
+            for name, value in normalizer_floors.items():
+                if name not in known_normalizers:
+                    raise KeyError(
+                        f"Unknown target normalizer {name!r}. "
+                        f"Available normalizers: {sorted(known_normalizers)}"
+                    )
+                if not np.isscalar(value) or not np.isfinite(value) or float(value) < 0:
+                    raise ValueError(
+                        f"Floor for target normalizer {name!r} must be a finite, non-negative scalar."
+                    )
+                resolved[name] = float(value)
+        return resolved
+
     def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=False,
-                  reduce_memory=True, corr_reorder=False, **holidays_kwargs):
+                  reduce_memory=True, corr_reorder=False, normalizer_floor_key=None, normalizer_floors=None,
+                  **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -190,26 +262,36 @@ class Formatter:
                 self._simulate_transform(dfs[0])
                 for i in tqdm(range(n_folds)):
                     x, y = fdf_parallel(f=partial(self._transform, time_features=time_features, holidays=holidays,
-                                                  return_target=return_target, **holidays_kwargs),
+                                                  return_target=return_target,
+                                                  normalizer_floor_key=normalizer_floor_key,
+                                                  normalizer_floors=normalizer_floors,
+                                                  **holidays_kwargs),
                                         df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
             else:
                 for df_i in dfs:
                     x, y = self._transform(df_i, time_features=time_features, holidays=holidays,
-                                           return_target=return_target, **holidays_kwargs)
+                                           return_target=return_target,
+                                           normalizer_floor_key=normalizer_floor_key,
+                                           normalizer_floors=normalizer_floors,
+                                           **holidays_kwargs)
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
 
             x = pd.concat(xs)
             target = pd.concat(ys)
         else:
             x, target = self._transform(x, time_features=time_features, holidays=holidays,
-                                        return_target=return_target, **holidays_kwargs)
+                                        return_target=return_target,
+                                        normalizer_floor_key=normalizer_floor_key,
+                                        normalizer_floors=normalizer_floors,
+                                        **holidays_kwargs)
         return x, target
 
     @staticmethod
     def _transform_(tr, x):
         return tr.transform(x, augment=False)
-    def _transform(self, x, time_features=True, holidays=False, return_target=True, parallel=False, **holidays_kwargs):
+    def _transform(self, x, time_features=True, holidays=False, return_target=True, parallel=False,
+                   normalizer_floor_key=None, normalizer_floors=None, **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -245,7 +327,11 @@ class Formatter:
         # apply normalization to target if any and if return_target is True
         if len(self.target_normalizers)>0:
             normalizing_columns = [nr.name for nr in self.target_normalizers]
-            x = self.add_normalizing_columns(x)
+            x = self.add_normalizing_columns(
+                x,
+                floor_key=normalizer_floor_key,
+                normalizer_floors=normalizer_floors,
+            )
 
             # this is needed even if target is not returned, to normalize features correlated to the target
             target, x = self.normalize(x, target, return_target=return_target)
@@ -267,7 +353,7 @@ class Formatter:
             x = self.add_holidays(x, **holidays_kwargs)
         return x, target
 
-    def add_normalizing_columns(self, x):
+    def add_normalizing_columns(self, x, floor_key=None, normalizer_floors=None):
 
         # if we're doing the direct transform (normalization) we compute the normalizers and add them to the x df
         # compute normalizers if any
@@ -275,6 +361,12 @@ class Formatter:
 
         # rename normalizers with tag names
         normalizers.columns = [nr.name for nr in self.target_normalizers]
+        floors = self._resolve_normalizer_floors(
+            floor_key=floor_key,
+            normalizer_floors=normalizer_floors,
+        )
+        for name, floor in floors.items():
+            normalizers.loc[:, name] = normalizers[name].clip(lower=floor)
         x = pd.concat([x, normalizers], axis=1)
 
         return x

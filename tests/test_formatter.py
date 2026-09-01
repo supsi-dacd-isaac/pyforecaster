@@ -270,6 +270,103 @@ class TestFormatDataset(unittest.TestCase):
         # check if back-transform works
         assert (y_unnorm-y).sum().sum() < 1e-6
 
+    @staticmethod
+    def _floor_formatter():
+        formatter = pyf.Formatter(dt=pd.Timedelta('1h'))
+        formatter.add_transform(['a'], lags=[1], agg_freq='1h')
+        formatter.add_target_transform(['a'], lags=[-1], agg_freq='1h')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='4h', name='a_movingavg')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='4h', name='a_movingstd')
+        formatter.add_normalizing_fun(
+            expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1e-9)",
+            inv_expr="df[t] * (df['a_movingstd'] + 1e-9) + df['a_movingavg']",
+        )
+        return formatter
+
+    def test_normalizer_floor_profile_is_opt_in(self):
+        df = pd.DataFrame(
+            {'a': np.arange(20, dtype=float)},
+            index=pd.date_range('2020-01-01', freq='1h', periods=20),
+        )
+        formatter_without_profile = self._floor_formatter()
+        formatter_with_empty_profile = self._floor_formatter().set_normalizer_floor_profile()
+
+        x_expected, y_expected = formatter_without_profile.transform(df)
+        x_actual, y_actual = formatter_with_empty_profile.transform(df)
+
+        pd.testing.assert_frame_equal(x_actual, x_expected)
+        pd.testing.assert_frame_equal(y_actual, y_expected)
+
+    def test_normalizer_floor_profile_supports_keys_fallback_and_overrides(self):
+        df = pd.DataFrame(
+            {'a': np.r_[np.zeros(10), np.ones(10)]},
+            index=pd.date_range('2020-01-01', freq='1h', periods=20),
+        )
+        formatter = self._floor_formatter().set_normalizer_floor_profile(
+            floors_by_key={'sensor-a': {'a_movingstd': 2.0}},
+            fallback={'a_movingstd': 1.0},
+        )
+
+        x_keyed, _ = formatter.transform(df, normalizer_floor_key='sensor-a')
+        x_fallback, _ = formatter.transform(df, normalizer_floor_key='unknown')
+        x_override, _ = formatter.transform(
+            df,
+            normalizer_floor_key='sensor-a',
+            normalizer_floors={'a_movingstd': 3.0},
+        )
+
+        assert x_keyed['a_movingstd'].min() >= 2.0
+        assert x_fallback['a_movingstd'].min() >= 1.0
+        assert x_override['a_movingstd'].min() >= 3.0
+        assert x_keyed['a_movingavg'].max() <= 1.0
+
+    def test_normalizer_floor_round_trip_and_unit_scaling(self):
+        values = np.r_[np.zeros(10), np.linspace(0.0, 4.0, 10)]
+        index = pd.date_range('2020-01-01', freq='1h', periods=len(values))
+        df = pd.DataFrame({'a': values}, index=index)
+
+        formatter = self._floor_formatter().set_normalizer_floor_profile(
+            floors_by_key={'sensor-a': {'a_movingstd': 0.2}},
+        )
+        x, y_normalized = formatter.transform(df, normalizer_floor_key='sensor-a')
+        y_round_trip = formatter.denormalize(x, y_normalized)
+
+        scaled_formatter = self._floor_formatter().set_normalizer_floor_profile(
+            floors_by_key={'sensor-a': {'a_movingstd': 200.0}},
+        )
+        _, y_scaled = scaled_formatter.transform(df * 1000.0, normalizer_floor_key='sensor-a')
+
+        expected_target = formatter.target_transformers[0].transform(df, augment=False).loc[y_round_trip.index]
+        pd.testing.assert_frame_equal(y_round_trip, expected_target)
+        np.testing.assert_allclose(y_scaled.to_numpy(), y_normalized.to_numpy())
+
+    def test_normalizer_floor_profile_survives_pickle(self):
+        df = pd.DataFrame(
+            {'a': np.r_[np.zeros(10), np.ones(10)]},
+            index=pd.date_range('2020-01-01', freq='1h', periods=20),
+        )
+        formatter = self._floor_formatter().set_normalizer_floor_profile(
+            floors_by_key={'sensor-a': {'a_movingstd': 2.0}},
+            fallback={'a_movingstd': 1.0},
+        )
+
+        restored = pk.loads(pk.dumps(formatter))
+        x, _ = restored.transform(df, normalizer_floor_key='sensor-a')
+
+        assert restored.normalizer_floor_profiles == formatter.normalizer_floor_profiles
+        assert restored.normalizer_floor_fallback == formatter.normalizer_floor_fallback
+        assert x['a_movingstd'].min() >= 2.0
+
+    def test_normalizer_floor_profile_rejects_invalid_configuration(self):
+        formatter = self._floor_formatter()
+
+        with self.assertRaises(KeyError):
+            formatter.set_normalizer_floor_profile(fallback={'missing': 1.0})
+        with self.assertRaises(ValueError):
+            formatter.set_normalizer_floor_profile(fallback={'a_movingstd': -1.0})
+        with self.assertRaises(TypeError):
+            formatter.set_normalizer_floor_profile(floors_by_key=[])
+
 
     def test_normalizers_complex(self):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
