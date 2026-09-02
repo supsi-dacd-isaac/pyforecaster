@@ -485,7 +485,7 @@ class Formatter:
         :param x:
         :return:
         """
-        for tr in self.transformers:
+        for tr in self.transformers + self.target_normalizers:
             _ = tr.transform(x, simulate=True)
         for tr in self.target_transformers:
             _ = tr.transform(x, simulate=True)
@@ -702,8 +702,10 @@ class Formatter:
 
     def get_time_lims(self, include_target=False, extremes=True):
 
-        transformers = self.transformers + self.target_transformers if include_target else self.transformers
-        if any([t.metadata is None for t in self.transformers]):
+        transformers = self.transformers + self.target_normalizers
+        if include_target:
+            transformers += self.target_transformers
+        if any(t.metadata is None for t in transformers):
             self._simulate_transform()
 
         min_start_times = pd.DataFrame(pd.concat(

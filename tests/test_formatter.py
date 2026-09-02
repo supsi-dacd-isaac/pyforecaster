@@ -443,6 +443,29 @@ class TestFormatDataset(unittest.TestCase):
                 check_names=False,
             )
 
+    def test_time_limits_include_lagged_target_normalizers(self):
+        formatter = pyf.Formatter(dt=pd.Timedelta('1h'))
+        formatter.add_transform(['a'], ['mean'], lags=[1])
+        formatter.add_target_normalizer(
+            ['a'],
+            'mean',
+            agg_freq='4h',
+            lags=2,
+            name='a_movingavg',
+        )
+        formatter.add_target_transform(['a'], ['mean'], lags=[-1])
+
+        feature_limits = formatter.get_time_lims(include_target=False, extremes=True).iloc[0]
+        normalizer = formatter.target_normalizers[0]
+
+        assert normalizer.metadata is not None
+        assert feature_limits['start_time'] == normalizer.metadata['start_time'].min()
+        expected_end = max(
+            transformer.metadata['end_time'].max()
+            for transformer in formatter.transformers + formatter.target_normalizers
+        )
+        assert feature_limits['end_time'] == expected_end
+
 
     def test_normalizers_complex(self):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
