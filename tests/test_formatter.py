@@ -418,6 +418,31 @@ class TestFormatDataset(unittest.TestCase):
         with self.assertRaises(TypeError):
             formatter.set_drop_original_features(1)
 
+    def test_target_normalizer_accepts_scalar_and_list_lags(self):
+        df = pd.DataFrame(
+            {'a': np.arange(10, dtype=float)},
+            index=pd.date_range('2020-01-01', freq='1h', periods=10),
+        )
+        expected = df['a'].rolling('4h', min_periods=4).mean().shift(2)
+
+        for lags in (2, [2]):
+            formatter = pyf.Formatter(dt=pd.Timedelta('1h'))
+            formatter.add_target_normalizer(
+                ['a'],
+                'mean',
+                agg_freq='4h',
+                lags=lags,
+                name='a_movingavg',
+            )
+            transformed = formatter.target_normalizers[0].transform(df, augment=False)
+
+            assert formatter.target_normalizers[0].lags.tolist() == [2]
+            pd.testing.assert_series_equal(
+                transformed.iloc[:, 0],
+                expected,
+                check_names=False,
+            )
+
 
     def test_normalizers_complex(self):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])

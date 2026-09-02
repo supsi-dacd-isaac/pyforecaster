@@ -161,8 +161,8 @@ class Formatter:
             target = [target]
         if isinstance(function, str):
             function = [function]
-        if len(np.shape(lags))==0 and lags is not None:
-            lags = [lags]
+        if lags is not None:
+            lags = np.atleast_1d(np.asarray(lags))
 
 
         if len(self.target_normalizers)>0:
