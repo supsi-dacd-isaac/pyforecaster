@@ -40,8 +40,10 @@ class Formatter:
     """
     :param augment: if true, doesn't discard original columns of the dataset. Could be helpful to discard most
                         recent data if you don't have at prediction time.
+    :param drop_original_features: original input columns to discard after all configured transformations and
+                                  target normalizers have been computed.
     """
-    def __init__(self, logger=None, augment=True, dt=None, n_parallel=None):
+    def __init__(self, logger=None, augment=True, dt=None, n_parallel=None, drop_original_features=None):
         self.logger = get_logger(level=logging.WARNING, name='Formatter') if logger is None else logger
         self.transformers = []
         self.fold_transformers = []
@@ -56,6 +58,29 @@ class Formatter:
         self.denormalizing_fun = None
         self.normalizer_floor_profiles = {}
         self.normalizer_floor_fallback = {}
+        self.set_drop_original_features(drop_original_features)
+
+    def set_drop_original_features(self, features=None):
+        """
+        Select original input columns to omit from transformed feature frames.
+
+        Exclusion happens only after transforms and target normalizers are
+        computed, so excluded inputs can still produce lagged, aggregated, and
+        normalization features. The configuration is stored on the formatter
+        and therefore survives pickle/unpickle.
+        """
+        if features is None:
+            features = []
+        elif isinstance(features, (str, bytes)):
+            features = [features]
+        else:
+            try:
+                features = list(features)
+            except TypeError as exc:
+                raise TypeError("drop_original_features must be an iterable of column names.") from exc
+
+        self.drop_original_features = list(dict.fromkeys(features))
+        return self
 
     def add_time_features(self, x):
         tz = x.index[0].tz
@@ -343,6 +368,13 @@ class Formatter:
             target = target.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
         else:
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1)]
+        drop_original_features = getattr(self, 'drop_original_features', [])
+        columns_to_drop = [
+            feature for feature in drop_original_features
+            if feature in original_columns and feature in x.columns
+        ]
+        if columns_to_drop:
+            x = x.drop(columns=columns_to_drop)
         if not self.augment:
             x = x[transformed_columns]
         # adding time features

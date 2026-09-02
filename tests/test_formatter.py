@@ -367,6 +367,57 @@ class TestFormatDataset(unittest.TestCase):
         with self.assertRaises(TypeError):
             formatter.set_normalizer_floor_profile(floors_by_key=[])
 
+    def test_drop_original_features_keeps_derived_features_and_normalizers(self):
+        df = pd.DataFrame(
+            {
+                'a': np.arange(20, dtype=float),
+                'b': np.arange(20, dtype=float) * 2,
+            },
+            index=pd.date_range('2020-01-01', freq='1h', periods=20),
+        )
+        formatter = pyf.Formatter(
+            dt=pd.Timedelta('1h'),
+            drop_original_features=['a', 'a'],
+        )
+        formatter.add_transform(['a'], lags=[1], agg_freq='1h')
+        formatter.add_target_transform(['a'], lags=[-1], agg_freq='1h')
+        formatter.add_target_normalizer(['a'], 'mean', agg_freq='4h', name='a_movingavg')
+        formatter.add_target_normalizer(['a'], 'std', agg_freq='4h', name='a_movingstd')
+        formatter.add_normalizing_fun(
+            expr="(df[t] - df['a_movingavg']) / (df['a_movingstd'] + 1e-9)",
+            inv_expr="df[t] * (df['a_movingstd'] + 1e-9) + df['a_movingavg']",
+        )
+
+        x, y = formatter.transform(df, time_features=False)
+        derived_feature = formatter.transformers[0].metadata.index[0]
+
+        assert formatter.drop_original_features == ['a']
+        assert 'a' not in x.columns
+        assert 'b' in x.columns
+        assert derived_feature in x.columns
+        assert 'a_movingavg' in x.columns
+        assert 'a_movingstd' in x.columns
+        assert not y.empty
+
+    def test_drop_original_features_supports_setter_and_pickle(self):
+        df = pd.DataFrame(
+            {'a': np.arange(10, dtype=float), 'b': np.arange(10, dtype=float)},
+            index=pd.date_range('2020-01-01', freq='1h', periods=10),
+        )
+        formatter = pyf.Formatter(dt=pd.Timedelta('1h')).set_drop_original_features('a')
+        formatter.add_transform(['a'], lags=[1], agg_freq='1h')
+
+        restored = pk.loads(pk.dumps(formatter))
+        x, _ = restored.transform(df, time_features=False, return_target=False)
+
+        assert restored.drop_original_features == ['a']
+        assert 'a' not in x.columns
+        assert 'b' in x.columns
+        assert restored.transformers[0].metadata.index[0] in x.columns
+
+        with self.assertRaises(TypeError):
+            formatter.set_drop_original_features(1)
+
 
     def test_normalizers_complex(self):
         df = pd.DataFrame(np.random.randn(100, 5), index=pd.date_range('01-01-2020', freq='20min', periods=100, tz='Europe/Zurich'), columns=['a', 'b', 'c', 'd', 'e'])
