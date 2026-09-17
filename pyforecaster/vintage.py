@@ -72,6 +72,18 @@ def _ensure_utc_series(values: pd.Series, name: str) -> pd.Series:
     return series
 
 
+def _datetime_as_ns(values) -> np.ndarray:
+    """UTC datetime values as int64 nanoseconds since epoch.
+
+    Pandas 2.2+/3 may use us/ms/s resolution; Index.asi8 then matches that unit,
+    while Timedelta.value is always nanoseconds. Normalize before arithmetic.
+    """
+    idx = _ensure_utc_index(pd.DatetimeIndex(values))
+    if hasattr(idx, "as_unit"):
+        idx = idx.as_unit("ns")
+    return np.asarray(idx.asi8, dtype=np.int64)
+
+
 def normalize_vintage_frame(
     frame: pd.DataFrame,
     availability_margin: Union[str, pd.Timedelta] = DEFAULT_AVAILABILITY_MARGIN,
@@ -129,7 +141,9 @@ def normalize_vintage_frame(
 
 def _encode_times(times: pd.DatetimeIndex) -> Tuple[np.ndarray, pd.DatetimeIndex]:
     times = _ensure_utc_index(pd.DatetimeIndex(times))
-    codes = times.asi8.astype(np.int64, copy=False)
+    if hasattr(times, "as_unit"):
+        times = times.as_unit("ns")
+    codes = _datetime_as_ns(times)
     return codes, times
 
 
@@ -175,7 +189,7 @@ def select_snapshot_codes(
         return codes, pd.DatetimeIndex([available] * len(origins), tz="UTC")
 
     avail = snapshots["available_at"].to_numpy(dtype="datetime64[ns]")
-    origin_ns = origins.tz_convert("UTC").tz_localize(None).to_numpy(dtype="datetime64[ns]")
+    origin_ns = _datetime_as_ns(origins).astype("datetime64[ns]")
     # searchsorted right: last index with avail <= origin
     idx = np.searchsorted(avail, origin_ns, side="right") - 1
     if not fallback:
@@ -185,7 +199,11 @@ def select_snapshot_codes(
     codes = codes.astype(np.int32, copy=False)
     codes = np.where(idx >= 0, codes, np.int32(-1))
     selected_avail = pd.DatetimeIndex(
-        np.where(idx >= 0, avail[np.maximum(idx, 0)], np.datetime64("NaT")),
+        np.where(
+            idx >= 0,
+            avail[np.maximum(idx, 0)],
+            np.datetime64("NaT", "ns"),
+        ),
         tz="UTC",
     )
     return codes, selected_avail
@@ -231,10 +249,16 @@ def densify_vintage_frame(
         )
         if series.empty:
             continue
+        series_idx = _ensure_utc_index(pd.DatetimeIndex(series.index))
+        if hasattr(series_idx, "as_unit"):
+            series_idx = series_idx.as_unit("ns")
+        series = pd.Series(series.to_numpy(dtype=np.float64), index=series_idx)
         idx = pd.date_range(series.index.min(), series.index.max(), freq=dt, tz="UTC")
-        x_ns = series.index.tz_convert("UTC").tz_localize(None).asi8.astype(np.float64)
+        if hasattr(idx, "as_unit"):
+            idx = idx.as_unit("ns")
+        x_ns = _datetime_as_ns(series.index).astype(np.float64)
         y = series.to_numpy(dtype=np.float64)
-        target_ns = idx.tz_convert("UTC").tz_localize(None).asi8.astype(np.float64)
+        target_ns = _datetime_as_ns(idx).astype(np.float64)
         if len(series) == 1:
             values = np.full(len(idx), y[0], dtype=np.float32)
         else:
@@ -272,9 +296,12 @@ class _SignalLookup:
             }
             return
 
-        valid_times = pd.DatetimeIndex(sorted(signal_df["valid_time"].unique())).tz_convert("UTC")
+        valid_times = pd.DatetimeIndex(sorted(signal_df["valid_time"].unique()))
+        valid_times = _ensure_utc_index(valid_times)
+        if hasattr(valid_times, "as_unit"):
+            valid_times = valid_times.as_unit("ns")
         self.valid_times = valid_times
-        self.valid_codes = valid_times.asi8.astype(np.int64, copy=False)
+        self.valid_codes = _datetime_as_ns(valid_times)
         self.snap_code_to_row = {
             int(c): i for i, c in enumerate(snapshots["snapshot_code"].to_numpy())
         }
@@ -284,7 +311,7 @@ class _SignalLookup:
 
         snap_map = snapshots.set_index("snapshot_time")["snapshot_code"]
         rows = signal_df["snapshot_time"].map(snap_map).to_numpy(dtype=np.int32)
-        cols = pd.DatetimeIndex(signal_df["valid_time"]).tz_convert("UTC").asi8
+        cols = _datetime_as_ns(signal_df["valid_time"])
         col_idx = np.searchsorted(self.valid_codes, cols)
         # guard against mismatches
         ok = (col_idx < n_cols) & (self.valid_codes[np.minimum(col_idx, max(n_cols - 1, 0))] == cols)
@@ -467,7 +494,7 @@ class VintageTransformer:
         # Fast path: point samples with lags and no aggregation functions.
         use_fast = self.functions is None and self.base.agg_bins is None
 
-        origin_ns = origins_utc.tz_convert("UTC").tz_localize(None).asi8.astype(np.int64)
+        origin_ns = _datetime_as_ns(origins_utc)
         dt_ns = int(pd.Timedelta(dt).value)
         chunk = policy.chunk_size
 
