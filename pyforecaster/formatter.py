@@ -292,6 +292,7 @@ class Formatter:
     def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=False,
                   reduce_memory=True, corr_reorder=False, normalizer_floor_key=None, normalizer_floors=None,
                   vintage_inputs=None, vintage_policy=None, return_vintage_provenance=False,
+                  precomputed_vintage=None,
                   **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
@@ -317,6 +318,7 @@ class Formatter:
         :param vintage_inputs: optional long DataFrame (snapshot/available/valid/signal/value) for vintage transforms
         :param vintage_policy: optional policy override for vintage transforms
         :param return_vintage_provenance: if True return (x, target, provenance)
+        :param precomputed_vintage: optional DataFrame of already materialized vintage features aligned to x.index
 
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
@@ -336,6 +338,7 @@ class Formatter:
                                                   normalizer_floors=normalizer_floors,
                                                   vintage_inputs=vintage_inputs,
                                                   vintage_policy=vintage_policy,
+                                                  precomputed_vintage=precomputed_vintage,
                                                   **holidays_kwargs),
                                         df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
@@ -347,6 +350,7 @@ class Formatter:
                                            normalizer_floors=normalizer_floors,
                                            vintage_inputs=vintage_inputs,
                                            vintage_policy=vintage_policy,
+                                           precomputed_vintage=precomputed_vintage,
                                            **holidays_kwargs)
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
 
@@ -366,6 +370,7 @@ class Formatter:
                 vintage_inputs=vintage_inputs,
                 vintage_policy=vintage_policy,
                 return_vintage_provenance=True,
+                precomputed_vintage=precomputed_vintage,
                 **holidays_kwargs,
             )
             if return_vintage_provenance:
@@ -377,7 +382,8 @@ class Formatter:
         return tr.transform(x, augment=False)
     def _transform(self, x, time_features=True, holidays=False, return_target=True, parallel=False,
                    normalizer_floor_key=None, normalizer_floors=None, vintage_inputs=None,
-                   vintage_policy=None, return_vintage_provenance=False, **holidays_kwargs):
+                   vintage_policy=None, return_vintage_provenance=False, precomputed_vintage=None,
+                   **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -407,7 +413,10 @@ class Formatter:
                     x = tr.transform(x)
 
         vintage_transformers = getattr(self, "vintage_transformers", [])
-        if len(vintage_transformers) > 0:
+        if precomputed_vintage is not None:
+            vintage_x = precomputed_vintage.reindex(x.index)
+            x = pd.concat([x, vintage_x], axis=1)
+        elif len(vintage_transformers) > 0:
             if vintage_inputs is None:
                 raise ValueError(
                     "Formatter has vintage_transformers but vintage_inputs was not provided to transform()."
