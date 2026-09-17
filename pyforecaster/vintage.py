@@ -210,6 +210,54 @@ def assert_causal_selection(
             )
 
 
+def densify_vintage_frame(
+    vintage: pd.DataFrame,
+    dt: Union[str, pd.Timedelta],
+) -> pd.DataFrame:
+    """Resample each snapshot/signal series onto formatter dt with PCHIP interpolation."""
+    from scipy.interpolate import PchipInterpolator
+
+    dt = pd.Timedelta(dt)
+    if vintage.empty:
+        return vintage
+    pieces = []
+    for (snap, signal), group in vintage.groupby(["snapshot_time", "signal"], sort=False):
+        series = (
+            group.sort_values("valid_time")
+            .drop_duplicates("valid_time", keep="last")
+            .set_index("valid_time")["value"]
+            .astype(np.float64)
+            .dropna()
+        )
+        if series.empty:
+            continue
+        idx = pd.date_range(series.index.min(), series.index.max(), freq=dt, tz="UTC")
+        x_ns = series.index.tz_convert("UTC").tz_localize(None).asi8.astype(np.float64)
+        y = series.to_numpy(dtype=np.float64)
+        target_ns = idx.tz_convert("UTC").tz_localize(None).asi8.astype(np.float64)
+        if len(series) == 1:
+            values = np.full(len(idx), y[0], dtype=np.float32)
+        else:
+            # PCHIP is shape-preserving and avoids overshoot between knots.
+            interpolator = PchipInterpolator(x_ns, y, extrapolate=False)
+            values = interpolator(target_ns).astype(np.float32)
+        avail = group["available_at"].iloc[0]
+        piece = pd.DataFrame(
+            {
+                "snapshot_time": snap,
+                "available_at": avail,
+                "valid_time": idx,
+                "signal": signal,
+                "value": values,
+            }
+        )
+        piece["step"] = piece["valid_time"] - piece["snapshot_time"]
+        pieces.append(piece)
+    if not pieces:
+        return vintage.iloc[0:0].copy()
+    return pd.concat(pieces, ignore_index=True)
+
+
 class _SignalLookup:
     """Dense float32 lookup table for one signal: rows=snapshots, cols=valid_times."""
 
@@ -367,6 +415,7 @@ class VintageTransformer:
         self,
         vintage_frame: pd.DataFrame,
         policy: Optional[VintagePolicy] = None,
+        dt: Optional[pd.Timedelta] = None,
     ) -> "VintageTransformer":
         policy = policy or self.policy
         vintage = normalize_vintage_frame(
@@ -374,11 +423,14 @@ class VintageTransformer:
             availability_margin=policy.availability_margin,
             signal_names=self.names,
         )
+        target_dt = pd.Timedelta(dt or self.dt or "15min")
+        vintage = densify_vintage_frame(vintage, target_dt)
         self._snapshots = _snapshot_table(vintage)
         self._lookups = {
             name: _SignalLookup(vintage, name, self._snapshots) for name in self.names
         }
         self.policy = policy
+        self.dt = target_dt
         return self
 
     def transform(
@@ -483,8 +535,10 @@ def materialize_vintage_features(
         return empty
 
     policy = policy or transformers[0].policy
+    dt = None
     for tr in transformers:
-        tr.prepare(vintage_frame, policy=policy)
+        dt = dt or tr.dt
+        tr.prepare(vintage_frame, policy=policy, dt=dt)
 
     frames = []
     provenance = None
