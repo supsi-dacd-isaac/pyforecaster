@@ -46,6 +46,7 @@ class Formatter:
     def __init__(self, logger=None, augment=True, dt=None, n_parallel=None, drop_original_features=None):
         self.logger = get_logger(level=logging.WARNING, name='Formatter') if logger is None else logger
         self.transformers = []
+        self.vintage_transformers = []
         self.fold_transformers = []
         self.target_transformers = []
         self.target_normalizers = []
@@ -58,6 +59,7 @@ class Formatter:
         self.denormalizing_fun = None
         self.normalizer_floor_profiles = {}
         self.normalizer_floor_fallback = {}
+        self.vintage_policy = None
         self.set_drop_original_features(drop_original_features)
 
     def set_drop_original_features(self, features=None):
@@ -135,6 +137,44 @@ class Formatter:
         transformer = Transformer(names, functions=functions, agg_freq=agg_freq, lags=lags, logger=self.logger,
                                   relative_lags=relative_lags, agg_bins=agg_bins, dt=self.dt, **kwargs)
         self.transformers.append(transformer)
+        return self
+
+    def add_vintage_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False,
+                              agg_bins=None, policy=None, **kwargs):
+        """Register a causal vintage transformer with the same naming scheme as add_transform."""
+        from pyforecaster.vintage import VintagePolicy, VintageTransformer
+
+        if policy is None:
+            policy = getattr(self, "vintage_policy", None) or VintagePolicy()
+        elif isinstance(policy, dict):
+            policy = VintagePolicy.from_dict(policy)
+        transformer = VintageTransformer(
+            names,
+            functions=functions,
+            agg_freq=agg_freq,
+            lags=lags,
+            logger=self.logger,
+            relative_lags=relative_lags,
+            agg_bins=agg_bins,
+            dt=self.dt,
+            policy=policy,
+            **kwargs,
+        )
+        if not hasattr(self, "vintage_transformers"):
+            self.vintage_transformers = []
+        self.vintage_transformers.append(transformer)
+        return self
+
+    def set_vintage_policy(self, policy=None, **kwargs):
+        from pyforecaster.vintage import VintagePolicy
+
+        if policy is None:
+            policy = VintagePolicy(**kwargs)
+        elif isinstance(policy, dict):
+            policy = VintagePolicy.from_dict({**policy, **kwargs})
+        self.vintage_policy = policy
+        for tr in getattr(self, "vintage_transformers", []):
+            tr.policy = policy
         return self
 
     def add_target_transform(self, names, functions=None, agg_freq=None, lags=None, relative_lags=False, agg_bins=None):
@@ -251,6 +291,8 @@ class Formatter:
 
     def transform(self, x, time_features=True, holidays=False, return_target=True, global_form=False, parallel=False,
                   reduce_memory=True, corr_reorder=False, normalizer_floor_key=None, normalizer_floors=None,
+                  vintage_inputs=None, vintage_policy=None, return_vintage_provenance=False,
+                  precomputed_vintage=None,
                   **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
@@ -273,6 +315,10 @@ class Formatter:
                             a lot of cores.
         :param reduce_memory: if True, reduce memory usage by casting float64 to float32 and int64 to int32
         :param corr_reorder: if True, reorder columns of the transformed dataset by correlation with the target
+        :param vintage_inputs: optional long DataFrame (snapshot/available/valid/signal/value) for vintage transforms
+        :param vintage_policy: optional policy override for vintage transforms
+        :param return_vintage_provenance: if True return (x, target, provenance)
+        :param precomputed_vintage: optional DataFrame of already materialized vintage features aligned to x.index
 
         :return x, target: the transformed dataset and the target DataFrame with correct dimensions
         """
@@ -290,6 +336,9 @@ class Formatter:
                                                   return_target=return_target,
                                                   normalizer_floor_key=normalizer_floor_key,
                                                   normalizer_floors=normalizer_floors,
+                                                  vintage_inputs=vintage_inputs,
+                                                  vintage_policy=vintage_policy,
+                                                  precomputed_vintage=precomputed_vintage,
                                                   **holidays_kwargs),
                                         df=dfs[n_cpu * i:n_cpu * (i + 1)])
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
@@ -299,24 +348,42 @@ class Formatter:
                                            return_target=return_target,
                                            normalizer_floor_key=normalizer_floor_key,
                                            normalizer_floors=normalizer_floors,
+                                           vintage_inputs=vintage_inputs,
+                                           vintage_policy=vintage_policy,
+                                           precomputed_vintage=precomputed_vintage,
                                            **holidays_kwargs)
                     xs, ys = self.global_form_postprocess(x, y, xs, ys, reduce_memory=reduce_memory, corr_reorder=corr_reorder)
 
             x = pd.concat(xs)
             target = pd.concat(ys)
+            if return_vintage_provenance:
+                return x, target, None
+            return x, target
         else:
-            x, target = self._transform(x, time_features=time_features, holidays=holidays,
-                                        return_target=return_target,
-                                        normalizer_floor_key=normalizer_floor_key,
-                                        normalizer_floors=normalizer_floors,
-                                        **holidays_kwargs)
-        return x, target
+            x, target, provenance = self._transform(
+                x,
+                time_features=time_features,
+                holidays=holidays,
+                return_target=return_target,
+                normalizer_floor_key=normalizer_floor_key,
+                normalizer_floors=normalizer_floors,
+                vintage_inputs=vintage_inputs,
+                vintage_policy=vintage_policy,
+                return_vintage_provenance=True,
+                precomputed_vintage=precomputed_vintage,
+                **holidays_kwargs,
+            )
+            if return_vintage_provenance:
+                return x, target, provenance
+            return x, target
 
     @staticmethod
     def _transform_(tr, x):
         return tr.transform(x, augment=False)
     def _transform(self, x, time_features=True, holidays=False, return_target=True, parallel=False,
-                   normalizer_floor_key=None, normalizer_floors=None, **holidays_kwargs):
+                   normalizer_floor_key=None, normalizer_floors=None, vintage_inputs=None,
+                   vintage_policy=None, return_vintage_provenance=False, precomputed_vintage=None,
+                   **holidays_kwargs):
         """
         Takes the DataFrame x and applies the specified transformations stored in the transformers in order to obtain
         the pre-fold-transformed dataset: this dataset has the correct final dimensions, but fold-specific
@@ -334,6 +401,7 @@ class Formatter:
                                'get over it. I have more important things to do.'.format(x.isna().sum()))
 
         target = pd.DataFrame(index=x.index)
+        provenance = None
 
         if len(self.transformers)>0:
             if parallel:
@@ -343,6 +411,39 @@ class Formatter:
             else:
                 for tr in self.transformers:
                     x = tr.transform(x)
+
+        vintage_transformers = getattr(self, "vintage_transformers", [])
+        if precomputed_vintage is not None:
+            vintage_x = precomputed_vintage.reindex(x.index)
+            x = pd.concat([x, vintage_x], axis=1)
+        elif len(vintage_transformers) > 0:
+            if vintage_inputs is None:
+                raise ValueError(
+                    "Formatter has vintage_transformers but vintage_inputs was not provided to transform()."
+                )
+            from pyforecaster.vintage import VintagePolicy, materialize_vintage_features
+
+            policy = vintage_policy
+            if policy is None:
+                policy = getattr(self, "vintage_policy", None)
+            if isinstance(policy, dict):
+                policy = VintagePolicy.from_dict(policy)
+            if policy is None:
+                policy = VintagePolicy()
+            want_prov = bool(return_vintage_provenance or policy.return_provenance)
+            vintage_result = materialize_vintage_features(
+                origins=x.index,
+                vintage_frame=vintage_inputs,
+                transformers=vintage_transformers,
+                policy=policy,
+                return_provenance=want_prov,
+            )
+            if want_prov:
+                vintage_x, provenance = vintage_result
+            else:
+                vintage_x = vintage_result
+            x = pd.concat([x, vintage_x], axis=1)
+
         transformed_columns = [c for c in x.columns if c not in original_columns]
 
         if return_target:
@@ -366,8 +467,12 @@ class Formatter:
             # remove raws with nans to reconcile impossible dataset entries introduced by shiftin' around
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
             target = target.loc[~np.any(x[transformed_columns].isna(), axis=1) & ~np.any(target.isna(), axis=1)]
+            if provenance is not None:
+                provenance = provenance.reindex(x.index)
         else:
             x = x.loc[~np.any(x[transformed_columns].isna(), axis=1)]
+            if provenance is not None:
+                provenance = provenance.reindex(x.index)
         drop_original_features = getattr(self, 'drop_original_features', [])
         columns_to_drop = [
             feature for feature in drop_original_features
@@ -383,6 +488,8 @@ class Formatter:
 
         if holidays:
             x = self.add_holidays(x, **holidays_kwargs)
+        if return_vintage_provenance:
+            return x, target, provenance
         return x, target
 
     def add_normalizing_columns(self, x, floor_key=None, normalizer_floors=None):
@@ -489,6 +596,14 @@ class Formatter:
             _ = tr.transform(x, simulate=True)
         for tr in self.target_transformers:
             _ = tr.transform(x, simulate=True)
+        dt = self.dt
+        if dt is None and x is not None and len(x.index) > 1:
+            dt = pd.Series(x.index).diff().median()
+        if dt is None:
+            dt = pd.Timedelta("15min")
+        for tr in getattr(self, "vintage_transformers", []):
+            tr.dt = tr.dt or dt
+            tr._ensure_metadata(pd.Timedelta(tr.dt))
 
     def plot_transformed_feature(self, x, feature, frames=100, ax_labels=None, legend_kwargs={},
                    remove_spines=True, **kwargs):
@@ -498,14 +613,17 @@ class Formatter:
         start_times = []
         end_times = []
         names = []
-        for t in self.transformers + self.target_transformers:
-            derived_features = t.metadata.loc[t.metadata['name'] == feature]
+        for t in self.transformers + self.target_transformers + getattr(self, "vintage_transformers", []):
+            meta = getattr(t, "metadata", None)
+            if meta is None:
+                continue
+            derived_features = meta.loc[meta['name'] == feature]
             if len(derived_features) > 0:
                 for function in derived_features['function'].unique():
                     fs.append(all_feats[derived_features.index[derived_features['function']==function]].values)
-                    start_times.append(t.metadata.loc[derived_features.index[derived_features['function']==function], 'start_time'])
+                    start_times.append(meta.loc[derived_features.index[derived_features['function']==function], 'start_time'])
                     end_times.append(
-                        t.metadata.loc[derived_features.index[derived_features['function'] == function], 'end_time'])
+                        meta.loc[derived_features.index[derived_features['function'] == function], 'end_time'])
 
         ani = ts_animation_bars(fs, start_times, end_times, frames=frames, ax_labels=ax_labels,
                                 legend_kwargs=legend_kwargs, remove_spines=remove_spines, **kwargs)
@@ -702,7 +820,7 @@ class Formatter:
 
     def get_time_lims(self, include_target=False, extremes=True):
 
-        transformers = self.transformers + self.target_normalizers
+        transformers = self.transformers + self.target_normalizers + getattr(self, "vintage_transformers", [])
         if include_target:
             transformers += self.target_transformers
         if any(t.metadata is None for t in transformers):
