@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="pyforecaster",
-    version="0.2.0",
+    version="0.2.1",
     author="Lorenzo Nespoli",
     author_email="lorenzo.nespoli@hivepower.tech",
     description="Base package for formatting and forecasting",
