@@ -423,6 +423,19 @@ class VintageTransformer:
         self._lookups: Dict[str, _SignalLookup] = {}
         self._snapshots: Optional[pd.DataFrame] = None
 
+    def __getstate__(self):
+        """Persist the transform definition, without dataset-specific caches.
+
+        Lookups can contain gigabytes of training weather and must be rebuilt
+        from the explicitly supplied vintage frame for each new data window.
+        Copy the state so serialization does not invalidate a prepared object.
+        Keep empty cache attributes for compatibility with older readers.
+        """
+        state = self.__dict__.copy()
+        state["_lookups"] = {}
+        state["_snapshots"] = None
+        return state
+
     def _ensure_metadata(self, dt: pd.Timedelta) -> pd.DataFrame:
         if self.metadata is not None and self.generated_features is not None:
             return self.metadata

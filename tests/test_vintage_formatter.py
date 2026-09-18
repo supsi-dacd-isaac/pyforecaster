@@ -228,6 +228,28 @@ class TestVintageFormatter(unittest.TestCase):
         x_legacy, _ = legacy_loaded.transform(observed, time_features=False)
         self.assertGreater(x_legacy.shape[1], 0)
 
+    def test_serialization_excludes_prepared_weather_and_preserves_causality(self):
+        tr = VintageTransformer(["nwp.temperature"], lags=[0, -1], dt=self.dt)
+        expected, provenance = tr.transform(self.origins, self.vintage, return_provenance=True)
+        original_lookup = tr._lookups["nwp.temperature"]
+        # A large prepared training cache must never become a model artifact.
+        original_lookup.unused_training_cache = np.zeros(1_000_000, dtype=np.float32)
+        blob = pickle.dumps(tr)
+        self.assertLess(len(blob), 20_000)
+        self.assertIs(tr._lookups["nwp.temperature"], original_lookup)
+        loaded = pickle.loads(blob)
+        self.assertEqual(loaded._lookups, {})
+        self.assertIsNone(loaded._snapshots)
+        actual, actual_provenance = loaded.transform(
+            self.origins, self.vintage, return_provenance=True
+        )
+        pd.testing.assert_frame_equal(actual, expected, check_exact=True)
+        pd.testing.assert_frame_equal(actual_provenance, provenance, check_exact=True)
+        # Replaying earlier origins still excludes unavailable snapshots.
+        self.assertTrue((actual_provenance["available_at"] <= self.origins).all())
+        early = pd.DatetimeIndex([self.snapshots[0] + pd.Timedelta("10min")])
+        self.assertTrue(loaded.transform(early, self.vintage).isna().all().all())
+
     def test_historical_replay_matches_one_origin_live(self):
         formatter = (
             Formatter(augment=False, dt=self.dt)
